@@ -4,7 +4,7 @@
 # 用法:
 #   部署/更新:    ./deploy.sh  (自动检测所有变化)
 #   强制重建:     ./deploy.sh --rebuild-base
-#   强制重建 Hub: ./deploy.sh --rebuild-hub
+#   更新 Hub:    ./deploy.sh --update-hub
 #   强制全部重建: ./deploy.sh --force
 
 set -e
@@ -29,9 +29,13 @@ compose_up() {
 
 # 缓存文件
 HASH_FILE=".deps-hash"
-HUB_HASH_FILE=".hub-hash"
 CODE_HASH_FILE=".code-hash"
 MIGRATION_HASH_FILE=".migration-hash"
+
+# Hub 二进制配置
+GITHUB_REPO="fawney19/Aether"
+HUB_DIST_DIR="aether-hub/dist"
+HUB_VERSION_FILE="$HUB_DIST_DIR/.version"
 
 # 提取 pyproject.toml 中"会影响运行时依赖安装"的最小指纹（与 CI 保持一致）：
 # - [build-system] requires / build-backend
@@ -75,14 +79,83 @@ calc_code_hash() {
     } | md5sum | cut -d' ' -f1
 }
 
-# 计算 Hub 文件的哈希值（本地构建 aether-hub:local）
-calc_hub_hash() {
-    {
-        cat aether-hub/Dockerfile 2>/dev/null
-        cat aether-hub/Cargo.toml 2>/dev/null
-        cat aether-hub/Cargo.lock 2>/dev/null
-        find aether-hub/src -type f -name "*.rs" 2>/dev/null | sort | xargs cat 2>/dev/null
-    } | md5sum | cut -d' ' -f1
+# 检测目标平台架构
+detect_arch() {
+    local machine
+    machine=$(uname -m)
+    case "$machine" in
+        x86_64|amd64)  echo "amd64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        *) echo "❌ 不支持的架构: $machine" >&2; exit 1 ;;
+    esac
+}
+
+# 获取最新 hub release tag
+get_latest_hub_tag() {
+    curl -sL "https://api.github.com/repos/$GITHUB_REPO/releases" | \
+        python3 -c "
+import json, sys
+releases = json.load(sys.stdin)
+for r in releases:
+    tag = r.get('tag_name', '')
+    if tag.startswith('hub-v') and not r.get('draft') and not r.get('prerelease'):
+        print(tag)
+        break
+" 2>/dev/null
+}
+
+# 下载 Hub 预编译二进制
+download_hub() {
+    local tag="$1"
+    local arch
+    arch=$(detect_arch)
+
+    if [ -z "$tag" ]; then
+        echo ">>> 正在查询最新 Hub 版本..."
+        tag=$(get_latest_hub_tag)
+        if [ -z "$tag" ]; then
+            echo "❌ 无法获取最新 Hub Release，请检查网络或手动指定版本"
+            exit 1
+        fi
+    fi
+
+    echo ">>> Hub 版本: $tag, 架构: $arch"
+
+    # 检查是否已下载
+    if [ -f "$HUB_VERSION_FILE" ] && [ "$(cat "$HUB_VERSION_FILE")" = "$tag-$arch" ] && [ -f "$HUB_DIST_DIR/aether-hub" ]; then
+        echo ">>> Hub 二进制已是最新 ($tag), 跳过下载."
+        return 0
+    fi
+
+    mkdir -p "$HUB_DIST_DIR"
+
+    local archive="aether-hub-linux-$arch.tar.gz"
+    local url="https://github.com/$GITHUB_REPO/releases/download/$tag/$archive"
+
+    echo ">>> 下载 Hub 二进制: $url"
+    curl -L --fail -o "$HUB_DIST_DIR/$archive" "$url" || {
+        echo "❌ 下载失败: $url"
+        exit 1
+    }
+
+    # 解压
+    tar xzf "$HUB_DIST_DIR/$archive" -C "$HUB_DIST_DIR"
+    chmod +x "$HUB_DIST_DIR/aether-hub"
+    rm -f "$HUB_DIST_DIR/$archive"
+
+    # 记录版本
+    echo "$tag-$arch" > "$HUB_VERSION_FILE"
+    echo "✅ Hub 二进制下载完成."
+}
+
+# 确保 Hub 二进制存在
+ensure_hub_binary() {
+    if [ ! -f "$HUB_DIST_DIR/aether-hub" ]; then
+        echo ">>> Hub 二进制不存在，正在下载..."
+        download_hub
+        return 0
+    fi
+    return 1
 }
 
 # 计算迁移文件的哈希值
@@ -114,17 +187,7 @@ check_code_changed() {
     return 0
 }
 
-# 检查 Hub 是否变化
-check_hub_changed() {
-    local current_hash=$(calc_hub_hash)
-    if [ -f "$HUB_HASH_FILE" ]; then
-        local saved_hash=$(cat "$HUB_HASH_FILE")
-        if [ "$current_hash" = "$saved_hash" ]; then
-            return 1
-        fi
-    fi
-    return 0
-}
+
 
 # 检查迁移是否变化
 check_migration_changed() {
@@ -140,7 +203,6 @@ check_migration_changed() {
 
 # 保存哈希
 save_deps_hash() { calc_deps_hash > "$HASH_FILE"; }
-save_hub_hash() { calc_hub_hash > "$HUB_HASH_FILE"; }
 save_code_hash() { calc_code_hash > "$CODE_HASH_FILE"; }
 save_migration_hash() { calc_migration_hash > "$MIGRATION_HASH_FILE"; }
 
@@ -151,12 +213,6 @@ build_base() {
     save_deps_hash
 }
 
-# 构建 Hub 镜像（本地）
-build_hub() {
-    echo ">>> Building hub image (local)..."
-    docker build --pull=false --build-arg CARGO_MIRROR=1 -f aether-hub/Dockerfile -t aether-hub:local ./aether-hub
-    save_hub_hash
-}
 
 # 生成版本文件
 generate_version_file() {
@@ -180,7 +236,7 @@ EOF
 build_app() {
     echo ">>> Building app image (code only)..."
     generate_version_file
-    docker build --pull=false --build-arg HUB_BINARY_IMAGE=aether-hub:local -f Dockerfile.app.local -t aether-app:latest .
+    docker build --pull=false -f Dockerfile.app.local -t aether-app:latest .
     save_code_hash
 }
 
@@ -230,8 +286,8 @@ print('Old version cleared')
 # 强制全部重建
 if [ "$1" = "--force" ] || [ "$1" = "-f" ]; then
     echo ">>> Force rebuilding everything..."
+    download_hub
     build_base
-    build_hub
     build_app
     compose_up --force-recreate
     sleep 3
@@ -249,10 +305,11 @@ if [ "$1" = "--rebuild-base" ] || [ "$1" = "-r" ]; then
     exit 0
 fi
 
-# 强制重建 Hub 镜像
-if [ "$1" = "--rebuild-hub" ]; then
-    build_hub
-    echo ">>> Hub image rebuilt. Run ./deploy.sh to deploy."
+# 更新 Hub 二进制
+if [ "$1" = "--update-hub" ]; then
+    rm -f "$HUB_VERSION_FILE"
+    download_hub
+    echo ">>> Hub binary updated. Run ./deploy.sh to deploy."
     exit 0
 fi
 
@@ -263,7 +320,7 @@ git pull
 # 标记是否需要重启
 NEED_RESTART=false
 BASE_REBUILT=false
-HUB_REBUILT=false
+HUB_UPDATED=false
 
 # 检查基础镜像是否存在，或依赖是否变化
 if ! docker image inspect aether-base:latest >/dev/null 2>&1; then
@@ -280,19 +337,12 @@ else
     echo ">>> Dependencies unchanged."
 fi
 
-# 检查 Hub 镜像是否存在，或 Hub 代码是否变化
-if ! docker image inspect aether-hub:local >/dev/null 2>&1; then
-    echo ">>> Hub image not found, building..."
-    build_hub
-    HUB_REBUILT=true
-    NEED_RESTART=true
-elif check_hub_changed; then
-    echo ">>> Hub changed, rebuilding hub image..."
-    build_hub
-    HUB_REBUILT=true
+# 确保 Hub 二进制存在
+if ensure_hub_binary; then
+    HUB_UPDATED=true
     NEED_RESTART=true
 else
-    echo ">>> Hub unchanged."
+    echo ">>> Hub binary present."
 fi
 
 # 检查代码或迁移是否变化，或者 base 重建了（app 依赖 base）
@@ -310,8 +360,8 @@ elif [ "$BASE_REBUILT" = true ]; then
     echo ">>> Base image rebuilt, rebuilding app image..."
     build_app
     NEED_RESTART=true
-elif [ "$HUB_REBUILT" = true ]; then
-    echo ">>> Hub image rebuilt, rebuilding app image..."
+elif [ "$HUB_UPDATED" = true ]; then
+    echo ">>> Hub binary updated, rebuilding app image..."
     build_app
     NEED_RESTART=true
 elif check_code_changed; then

@@ -702,6 +702,7 @@ const editingModel = ref<GlobalModelResponse | null>(null)
 // 数据
 const globalModels = ref<GlobalModelResponse[]>([])
 const providers = ref<ProviderWithEndpointsSummary[]>([])
+const GLOBAL_MODELS_FETCH_PAGE_SIZE = 1000
 
 // 模型目录分页
 const catalogCurrentPage = ref(1)
@@ -1026,9 +1027,25 @@ watch([searchQuery, capabilityFilters], () => {
 async function loadGlobalModels() {
   loading.value = true
   try {
-    const response = await listGlobalModels()
-    // API 返回 { models: [...], total: number }
-    globalModels.value = response.models || []
+    const allModels: GlobalModelResponse[] = []
+    let skip = 0
+
+    while (true) {
+      const response = await listGlobalModels({
+        skip,
+        limit: GLOBAL_MODELS_FETCH_PAGE_SIZE,
+      })
+      const pageModels = response.models || []
+      allModels.push(...pageModels)
+
+      if (pageModels.length < GLOBAL_MODELS_FETCH_PAGE_SIZE) {
+        break
+      }
+
+      skip += pageModels.length
+    }
+
+    globalModels.value = allModels
   } catch (err: unknown) {
     log.error('加载模型失败:', err)
     showError(parseApiError(err, '加载模型失败'), '加载模型失败')

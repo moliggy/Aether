@@ -1,7 +1,7 @@
 # Aether 部署配置 - 本地构建
 # 使用方法:
 #   首次构建 base: docker build -f Dockerfile.base -t aether-base:latest .
-#   首次构建 hub:  docker build -f aether-hub/Dockerfile -t aether-hub:local ./aether-hub
+#   Hub 二进制:   cd aether-hub && ./build.sh 或 deploy.sh 自动下载
 #   启动服务: docker compose -f docker-compose.build.yml up -d --build
 
 services:
@@ -43,8 +43,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.app.local
-      args:
-        HUB_BINARY_IMAGE: ${HUB_BINARY_IMAGE:-aether-hub:local}
     image: aether-app:latest
     container_name: aether-app
     env_file:

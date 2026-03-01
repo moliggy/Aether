@@ -467,6 +467,51 @@
               或选择 JSON 文件导入
             </button>
           </div>
+
+          <div
+            v-if="importTask"
+            class="rounded-xl border border-border bg-muted/20 p-3 space-y-2"
+          >
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-medium">
+                {{ getImportTaskStatusText(importTask.status) }}
+              </span>
+              <span class="font-mono tabular-nums">
+                {{ importTask.progress_percent }}%
+              </span>
+            </div>
+            <div class="h-1.5 rounded-full bg-muted overflow-hidden">
+              <div
+                class="h-full rounded-full bg-primary transition-all duration-300"
+                :style="{ width: `${Math.max(0, Math.min(importTask.progress_percent, 100))}%` }"
+              />
+            </div>
+            <div class="flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>进度 {{ importTask.processed }}/{{ importTask.total }}</span>
+              <span>成功 {{ importTask.success }} · 失败 {{ importTask.failed }}</span>
+            </div>
+            <p
+              v-if="importTask.message"
+              class="text-[11px] text-muted-foreground"
+            >
+              {{ importTask.message }}
+            </p>
+            <div
+              v-if="importTask.error_samples.length > 0"
+              class="space-y-1"
+            >
+              <p class="text-[11px] text-destructive">
+                最近错误
+              </p>
+              <p
+                v-for="item in importTask.error_samples.slice(0, 3)"
+                :key="`${item.index}-${item.error || item.status}`"
+                class="text-[11px] text-destructive/90"
+              >
+                #{{ item.index + 1 }} {{ item.error || '导入失败' }}
+              </p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -490,7 +535,7 @@
         :disabled="!canImport"
         @click="handleImport"
       >
-        {{ importing ? '导入中...' : '导入' }}
+        {{ importing ? (importTask ? `导入中 ${importTask.progress_percent}%` : '导入中...') : '导入' }}
       </Button>
     </template>
   </Dialog>
@@ -518,11 +563,16 @@ import {
   startProviderLevelOAuth,
   completeProviderLevelOAuth,
   importProviderRefreshToken,
-  batchImportOAuth,
+  startBatchImportOAuthTask,
+  getBatchImportOAuthTaskStatus,
   startDeviceAuthorize,
   pollDeviceAuthorize,
   getAwsRegions,
 } from '@/api/endpoints'
+import type {
+  OAuthBatchImportTaskStatus,
+  OAuthBatchImportTaskStatusResponse,
+} from '@/api/endpoints/provider_oauth'
 import ProxyNodeSelect from './ProxyNodeSelect.vue'
 import { useProxyNodesStore } from '@/stores/proxy-nodes'
 
@@ -665,6 +715,9 @@ const importing = ref(false)
 const isDragging = ref(false)
 const showManualInput = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const importTask = ref<OAuthBatchImportTaskStatusResponse | null>(null)
+let importPollTimer: ReturnType<typeof setTimeout> | null = null
+const importPolling = ref(false)
 
 const isOpen = computed(() => props.open)
 
@@ -691,6 +744,78 @@ const canImport = computed(() => {
   return importText.value.trim().length > 0 && !importing.value
 })
 
+function stopImportPolling() {
+  if (importPollTimer) {
+    clearTimeout(importPollTimer)
+    importPollTimer = null
+  }
+  importPolling.value = false
+}
+
+function getImportTaskStatusText(status: OAuthBatchImportTaskStatus): string {
+  switch (status) {
+    case 'submitted':
+      return '任务已提交'
+    case 'processing':
+      return '正在导入'
+    case 'completed':
+      return '导入完成'
+    case 'failed':
+      return '导入失败'
+    default:
+      return '处理中'
+  }
+}
+
+function scheduleImportPoll(taskId: string, delayMs = 1200) {
+  stopImportPolling()
+  importPollTimer = setTimeout(() => {
+    void pollImportTaskStatus(taskId)
+  }, delayMs)
+}
+
+async function pollImportTaskStatus(taskId: string) {
+  if (!props.providerId || importPolling.value) return
+
+  importPolling.value = true
+  try {
+    const task = await getBatchImportOAuthTaskStatus(props.providerId, taskId)
+    importTask.value = task
+
+    if (task.status === 'completed') {
+      stopImportPolling()
+      importing.value = false
+      if (task.success > 0) {
+        if (task.failed > 0) {
+          success(`批量导入完成：成功 ${task.success} 个，失败 ${task.failed} 个`)
+        } else {
+          success(`批量导入成功：${task.success} 个账号已添加`)
+        }
+        emit('saved')
+        handleClose()
+      } else {
+        showError(task.error || '批量导入失败', '导入失败')
+      }
+      return
+    }
+
+    if (task.status === 'failed') {
+      stopImportPolling()
+      importing.value = false
+      showError(task.error || task.message || '批量导入失败', '导入失败')
+      return
+    }
+
+    scheduleImportPoll(taskId)
+  } catch {
+    if (importing.value) {
+      scheduleImportPoll(taskId, 2000)
+    }
+  } finally {
+    importPolling.value = false
+  }
+}
+
 function stopDevicePolling() {
   if (devicePollTimer) {
     clearTimeout(devicePollTimer)
@@ -715,11 +840,13 @@ function resetDevice() {
 
 function resetForm() {
   oauth.value = createInitialOAuthState()
+  stopImportPolling()
   stopDevicePolling()
   totp.stop()
   device.value = createInitialDeviceState()
   importText.value = ''
   importing.value = false
+  importTask.value = null
   isDragging.value = false
   showManualInput.value = false
   proxyPopoverOpen.value = false
@@ -938,25 +1065,32 @@ async function handleImport() {
   }
 
   importing.value = true
+  let keepImporting = false
   try {
     const proxyNodeId = selectedProxyNodeId.value || undefined
     // 检测是否为批量导入
     if (isBatchImport(inputText)) {
-      // 批量导入
-      const result = await batchImportOAuth(props.providerId, inputText, proxyNodeId)
-      if (result.success > 0) {
-        if (result.failed > 0) {
-          success(`批量导入完成：成功 ${result.success} 个，失败 ${result.failed} 个`)
-        } else {
-          success(`批量导入成功：${result.success} 个账号已添加`)
-        }
-        emit('saved')
-        handleClose()
-      } else {
-        // 全部失败，显示第一个错误
-        const firstError = result.results.find(r => r.status === 'error')
-        showError(firstError?.error || '批量导入失败', '导入失败')
+      const task = await startBatchImportOAuthTask(props.providerId, inputText, proxyNodeId)
+      importTask.value = {
+        task_id: task.task_id,
+        provider_id: props.providerId,
+        provider_type: props.providerType || '',
+        status: task.status,
+        total: task.total,
+        processed: task.processed,
+        success: task.success,
+        failed: task.failed,
+        progress_percent: task.progress_percent,
+        message: task.message || null,
+        error: null,
+        error_samples: [],
+        created_at: Math.floor(Date.now() / 1000),
+        started_at: null,
+        finished_at: null,
+        updated_at: Math.floor(Date.now() / 1000),
       }
+      keepImporting = true
+      scheduleImportPoll(task.task_id, 400)
     } else {
       // 单条导入
       const parsed = parseImportText(inputText)
@@ -976,7 +1110,9 @@ async function handleImport() {
     const errorMessage = parseApiError(err, '导入失败')
     showError(errorMessage, '错误')
   } finally {
-    importing.value = false
+    if (!keepImporting) {
+      importing.value = false
+    }
   }
 }
 
@@ -1080,6 +1216,7 @@ async function pollDevice() {
 }
 
 onBeforeUnmount(() => {
+  stopImportPolling()
   stopDevicePolling()
 })
 

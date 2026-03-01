@@ -14,8 +14,8 @@ on:
 env:
   REGISTRY: ghcr.io
   BASE_IMAGE_NAME: fawney19/aether-base
-  HUB_IMAGE_NAME: fawney19/aether-hub
   APP_IMAGE_NAME: fawney19/aether
+  GITHUB_REPO: fawney19/Aether
   # Base image hash inputs:
   # - Dockerfile.base
   # - pyproject.toml (dependency fingerprint only; ignores tool/optional deps)
@@ -175,61 +175,56 @@ jobs:
           cache-to: type=gha,mode=max,scope=base
           platforms: linux/amd64,linux/arm64
 
-  build-hub:
+  download-hub:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-    outputs:
-      hub_binary_image: ${{ steps.hub-ref.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata for hub image
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.HUB_IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=pre,enable=${{ contains(github.ref, '-') }}
-            type=raw,value=fix,enable=${{ contains(github.ref, '-fix') }}
-            type=raw,value=${{ github.sha }}
-            type=sha,prefix=
-          flavor: |
-            latest=auto
-
-      - name: Build and push hub image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./aether-hub
-          file: ./aether-hub/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=hub
-          cache-to: type=gha,mode=max,scope=hub
-          platforms: linux/amd64,linux/arm64
-
-      - name: Export hub binary image reference
-        id: hub-ref
+      - name: Get latest hub release tag
+        id: hub-tag
         run: |
-          echo "image=${{ env.REGISTRY }}/${{ env.HUB_IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_OUTPUT
+          TAG=$(curl -sL "https://api.github.com/repos/${{ env.GITHUB_REPO }}/releases" | \
+            python3 -c "
+import json, sys
+releases = json.load(sys.stdin)
+for r in releases:
+    tag = r.get('tag_name', '')
+    if tag.startswith('hub-v') and not r.get('draft') and not r.get('prerelease'):
+        print(tag)
+        break
+")
+          if [ -z "$TAG" ]; then
+            echo "No hub release found"
+            exit 1
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Hub release tag: $TAG"
+
+      - name: Download hub binaries
+        run: |
+          TAG="${{ steps.hub-tag.outputs.tag }}"
+          BASE_URL="https://github.com/${{ env.GITHUB_REPO }}/releases/download/$TAG"
+          mkdir -p hub-binaries/amd64 hub-binaries/arm64
+          curl -L --fail -o hub-binaries/amd64/aether-hub-linux-amd64.tar.gz "$BASE_URL/aether-hub-linux-amd64.tar.gz"
+          curl -L --fail -o hub-binaries/arm64/aether-hub-linux-arm64.tar.gz "$BASE_URL/aether-hub-linux-arm64.tar.gz"
+          tar xzf hub-binaries/amd64/aether-hub-linux-amd64.tar.gz -C hub-binaries/amd64
+          tar xzf hub-binaries/arm64/aether-hub-linux-arm64.tar.gz -C hub-binaries/arm64
+
+      - name: Upload amd64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: hub-binary-amd64
+          path: hub-binaries/amd64/aether-hub
+
+      - name: Upload arm64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: hub-binary-arm64
+          path: hub-binaries/arm64/aether-hub
 
   build-app:
-    needs: [check-base-changes, build-base, build-hub]
-    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped') && needs.build-hub.result == 'success'
+    needs: [check-base-changes, build-base, download-hub]
+    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped') && needs.download-hub.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -296,17 +291,53 @@ jobs:
           version_tuple = __version_tuple__
           EOF
 
-      - name: Build and push app image
+      - name: Download hub binary for amd64
+        uses: actions/download-artifact@v4
+        with:
+          name: hub-binary-amd64
+          path: aether-hub/dist-amd64
+
+      - name: Download hub binary for arm64
+        uses: actions/download-artifact@v4
+        with:
+          name: hub-binary-arm64
+          path: aether-hub/dist-arm64
+
+      - name: Prepare hub binary for build
+        run: |
+          # 为当前构建平台准备二进制（多架构构建每个平台分别运行）
+          # 使用 amd64 作为默认，Buildx 会处理多架构
+          mkdir -p aether-hub/dist
+          cp aether-hub/dist-amd64/aether-hub aether-hub/dist/aether-hub
+          chmod +x aether-hub/dist/aether-hub
+
+      - name: Build and push app image (amd64)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile.app
           push: true
-          build-args: |
-            HUB_BINARY_IMAGE=${{ needs.build-hub.outputs.hub_binary_image }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           no-cache-filters: builder
-          cache-from: type=gha,scope=app
-          cache-to: type=gha,mode=min,scope=app
-          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha,scope=app-amd64
+          cache-to: type=gha,mode=min,scope=app-amd64
+          platforms: linux/amd64
+
+      - name: Swap hub binary for arm64
+        run: |
+          cp aether-hub/dist-arm64/aether-hub aether-hub/dist/aether-hub
+          chmod +x aether-hub/dist/aether-hub
+
+      - name: Build and push app image (arm64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.app
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          no-cache-filters: builder
+          cache-from: type=gha,scope=app-arm64
+          cache-to: type=gha,mode=min,scope=app-arm64
+          platforms: linux/arm64

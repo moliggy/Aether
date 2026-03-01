@@ -12,13 +12,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
 import secrets
 import time
+import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 import httpx
@@ -34,6 +37,7 @@ from src.core.logger import logger
 from src.core.provider_oauth_utils import enrich_auth_config, post_oauth_token
 from src.core.provider_templates.fixed_providers import FIXED_PROVIDERS
 from src.core.provider_templates.types import ProviderType
+from src.database import create_session
 from src.database.database import get_db
 from src.models.database import Provider, ProviderAPIKey, User
 from src.utils.auth_utils import require_admin
@@ -112,6 +116,91 @@ async def _consume_state(redis: Redis, nonce: str) -> ProviderOAuthStateData | N
         pkce_verifier=parsed.get("pkce_verifier"),
         created_at=int(parsed.get("created_at") or 0),
     )
+
+
+# ==============================================================================
+# Batch import async task storage
+# ==============================================================================
+
+_PROVIDER_OAUTH_BATCH_TASK_PREFIX = "provider_oauth_batch_task:"
+_PROVIDER_OAUTH_BATCH_TASK_TTL_SECONDS = 24 * 3600
+_PROVIDER_OAUTH_BATCH_TASK_MAX_ERROR_SAMPLES = 20
+_PROVIDER_OAUTH_BATCH_TASK_ALLOWED_STATUSES = {
+    "submitted",
+    "processing",
+    "completed",
+    "failed",
+}
+_in_memory_batch_tasks: dict[str, tuple[int, dict[str, Any]]] = {}
+_in_flight_batch_import_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _batch_task_key(task_id: str) -> str:
+    return f"{_PROVIDER_OAUTH_BATCH_TASK_PREFIX}{task_id}"
+
+
+def _cleanup_in_memory_batch_tasks(now_ts: int | None = None) -> None:
+    ts = now_ts or int(time.time())
+    expired = [k for k, (expire_at, _) in _in_memory_batch_tasks.items() if expire_at <= ts]
+    for key in expired:
+        _in_memory_batch_tasks.pop(key, None)
+
+
+async def _save_batch_task_state(
+    task_id: str,
+    state: dict[str, Any],
+    *,
+    redis: Redis | None = None,
+) -> None:
+    now_ts = int(time.time())
+    _cleanup_in_memory_batch_tasks(now_ts)
+    state["updated_at"] = now_ts
+    payload = json.dumps(state, ensure_ascii=False)
+
+    redis_client = redis if redis is not None else await get_redis_client(require_redis=False)
+    if redis_client is not None:
+        try:
+            await redis_client.setex(
+                _batch_task_key(task_id),
+                _PROVIDER_OAUTH_BATCH_TASK_TTL_SECONDS,
+                payload,
+            )
+            return
+        except Exception as exc:
+            logger.debug("[BATCH_IMPORT_TASK] redis setex failed, fallback to memory: {}", exc)
+
+    _in_memory_batch_tasks[task_id] = (
+        now_ts + _PROVIDER_OAUTH_BATCH_TASK_TTL_SECONDS,
+        json.loads(payload),
+    )
+
+
+async def _load_batch_task_state(task_id: str, *, redis: Redis | None = None) -> dict[str, Any] | None:
+    now_ts = int(time.time())
+    _cleanup_in_memory_batch_tasks(now_ts)
+    redis_client = redis if redis is not None else await get_redis_client(require_redis=False)
+    if redis_client is not None:
+        try:
+            raw = await redis_client.get(_batch_task_key(task_id))
+        except Exception as exc:
+            logger.debug("[BATCH_IMPORT_TASK] redis get failed, fallback to memory: {}", exc)
+            raw = None
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                return None
+
+    record = _in_memory_batch_tasks.get(task_id)
+    if not record:
+        return None
+    expire_at, state = record
+    if expire_at <= now_ts:
+        _in_memory_batch_tasks.pop(task_id, None)
+        return None
+    return dict(state)
 
 
 # ==============================================================================
@@ -1311,7 +1400,6 @@ class BatchImportRequest(BaseModel):
     credentials: str = Field(
         ...,
         min_length=1,
-        max_length=500_000,
         description="凭据数据，支持多种格式：JSON 对象、JSON 数组、纯 Token（一行一个）",
     )
     proxy_node_id: str | None = Field(
@@ -1339,6 +1427,90 @@ class BatchImportResponse(BaseModel):
     success: int = Field(..., description="成功导入数")
     failed: int = Field(..., description="失败数")
     results: list[BatchImportResultItem] = Field(..., description="每个凭据的导入结果")
+
+
+BatchImportTaskStatus = Literal["submitted", "processing", "completed", "failed"]
+
+
+class BatchImportTaskStartResponse(BaseModel):
+    """异步批量导入任务创建响应"""
+
+    task_id: str = Field(..., description="任务 ID")
+    status: BatchImportTaskStatus = Field(..., description="任务状态")
+    total: int = Field(..., description="待处理总数")
+    processed: int = Field(0, description="已处理数")
+    success: int = Field(0, description="成功数")
+    failed: int = Field(0, description="失败数")
+    progress_percent: int = Field(0, description="进度百分比（0-100）")
+    message: str | None = Field(None, description="状态描述")
+
+
+class BatchImportTaskStatusResponse(BaseModel):
+    """异步批量导入任务状态"""
+
+    task_id: str = Field(..., description="任务 ID")
+    provider_id: str = Field(..., description="Provider ID")
+    provider_type: str = Field(..., description="Provider 类型")
+    status: BatchImportTaskStatus = Field(..., description="任务状态")
+    total: int = Field(..., description="待处理总数")
+    processed: int = Field(0, description="已处理数")
+    success: int = Field(0, description="成功数")
+    failed: int = Field(0, description="失败数")
+    progress_percent: int = Field(0, description="进度百分比（0-100）")
+    message: str | None = Field(None, description="状态描述")
+    error: str | None = Field(None, description="任务级错误信息")
+    error_samples: list[BatchImportResultItem] = Field(
+        default_factory=list,
+        description="错误样例（最多保留部分）",
+    )
+    created_at: int = Field(..., description="创建时间戳（秒）")
+    started_at: int | None = Field(None, description="开始时间戳（秒）")
+    finished_at: int | None = Field(None, description="结束时间戳（秒）")
+    updated_at: int = Field(..., description="更新时间戳（秒）")
+
+
+BatchImportProgressHook = Callable[
+    [int, int, int, int, BatchImportResultItem],
+    Awaitable[None],
+]
+
+
+def _task_state_to_response(state: dict[str, Any]) -> BatchImportTaskStatusResponse:
+    raw_status = str(state.get("status") or "failed")
+    status: BatchImportTaskStatus = (
+        raw_status if raw_status in _PROVIDER_OAUTH_BATCH_TASK_ALLOWED_STATUSES else "failed"
+    )
+    error_samples: list[BatchImportResultItem] = []
+    for item in state.get("error_samples") or []:
+        try:
+            error_samples.append(BatchImportResultItem.model_validate(item))
+        except Exception:
+            continue
+
+    return BatchImportTaskStatusResponse(
+        task_id=str(state.get("task_id") or ""),
+        provider_id=str(state.get("provider_id") or ""),
+        provider_type=str(state.get("provider_type") or ""),
+        status=status,
+        total=int(state.get("total") or 0),
+        processed=int(state.get("processed") or 0),
+        success=int(state.get("success") or 0),
+        failed=int(state.get("failed") or 0),
+        progress_percent=max(0, min(100, int(state.get("progress_percent") or 0))),
+        message=(str(state["message"]) if state.get("message") is not None else None),
+        error=(str(state["error"]) if state.get("error") is not None else None),
+        error_samples=error_samples,
+        created_at=int(state.get("created_at") or int(time.time())),
+        started_at=(int(state["started_at"]) if state.get("started_at") is not None else None),
+        finished_at=(int(state["finished_at"]) if state.get("finished_at") is not None else None),
+        updated_at=int(state.get("updated_at") or int(time.time())),
+    )
+
+
+def _estimate_batch_import_total(provider_type: str, raw_credentials: str) -> int:
+    if provider_type == ProviderType.KIRO.value:
+        return len(_parse_kiro_import_input(raw_credentials))
+    return len(_parse_tokens_input(raw_credentials))
 
 
 @router.post(
@@ -1565,6 +1737,272 @@ async def import_refresh_token(
 # ==============================================================================
 
 
+async def _batch_import_standard_oauth_internal(
+    *,
+    provider_id: str,
+    provider_type: str,
+    provider: Provider,
+    raw_credentials: str,
+    db: Session,
+    proxy_config: dict[str, Any] | None = None,
+    key_proxy: dict[str, Any] | None = None,
+    progress_hook: BatchImportProgressHook | None = None,
+) -> BatchImportResponse:
+    """标准 OAuth Provider 批量导入（不含 Kiro）。"""
+    template = _require_oauth_template(provider_type)
+
+    tokens = _parse_tokens_input(raw_credentials)
+    if not tokens:
+        raise InvalidRequestException("未找到有效的 Token 数据")
+
+    api_formats = _get_provider_api_formats(provider)
+    token_url = template.oauth.token_url
+    is_json = "anthropic.com" in token_url
+    scope_str = " ".join(template.oauth.scopes) if template.oauth.scopes else ""
+
+    results: list[BatchImportResultItem] = []
+    success_count = 0
+    failed_count = 0
+
+    for idx, refresh_token in enumerate(tokens):
+        result_item: BatchImportResultItem
+        try:
+            if not refresh_token or len(refresh_token) < 10:
+                result_item = BatchImportResultItem(
+                    index=idx,
+                    status="error",
+                    error="Token 无效或过短",
+                )
+                failed_count += 1
+            else:
+                if is_json:
+                    body: dict[str, Any] = {
+                        "grant_type": "refresh_token",
+                        "client_id": template.oauth.client_id,
+                        "refresh_token": refresh_token,
+                    }
+                    if scope_str:
+                        body["scope"] = scope_str
+                    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+                    data = None
+                    json_body = body
+                else:
+                    form: dict[str, str] = {
+                        "grant_type": "refresh_token",
+                        "client_id": template.oauth.client_id,
+                        "refresh_token": refresh_token,
+                    }
+                    if scope_str:
+                        form["scope"] = scope_str
+                    if template.oauth.client_secret:
+                        form["client_secret"] = template.oauth.client_secret
+                    headers = {
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Accept": "application/json",
+                    }
+                    data = form
+                    json_body = None
+
+                try:
+                    resp = await post_oauth_token(
+                        provider_type=provider_type,
+                        token_url=token_url,
+                        headers=headers,
+                        data=data,
+                        json_body=json_body,
+                        proxy_config=proxy_config,
+                        timeout_seconds=30.0,
+                    )
+                except Exception as exc:
+                    result_item = BatchImportResultItem(
+                        index=idx,
+                        status="error",
+                        error=f"Token 刷新请求失败: {exc}",
+                    )
+                    failed_count += 1
+                    results.append(result_item)
+                    if progress_hook is not None:
+                        await progress_hook(
+                            len(tokens),
+                            idx + 1,
+                            success_count,
+                            failed_count,
+                            result_item,
+                        )
+                    continue
+
+                if resp.status_code < 200 or resp.status_code >= 300:
+                    error_reason = f"HTTP {resp.status_code}"
+                    try:
+                        error_body = resp.json()
+                        if "error" in error_body:
+                            error_reason = str(
+                                error_body.get("error_description") or error_body.get("error")
+                            )
+                    except Exception:
+                        error_reason = resp.text[:100] if resp.text else f"HTTP {resp.status_code}"
+
+                    result_item = BatchImportResultItem(
+                        index=idx,
+                        status="error",
+                        error=f"Token 验证失败: {error_reason}",
+                    )
+                    failed_count += 1
+                    results.append(result_item)
+                    if progress_hook is not None:
+                        await progress_hook(
+                            len(tokens),
+                            idx + 1,
+                            success_count,
+                            failed_count,
+                            result_item,
+                        )
+                    continue
+
+                token_data = resp.json()
+                access_token = str(token_data.get("access_token") or "")
+                new_refresh_token = str(token_data.get("refresh_token") or "") or refresh_token
+
+                if not access_token:
+                    result_item = BatchImportResultItem(
+                        index=idx,
+                        status="error",
+                        error="Token 刷新返回缺少 access_token",
+                    )
+                    failed_count += 1
+                    results.append(result_item)
+                    if progress_hook is not None:
+                        await progress_hook(
+                            len(tokens),
+                            idx + 1,
+                            success_count,
+                            failed_count,
+                            result_item,
+                        )
+                    continue
+
+                expires_in = token_data.get("expires_in")
+                expires_at: int | None = None
+                try:
+                    if expires_in is not None:
+                        expires_at = int(time.time()) + int(expires_in)
+                except Exception:
+                    expires_at = None
+
+                auth_config: dict[str, Any] = {
+                    "provider_type": provider_type,
+                    "token_type": token_data.get("token_type"),
+                    "refresh_token": new_refresh_token or None,
+                    "expires_at": expires_at,
+                    "scope": token_data.get("scope"),
+                    "updated_at": int(time.time()),
+                }
+
+                try:
+                    auth_config = await enrich_auth_config(
+                        provider_type=provider_type,
+                        auth_config=auth_config,
+                        token_response=token_data,
+                        access_token=access_token,
+                        proxy_config=proxy_config,
+                    )
+                except Exception as exc:
+                    logger.warning("批量导入: enrich_auth_config 失败 (index={}): {}", idx, exc)
+
+                try:
+                    existing_key = _check_duplicate_oauth_account(db, provider_id, auth_config)
+                except InvalidRequestException as exc:
+                    result_item = BatchImportResultItem(
+                        index=idx,
+                        status="error",
+                        error=str(exc),
+                    )
+                    failed_count += 1
+                    results.append(result_item)
+                    if progress_hook is not None:
+                        await progress_hook(
+                            len(tokens),
+                            idx + 1,
+                            success_count,
+                            failed_count,
+                            result_item,
+                        )
+                    continue
+
+                replaced = False
+                if existing_key:
+                    new_key = _update_existing_oauth_key(
+                        db,
+                        existing_key,
+                        access_token,
+                        auth_config,
+                        flush_only=True,
+                        proxy=key_proxy,
+                    )
+                    name = existing_key.name
+                    replaced = True
+                else:
+                    email = auth_config.get("email")
+                    if email:
+                        name = f"{provider_type}_{email}"
+                    else:
+                        name = f"{provider_type}_{int(time.time())}_{idx}"
+                    if len(name) > 100:
+                        name = name[:100]
+
+                    new_key = _create_oauth_key(
+                        db,
+                        provider_id=provider_id,
+                        name=name,
+                        access_token=access_token,
+                        auth_config=auth_config,
+                        api_formats=api_formats,
+                        flush_only=True,
+                        proxy=key_proxy,
+                    )
+
+                result_item = BatchImportResultItem(
+                    index=idx,
+                    status="success",
+                    key_id=str(new_key.id),
+                    key_name=name,
+                    replaced=replaced,
+                )
+                success_count += 1
+
+        except Exception as exc:
+            logger.error("批量导入 OAuth 凭据失败 (index={}): {}", idx, exc)
+            result_item = BatchImportResultItem(
+                index=idx,
+                status="error",
+                error=f"导入失败: {exc}",
+            )
+            failed_count += 1
+
+        results.append(result_item)
+        if progress_hook is not None:
+            await progress_hook(len(tokens), idx + 1, success_count, failed_count, result_item)
+
+    if success_count > 0:
+        db.commit()
+
+    logger.info(
+        "[BATCH_IMPORT] Provider {} ({}): 成功 {}/{}, 失败 {}",
+        provider_id,
+        provider_type,
+        success_count,
+        len(tokens),
+        failed_count,
+    )
+
+    return BatchImportResponse(
+        total=len(tokens),
+        success=success_count,
+        failed=failed_count,
+        results=results,
+    )
+
+
 @router.post(
     "/providers/{provider_id}/batch-import",
     response_model=BatchImportResponse,
@@ -1597,7 +2035,6 @@ async def batch_import_oauth(
         getattr(provider, "proxy", None), payload.proxy_node_id
     )
 
-    # Kiro 使用专用逻辑
     if provider_type == ProviderType.KIRO.value:
         return await _batch_import_kiro_internal(
             provider_id=provider_id,
@@ -1608,242 +2045,201 @@ async def batch_import_oauth(
             key_proxy=key_proxy,
         )
 
-    # 标准 OAuth Provider（Codex、Antigravity、GeminiCli、ClaudeCode）
-    template = _require_oauth_template(provider_type)
+    return await _batch_import_standard_oauth_internal(
+        provider_id=provider_id,
+        provider_type=provider_type,
+        provider=provider,
+        raw_credentials=payload.credentials,
+        db=db,
+        proxy_config=proxy_config,
+        key_proxy=key_proxy,
+    )
 
-    # 解析 Token 列表
-    tokens = _parse_tokens_input(payload.credentials)
-    if not tokens:
+
+async def _run_batch_import_task(
+    *,
+    task_id: str,
+    provider_id: str,
+    payload: BatchImportRequest,
+) -> None:
+    redis = await get_redis_client(require_redis=False)
+    state = await _load_batch_task_state(task_id, redis=redis)
+    if state is None:
+        return
+
+    state["status"] = "processing"
+    state["started_at"] = int(time.time())
+    state["message"] = "任务开始执行"
+    await _save_batch_task_state(task_id, state, redis=redis)
+
+    db = create_session()
+    try:
+        provider = db.query(Provider).filter(Provider.id == provider_id).first()
+        if not provider:
+            raise NotFoundException("Provider 不存在", "provider")
+
+        provider_type = _require_fixed_provider(provider)
+        state["provider_type"] = provider_type
+
+        proxy_config, key_proxy = _resolve_proxy_for_oauth(
+            getattr(provider, "proxy", None), payload.proxy_node_id
+        )
+
+        async def progress_hook(
+            total: int,
+            processed: int,
+            success_count: int,
+            failed_count: int,
+            result_item: BatchImportResultItem,
+        ) -> None:
+            state["total"] = total
+            state["processed"] = processed
+            state["success"] = success_count
+            state["failed"] = failed_count
+            state["progress_percent"] = int((processed * 100) / total) if total > 0 else 0
+            state["message"] = f"处理中 {processed}/{total}"
+            if result_item.status == "error":
+                state["error"] = result_item.error
+                error_samples = state.get("error_samples")
+                if not isinstance(error_samples, list):
+                    error_samples = []
+                    state["error_samples"] = error_samples
+                if len(error_samples) < _PROVIDER_OAUTH_BATCH_TASK_MAX_ERROR_SAMPLES:
+                    error_samples.append(result_item.model_dump())
+            try:
+                await _save_batch_task_state(task_id, state, redis=redis)
+            except Exception as exc:
+                logger.debug("[BATCH_IMPORT_TASK] save progress failed (task_id={}): {}", task_id, exc)
+
+        if provider_type == ProviderType.KIRO.value:
+            result = await _batch_import_kiro_internal(
+                provider_id=provider_id,
+                provider=provider,
+                raw_credentials=payload.credentials,
+                db=db,
+                proxy_config=proxy_config,
+                key_proxy=key_proxy,
+                progress_hook=progress_hook,
+            )
+        else:
+            result = await _batch_import_standard_oauth_internal(
+                provider_id=provider_id,
+                provider_type=provider_type,
+                provider=provider,
+                raw_credentials=payload.credentials,
+                db=db,
+                proxy_config=proxy_config,
+                key_proxy=key_proxy,
+                progress_hook=progress_hook,
+            )
+
+        state["status"] = "completed"
+        state["processed"] = result.total
+        state["success"] = result.success
+        state["failed"] = result.failed
+        state["progress_percent"] = 100
+        state["finished_at"] = int(time.time())
+        state["message"] = f"导入完成：成功 {result.success}，失败 {result.failed}"
+        await _save_batch_task_state(task_id, state, redis=redis)
+
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        state["status"] = "failed"
+        state["finished_at"] = int(time.time())
+        state["message"] = "导入任务执行失败"
+        state["error"] = str(exc)
+        await _save_batch_task_state(task_id, state, redis=redis)
+        logger.error("[BATCH_IMPORT_TASK] task_id={} failed: {}", task_id, exc)
+    finally:
+        db.close()
+
+
+@router.post(
+    "/providers/{provider_id}/batch-import/tasks",
+    response_model=BatchImportTaskStartResponse,
+)
+async def start_batch_import_oauth_task(
+    provider_id: str,
+    payload: BatchImportRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> BatchImportTaskStartResponse:
+    """创建 OAuth 批量导入异步任务。"""
+    provider = db.query(Provider).filter(Provider.id == provider_id).first()
+    if not provider:
+        raise NotFoundException("Provider 不存在", "provider")
+
+    provider_type = _require_fixed_provider(provider)
+    if provider_type != ProviderType.KIRO.value:
+        _require_oauth_template(provider_type)
+
+    total = _estimate_batch_import_total(provider_type, payload.credentials)
+    if total <= 0:
         raise InvalidRequestException("未找到有效的 Token 数据")
 
-    api_formats = _get_provider_api_formats(provider)
-    token_url = template.oauth.token_url
-    is_json = "anthropic.com" in token_url
-    scope_str = " ".join(template.oauth.scopes) if template.oauth.scopes else ""
+    task_id = str(uuid.uuid4())
+    state: dict[str, Any] = {
+        "task_id": task_id,
+        "provider_id": provider_id,
+        "provider_type": provider_type,
+        "status": "submitted",
+        "total": total,
+        "processed": 0,
+        "success": 0,
+        "failed": 0,
+        "progress_percent": 0,
+        "message": "任务已提交，等待执行",
+        "error": None,
+        "error_samples": [],
+        "created_at": int(time.time()),
+        "started_at": None,
+        "finished_at": None,
+    }
+    await _save_batch_task_state(task_id, state)
 
-    results: list[BatchImportResultItem] = []
-    success_count = 0
-    failed_count = 0
+    task = asyncio.create_task(
+        _run_batch_import_task(
+            task_id=task_id,
+            provider_id=provider_id,
+            payload=payload,
+        )
+    )
+    _in_flight_batch_import_tasks.add(task)
+    task.add_done_callback(_in_flight_batch_import_tasks.discard)
 
-    for idx, refresh_token in enumerate(tokens):
-        try:
-            # 验证 Token 非空
-            if not refresh_token or len(refresh_token) < 10:
-                results.append(
-                    BatchImportResultItem(
-                        index=idx,
-                        status="error",
-                        error="Token 无效或过短",
-                    )
-                )
-                failed_count += 1
-                continue
-
-            # 使用 refresh_token 换取 access_token
-            if is_json:
-                body: dict[str, Any] = {
-                    "grant_type": "refresh_token",
-                    "client_id": template.oauth.client_id,
-                    "refresh_token": refresh_token,
-                }
-                if scope_str:
-                    body["scope"] = scope_str
-                headers = {"Content-Type": "application/json", "Accept": "application/json"}
-                data = None
-                json_body = body
-            else:
-                form: dict[str, str] = {
-                    "grant_type": "refresh_token",
-                    "client_id": template.oauth.client_id,
-                    "refresh_token": refresh_token,
-                }
-                if scope_str:
-                    form["scope"] = scope_str
-                if template.oauth.client_secret:
-                    form["client_secret"] = template.oauth.client_secret
-                headers = {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Accept": "application/json",
-                }
-                data = form
-                json_body = None
-
-            try:
-                resp = await post_oauth_token(
-                    provider_type=provider_type,
-                    token_url=token_url,
-                    headers=headers,
-                    data=data,
-                    json_body=json_body,
-                    proxy_config=proxy_config,
-                    timeout_seconds=30.0,
-                )
-            except Exception as e:
-                results.append(
-                    BatchImportResultItem(
-                        index=idx,
-                        status="error",
-                        error=f"Token 刷新请求失败: {e}",
-                    )
-                )
-                failed_count += 1
-                continue
-
-            if resp.status_code < 200 or resp.status_code >= 300:
-                error_reason = f"HTTP {resp.status_code}"
-                try:
-                    error_body = resp.json()
-                    if "error" in error_body:
-                        error_reason = str(
-                            error_body.get("error_description") or error_body.get("error")
-                        )
-                except Exception:
-                    error_reason = resp.text[:100] if resp.text else f"HTTP {resp.status_code}"
-
-                results.append(
-                    BatchImportResultItem(
-                        index=idx,
-                        status="error",
-                        error=f"Token 验证失败: {error_reason}",
-                    )
-                )
-                failed_count += 1
-                continue
-
-            token_data = resp.json()
-            access_token = str(token_data.get("access_token") or "")
-            new_refresh_token = str(token_data.get("refresh_token") or "") or refresh_token
-
-            if not access_token:
-                results.append(
-                    BatchImportResultItem(
-                        index=idx,
-                        status="error",
-                        error="Token 刷新返回缺少 access_token",
-                    )
-                )
-                failed_count += 1
-                continue
-
-            expires_in = token_data.get("expires_in")
-            expires_at: int | None = None
-            try:
-                if expires_in is not None:
-                    expires_at = int(time.time()) + int(expires_in)
-            except Exception:
-                expires_at = None
-
-            # 构建 auth_config
-            auth_config: dict[str, Any] = {
-                "provider_type": provider_type,
-                "token_type": token_data.get("token_type"),
-                "refresh_token": new_refresh_token or None,
-                "expires_at": expires_at,
-                "scope": token_data.get("scope"),
-                "updated_at": int(time.time()),
-            }
-
-            # 获取额外信息（email 等）
-            try:
-                auth_config = await enrich_auth_config(
-                    provider_type=provider_type,
-                    auth_config=auth_config,
-                    token_response=token_data,
-                    access_token=access_token,
-                    proxy_config=proxy_config,
-                )
-            except Exception as e:
-                logger.warning("批量导入: enrich_auth_config 失败 (index={}): {}", idx, e)
-                # 不中断，继续使用基本 auth_config
-
-            # 检查是否存在重复（失效账号允许覆盖）
-            try:
-                existing_key = _check_duplicate_oauth_account(db, provider_id, auth_config)
-            except InvalidRequestException as e:
-                results.append(
-                    BatchImportResultItem(
-                        index=idx,
-                        status="error",
-                        error=str(e),
-                    )
-                )
-                failed_count += 1
-                continue
-
-            replaced = False
-            if existing_key:
-                new_key = _update_existing_oauth_key(
-                    db,
-                    existing_key,
-                    access_token,
-                    auth_config,
-                    flush_only=True,
-                    proxy=key_proxy,
-                )
-                name = existing_key.name
-                replaced = True
-            else:
-                # 生成名称
-                email = auth_config.get("email")
-                if email:
-                    name = f"{provider_type}_{email}"
-                else:
-                    name = f"{provider_type}_{int(time.time())}_{idx}"
-                if len(name) > 100:
-                    name = name[:100]
-
-                new_key = _create_oauth_key(
-                    db,
-                    provider_id=provider_id,
-                    name=name,
-                    access_token=access_token,
-                    auth_config=auth_config,
-                    api_formats=api_formats,
-                    flush_only=True,
-                    proxy=key_proxy,
-                )
-
-            results.append(
-                BatchImportResultItem(
-                    index=idx,
-                    status="success",
-                    key_id=str(new_key.id),
-                    key_name=name,
-                    replaced=replaced,
-                )
-            )
-            success_count += 1
-
-        except Exception as e:
-            logger.error("批量导入 OAuth 凭据失败 (index={}): {}", idx, e)
-            results.append(
-                BatchImportResultItem(
-                    index=idx,
-                    status="error",
-                    error=f"导入失败: {e}",
-                )
-            )
-            failed_count += 1
-
-    # 提交所有成功的记录
-    if success_count > 0:
-        db.commit()
-
-    logger.info(
-        "[BATCH_IMPORT] Provider {} ({}): 成功 {}/{}, 失败 {}",
-        provider_id,
-        provider_type,
-        success_count,
-        len(tokens),
-        failed_count,
+    return BatchImportTaskStartResponse(
+        task_id=task_id,
+        status="submitted",
+        total=total,
+        processed=0,
+        success=0,
+        failed=0,
+        progress_percent=0,
+        message="任务已提交，正在后台导入",
     )
 
-    return BatchImportResponse(
-        total=len(tokens),
-        success=success_count,
-        failed=failed_count,
-        results=results,
-    )
+
+@router.get(
+    "/providers/{provider_id}/batch-import/tasks/{task_id}",
+    response_model=BatchImportTaskStatusResponse,
+)
+async def get_batch_import_oauth_task_status(
+    provider_id: str,
+    task_id: str,
+    _: User = Depends(require_admin),
+) -> BatchImportTaskStatusResponse:
+    """获取 OAuth 批量导入异步任务状态。"""
+    state = await _load_batch_task_state(task_id)
+    if not state:
+        raise NotFoundException("批量导入任务不存在或已过期", "task")
+
+    if str(state.get("provider_id") or "") != provider_id:
+        raise NotFoundException("批量导入任务不存在", "task")
+
+    return _task_state_to_response(state)
 
 
 async def _batch_import_kiro_internal(
@@ -1853,6 +2249,7 @@ async def _batch_import_kiro_internal(
     db: Session,
     proxy_config: dict[str, Any] | None = None,
     key_proxy: dict[str, Any] | None = None,
+    progress_hook: BatchImportProgressHook | None = None,
 ) -> BatchImportResponse:
     """Kiro 批量导入内部实现（供通用端点调用）。
 
@@ -1875,55 +2272,72 @@ async def _batch_import_kiro_internal(
     failed_count = 0
 
     for idx, cred in enumerate(credentials):
+        result_item: BatchImportResultItem
         try:
-            # 验证必需字段
             is_valid, error_msg = KiroAuthConfig.validate_required_fields(cred)
             if not is_valid:
-                results.append(
-                    BatchImportResultItem(
-                        index=idx,
-                        status="error",
-                        error=error_msg,
-                    )
+                result_item = BatchImportResultItem(
+                    index=idx,
+                    status="error",
+                    error=error_msg,
                 )
                 failed_count += 1
+                results.append(result_item)
+                if progress_hook is not None:
+                    await progress_hook(
+                        len(credentials),
+                        idx + 1,
+                        success_count,
+                        failed_count,
+                        result_item,
+                    )
                 continue
 
-            # 解析凭据配置
             cfg = KiroAuthConfig.from_dict(cred)
             cfg.provider_type = ProviderType.KIRO.value
 
-            # 刷新 Token 以验证有效性
             try:
                 access_token, new_cfg = await refresh_access_token(cfg, proxy_config=proxy_config)
-            except Exception as e:
-                results.append(
-                    BatchImportResultItem(
-                        index=idx,
-                        status="error",
-                        error=f"Token 验证失败: {e}",
-                    )
+            except Exception as exc:
+                result_item = BatchImportResultItem(
+                    index=idx,
+                    status="error",
+                    error=f"Token 验证失败: {exc}",
                 )
                 failed_count += 1
+                results.append(result_item)
+                if progress_hook is not None:
+                    await progress_hook(
+                        len(credentials),
+                        idx + 1,
+                        success_count,
+                        failed_count,
+                        result_item,
+                    )
                 continue
 
-            # 先获取 email，确保重复检查时有 email 可用
             email = await _fetch_kiro_email(new_cfg.to_dict(), proxy_config=proxy_config)
             if email and not new_cfg.email:
                 new_cfg.email = email
 
-            # 检查是否存在重复（失效账号允许覆盖）
             try:
                 existing_key = _check_duplicate_oauth_account(db, provider_id, new_cfg.to_dict())
-            except InvalidRequestException as e:
-                results.append(
-                    BatchImportResultItem(
-                        index=idx,
-                        status="error",
-                        error=str(e),
-                    )
+            except InvalidRequestException as exc:
+                result_item = BatchImportResultItem(
+                    index=idx,
+                    status="error",
+                    error=str(exc),
                 )
                 failed_count += 1
+                results.append(result_item)
+                if progress_hook is not None:
+                    await progress_hook(
+                        len(credentials),
+                        idx + 1,
+                        success_count,
+                        failed_count,
+                        result_item,
+                    )
                 continue
 
             replaced = False
@@ -1951,28 +2365,34 @@ async def _batch_import_kiro_internal(
                     proxy=key_proxy,
                 )
 
-            results.append(
-                BatchImportResultItem(
-                    index=idx,
-                    status="success",
-                    key_id=str(new_key.id),
-                    key_name=name,
-                    auth_method=new_cfg.auth_method or "social",
-                    replaced=replaced,
-                )
+            result_item = BatchImportResultItem(
+                index=idx,
+                status="success",
+                key_id=str(new_key.id),
+                key_name=name,
+                auth_method=new_cfg.auth_method or "social",
+                replaced=replaced,
             )
             success_count += 1
 
-        except Exception as e:
-            logger.error("批量导入 Kiro 凭据失败 (index={}): {}", idx, e)
-            results.append(
-                BatchImportResultItem(
-                    index=idx,
-                    status="error",
-                    error=f"导入失败: {e}",
-                )
+        except Exception as exc:
+            logger.error("批量导入 Kiro 凭据失败 (index={}): {}", idx, exc)
+            result_item = BatchImportResultItem(
+                index=idx,
+                status="error",
+                error=f"导入失败: {exc}",
             )
             failed_count += 1
+
+        results.append(result_item)
+        if progress_hook is not None:
+            await progress_hook(
+                len(credentials),
+                idx + 1,
+                success_count,
+                failed_count,
+                result_item,
+            )
 
     # 提交所有成功的记录
     if success_count > 0:

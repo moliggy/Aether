@@ -28,6 +28,48 @@ export interface ProviderOAuthCompleteResponseWithKey {
   email?: string | null
 }
 
+export interface OAuthBatchImportResultItem {
+  index: number
+  status: 'success' | 'error'
+  key_id?: string
+  key_name?: string
+  auth_method?: string
+  error?: string
+  replaced?: boolean
+}
+
+export type OAuthBatchImportTaskStatus = 'submitted' | 'processing' | 'completed' | 'failed'
+
+export interface OAuthBatchImportTaskStartResponse {
+  task_id: string
+  status: OAuthBatchImportTaskStatus
+  total: number
+  processed: number
+  success: number
+  failed: number
+  progress_percent: number
+  message?: string | null
+}
+
+export interface OAuthBatchImportTaskStatusResponse {
+  task_id: string
+  provider_id: string
+  provider_type: string
+  status: OAuthBatchImportTaskStatus
+  total: number
+  processed: number
+  success: number
+  failed: number
+  progress_percent: number
+  message?: string | null
+  error?: string | null
+  error_samples: OAuthBatchImportResultItem[]
+  created_at: number
+  started_at?: number | null
+  finished_at?: number | null
+  updated_at: number
+}
+
 export async function refreshProviderOAuth(keyId: string): Promise<ProviderOAuthCompleteResponse> {
   const resp = await client.post(`/api/admin/provider-oauth/keys/${keyId}/refresh`)
   return resp.data
@@ -53,6 +95,26 @@ export async function importProviderRefreshToken(
   data: { refresh_token: string; name?: string; proxy_node_id?: string }
 ): Promise<ProviderOAuthCompleteResponseWithKey> {
   const resp = await client.post(`/api/admin/provider-oauth/providers/${providerId}/import-refresh-token`, data)
+  return resp.data
+}
+
+export async function startBatchImportOAuthTask(
+  providerId: string,
+  credentials: string,
+  proxyNodeId?: string
+): Promise<OAuthBatchImportTaskStartResponse> {
+  const resp = await client.post(`/api/admin/provider-oauth/providers/${providerId}/batch-import/tasks`, {
+    credentials,
+    proxy_node_id: proxyNodeId || undefined,
+  })
+  return resp.data
+}
+
+export async function getBatchImportOAuthTaskStatus(
+  providerId: string,
+  taskId: string
+): Promise<OAuthBatchImportTaskStatusResponse> {
+  const resp = await client.get(`/api/admin/provider-oauth/providers/${providerId}/batch-import/tasks/${taskId}`)
   return resp.data
 }
 

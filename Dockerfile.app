@@ -2,8 +2,6 @@
 # 运行镜像：从 base 提取产物到精简运行时
 # 构建命令: docker build -f Dockerfile.app -t aether-app:latest .
 # 用于 GitHub Actions CI（官方源）
-ARG HUB_BINARY_IMAGE=ghcr.io/fawney19/aether-hub:latest
-FROM ${HUB_BINARY_IMAGE} AS hub-bin
 
 FROM aether-base:latest AS builder
 WORKDIR /app
@@ -28,7 +26,9 @@ COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin/gunicorn /usr/local/bin/
 COPY --from=builder /usr/local/bin/uvicorn /usr/local/bin/
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/
-COPY --from=hub-bin /usr/local/bin/aether-hub /usr/local/bin/
+# Hub 预编译二进制（从 GitHub Release 下载）
+COPY aether-hub/dist/aether-hub /usr/local/bin/aether-hub
+RUN chmod +x /usr/local/bin/aether-hub
 # 从 builder 阶段复制前端构建产物
 COPY --from=builder /app/frontend/dist /usr/share/nginx/html
 RUN chmod -R 755 /usr/share/nginx/html
