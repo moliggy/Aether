@@ -75,6 +75,20 @@ export interface PoolOverviewResponse {
   items: PoolOverviewItem[]
 }
 
+export interface PoolPresetModeMeta {
+  value: string
+  label: string
+}
+
+export interface PoolPresetMeta {
+  name: string
+  label: string
+  description: string
+  providers: string[]
+  modes?: PoolPresetModeMeta[] | null
+  default_mode?: string | null
+}
+
 export interface PoolKeyDetail {
   key_id: string
   key_name: string
@@ -178,6 +192,13 @@ export interface PoolBatchAction {
 export async function getPoolOverview(): Promise<PoolOverviewResponse> {
   return dedupedRequest('pool:overview', async () => {
     const response = await client.get<PoolOverviewResponse>('/api/admin/pool/overview')
+    return response.data
+  })
+}
+
+export async function getPoolSchedulingPresets(): Promise<PoolPresetMeta[]> {
+  return dedupedRequest('pool:scheduling-presets', async () => {
+    const response = await client.get<PoolPresetMeta[]>('/api/admin/pool/scheduling-presets')
     return response.data
   })
 }

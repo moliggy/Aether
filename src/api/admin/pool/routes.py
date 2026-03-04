@@ -28,7 +28,9 @@ from src.core.logger import logger
 from src.database import get_db
 from src.models.database import Provider, ProviderAPIKey, Usage
 from src.services.provider.pool import redis_ops as pool_redis
+from src.services.provider.pool.account_state import resolve_pool_account_state
 from src.services.provider.pool.config import parse_pool_config
+from src.services.provider.pool.dimensions import get_preset_dimension_metas
 from src.services.provider.pool.scheduling_dimensions import (
     PoolSchedulingSnapshot,
     evaluate_pool_scheduling_dimensions,
@@ -47,6 +49,8 @@ from .schemas import (
     PoolOverviewResponse,
     PoolSchedulingDimension,
     PoolSchedulingReason,
+    PresetDimensionMetaResponse,
+    PresetModeMetaResponse,
 )
 
 router = APIRouter(prefix="/api/admin/pool", tags=["pool-management"])
@@ -65,6 +69,31 @@ async def pool_overview(
 ) -> PoolOverviewResponse:
     """Return all pool-enabled providers with summary stats."""
     adapter = AdminPoolOverviewAdapter()
+    return await pipeline.run(adapter=adapter, http_request=request, db=db, mode=adapter.mode)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/pool/scheduling-presets
+# ---------------------------------------------------------------------------
+
+
+def _preset_mode_label(mode: str) -> str:
+    mapping = {
+        "free_only": "Free",
+        "team_only": "Team",
+        "both": "全部",
+    }
+    return mapping.get(mode, mode)
+
+
+@router.get("/scheduling-presets", response_model=list[PresetDimensionMetaResponse])
+async def list_scheduling_presets(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> list[PresetDimensionMetaResponse]:
+    """Return scheduling preset definitions for frontend rendering."""
+
+    adapter = AdminListSchedulingPresetsAdapter()
     return await pipeline.run(adapter=adapter, http_request=request, db=db, mode=adapter.mode)
 
 
@@ -126,24 +155,6 @@ _COOLDOWN_REASON_LABELS: dict[str, str] = {
     "server_error_500": "500 错误",
 }
 
-_ACCOUNT_BLOCK_REASON_KEYWORDS: tuple[str, ...] = (
-    "account_block",
-    "account blocked",
-    "account has been disabled",
-    "account disabled",
-    "organization has been disabled",
-    "organization_disabled",
-    "validation_required",
-    "verify your account",
-    "forbidden",
-    "suspended",
-    "封禁",
-    "封号",
-    "被封",
-    "访问被禁止",
-    "账号异常",
-)
-
 
 def _to_float(value: Any) -> float | None:
     if isinstance(value, bool):
@@ -161,65 +172,15 @@ def _to_float(value: Any) -> float | None:
     return None
 
 
-def _is_truthy_flag(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value != 0
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        return normalized in {"1", "true", "yes", "y"}
-    return False
-
-
-def _is_known_banned_reason(reason: str | None) -> bool:
-    if not reason:
-        return False
-
-    text = str(reason).strip()
-    if not text:
-        return False
-    lowered = text.lower()
-
-    # 结构化账号级别封禁标记（如 [ACCOUNT_BLOCK] ...）
-    try:
-        from src.services.provider.oauth_token import is_account_level_block
-
-        if is_account_level_block(text):
-            return True
-    except Exception:
-        pass
-
-    return any(keyword in lowered for keyword in _ACCOUNT_BLOCK_REASON_KEYWORDS)
-
-
 def _is_known_banned_key(key: ProviderAPIKey, provider_type: str) -> bool:
-    upstream_metadata = getattr(key, "upstream_metadata", None)
-    normalized_provider = provider_type.strip().lower()
-    provider_bucket: dict[str, Any] | None = None
-    if isinstance(upstream_metadata, dict):
-        maybe_bucket = upstream_metadata.get(normalized_provider)
-        if isinstance(maybe_bucket, dict):
-            provider_bucket = maybe_bucket
+    from src.services.provider.pool.account_state import resolve_pool_account_state
 
-    if normalized_provider == "kiro" and provider_bucket:
-        if _is_truthy_flag(provider_bucket.get("is_banned")):
-            return True
-    if normalized_provider == "antigravity" and provider_bucket:
-        if _is_truthy_flag(provider_bucket.get("is_forbidden")):
-            return True
-
-    for source in (provider_bucket, upstream_metadata):
-        if not isinstance(source, dict):
-            continue
-        if _is_truthy_flag(source.get("is_banned")):
-            return True
-        if _is_truthy_flag(source.get("is_forbidden")):
-            return True
-        if _is_truthy_flag(source.get("account_disabled")):
-            return True
-
-    return _is_known_banned_reason(getattr(key, "oauth_invalid_reason", None))
+    state = resolve_pool_account_state(
+        provider_type=provider_type,
+        upstream_metadata=getattr(key, "upstream_metadata", None),
+        oauth_invalid_reason=getattr(key, "oauth_invalid_reason", None),
+    )
+    return state.blocked
 
 
 def _format_percent(value: float) -> str:
@@ -536,6 +497,10 @@ def _format_cooldown_detail(raw: str | None) -> str | None:
 def _build_pool_scheduling_state(
     *,
     is_active: bool,
+    account_blocked: bool,
+    account_block_label: str | None,
+    account_block_reason: str | None,
+    latency_avg_ms: float | None,
     cooldown_reason: str | None,
     cooldown_ttl_seconds: int | None,
     circuit_breaker_open: bool,
@@ -557,6 +522,10 @@ def _build_pool_scheduling_state(
     """Build unified scheduling state for frontend display."""
     snapshot = PoolSchedulingSnapshot(
         is_active=is_active,
+        account_blocked=account_blocked,
+        account_block_label=account_block_label,
+        account_block_reason=account_block_reason,
+        latency_avg_ms=latency_avg_ms,
         cooldown_reason=cooldown_reason,
         cooldown_ttl_seconds=cooldown_ttl_seconds,
         circuit_breaker_open=circuit_breaker_open,
@@ -650,6 +619,39 @@ async def cleanup_banned_keys(
 # ---------------------------------------------------------------------------
 # Adapters
 # ---------------------------------------------------------------------------
+
+
+class AdminListSchedulingPresetsAdapter(AdminApiAdapter):
+    async def handle(self, context: ApiRequestContext) -> Any:  # type: ignore[override]
+        items: list[PresetDimensionMetaResponse] = [
+            PresetDimensionMetaResponse(
+                name="lru",
+                label="LRU 轮转",
+                description="最久未使用的 Key 优先",
+                providers=[],
+                modes=None,
+                default_mode=None,
+            )
+        ]
+
+        for meta in get_preset_dimension_metas():
+            modes = None
+            if meta.modes:
+                modes = [
+                    PresetModeMetaResponse(value=mode, label=_preset_mode_label(mode))
+                    for mode in meta.modes
+                ]
+            items.append(
+                PresetDimensionMetaResponse(
+                    name=meta.name,
+                    label=meta.label,
+                    description=meta.description,
+                    providers=list(meta.providers),
+                    modes=modes,
+                    default_mode=meta.default_mode,
+                )
+            )
+        return items
 
 
 class AdminPoolOverviewAdapter(AdminApiAdapter):
@@ -813,20 +815,34 @@ class AdminListPoolKeysAdapter(AdminApiAdapter):
                 if pcfg and pcfg.lru_enabled
                 else asyncio.sleep(0, result={})
             )
+            _latency_coro = (
+                pool_redis.batch_get_latency_avgs(pid, key_ids, pcfg.latency_window_seconds)
+                if pcfg and pcfg.scheduling_mode == "multi_score"
+                else asyncio.sleep(0, result={})
+            )
             _cost_coro = (
                 pool_redis.batch_get_cost_totals(pid, key_ids, pcfg.cost_window_seconds)
                 if pcfg
                 else asyncio.sleep(0, result={})
             )
-            cooldowns, cooldown_ttls, lru_scores, cost_totals, sticky_counts = await asyncio.gather(
+            (
+                cooldowns,
+                cooldown_ttls,
+                lru_scores,
+                latency_avgs,
+                cost_totals,
+                sticky_counts,
+            ) = await asyncio.gather(
                 pool_redis.batch_get_cooldowns(pid, key_ids),
                 pool_redis.batch_get_cooldown_ttls(pid, key_ids),
                 _lru_coro,
+                _latency_coro,
                 _cost_coro,
                 pool_redis.batch_get_key_sticky_counts(pid, key_ids),
             )
         else:
-            cooldowns, cooldown_ttls, lru_scores, cost_totals, sticky_counts = (
+            cooldowns, cooldown_ttls, lru_scores, latency_avgs, cost_totals, sticky_counts = (
+                {},
                 {},
                 {},
                 {},
@@ -874,6 +890,13 @@ class AdminListPoolKeysAdapter(AdminApiAdapter):
             )
             cost_usage = int(cost_totals.get(kid, 0) or 0)
             cost_limit = pcfg.cost_limit_per_key_tokens if pcfg else None
+            latency_avg_raw = latency_avgs.get(kid)
+            latency_avg_ms = float(latency_avg_raw) if latency_avg_raw is not None else None
+            account_state = resolve_pool_account_state(
+                provider_type=provider_type,
+                upstream_metadata=getattr(k, "upstream_metadata", None),
+                oauth_invalid_reason=getattr(k, "oauth_invalid_reason", None),
+            )
             (
                 scheduling_status,
                 scheduling_reason,
@@ -886,6 +909,10 @@ class AdminListPoolKeysAdapter(AdminApiAdapter):
                 scheduling_dimensions,
             ) = _build_pool_scheduling_state(
                 is_active=bool(k.is_active),
+                account_blocked=account_state.blocked,
+                account_block_label=account_state.label,
+                account_block_reason=account_state.reason,
+                latency_avg_ms=latency_avg_ms,
                 cooldown_reason=cd_reason,
                 cooldown_ttl_seconds=cd_ttl,
                 circuit_breaker_open=any_circuit_open,
@@ -955,9 +982,7 @@ class AdminListPoolKeysAdapter(AdminApiAdapter):
                     key_name=k.name or "",
                     is_active=bool(k.is_active),
                     auth_type=str(getattr(k, "auth_type", "api_key") or "api_key"),
-                    oauth_expires_at=_derive_oauth_expires_at(
-                        k, auth_config=oauth_auth_config
-                    ),
+                    oauth_expires_at=_derive_oauth_expires_at(k, auth_config=oauth_auth_config),
                     oauth_invalid_at=(
                         int(k.oauth_invalid_at.timestamp())
                         if getattr(k, "oauth_invalid_at", None)

@@ -34,13 +34,14 @@
               </Button>
               <Button
                 v-if="selectedProviderId"
-                variant="ghost"
-                size="icon"
-                class="h-8 w-8"
-                title="号池配置"
-                @click="showConfigDialog = true"
+                variant="outline"
+                size="sm"
+                class="h-8 px-2 text-xs gap-1"
+                title="调整号池调度"
+                @click="showSchedulingDialog = true"
               >
-                <Settings class="w-3.5 h-3.5" />
+                调度
+                <ChevronDown class="w-3 h-3 text-muted-foreground" />
               </Button>
               <Button
                 v-if="selectedProviderId"
@@ -53,7 +54,8 @@
                 <Ban class="w-3.5 h-3.5" />
               </Button>
               <RefreshButton
-                :loading="keysLoading"
+                :loading="refreshCurrentPageLoading"
+                :title="refreshButtonTitle"
                 @click="refreshCurrentPage"
               />
             </div>
@@ -197,16 +199,16 @@
             >
               <Upload class="w-3.5 h-3.5" />
             </Button>
-            <Button
+            <button
               v-if="selectedProviderId"
-              variant="ghost"
-              size="icon"
-              class="h-8 w-8"
-              title="号池配置"
-              @click="showConfigDialog = true"
+              class="group inline-flex items-center gap-1.5 px-2.5 h-8 rounded-md border border-border/50 bg-muted/20 hover:bg-muted/40 hover:border-primary/40 transition-all duration-200 text-xs"
+              title="点击调整号池调度"
+              @click="showSchedulingDialog = true"
             >
-              <Settings class="w-3.5 h-3.5" />
-            </Button>
+              <span class="text-muted-foreground/80 hidden lg:inline">调度:</span>
+              <span class="font-medium text-foreground/90">{{ poolSchedulingLabel }}</span>
+              <ChevronDown class="w-3 h-3 text-muted-foreground/70 group-hover:text-foreground transition-colors" />
+            </button>
             <Button
               v-if="selectedProviderId"
               variant="ghost"
@@ -218,7 +220,8 @@
               <Ban class="w-3.5 h-3.5" />
             </Button>
             <RefreshButton
-              :loading="keysLoading"
+              :loading="refreshCurrentPageLoading"
+              :title="refreshButtonTitle"
               @click="refreshCurrentPage"
             />
           </div>
@@ -370,6 +373,14 @@
                           {{ getKeyOAuthExpires(key)?.text }}
                         </span>
                       </template>
+                      <Badge
+                        v-if="getAccountAlertLabel(key)"
+                        variant="destructive"
+                        class="text-[9px] px-1 py-0 h-4 shrink-0"
+                        :title="getAccountAlertTitle(key)"
+                      >
+                        {{ getAccountAlertLabel(key) }}
+                      </Badge>
                       <Badge
                         v-if="key.oauth_plan_type"
                         variant="outline"
@@ -754,6 +765,14 @@
                     </span>
                   </template>
                   <Badge
+                    v-if="getAccountAlertLabel(key)"
+                    variant="destructive"
+                    class="text-[9px] px-1 py-0 h-4 shrink-0"
+                    :title="getAccountAlertTitle(key)"
+                  >
+                    {{ getAccountAlertLabel(key) }}
+                  </Badge>
+                  <Badge
                     v-if="key.oauth_plan_type"
                     variant="outline"
                     class="text-[9px] px-1 py-0 h-4 shrink-0"
@@ -1092,13 +1111,13 @@
       @close="showImportDialog = false"
       @saved="handleAccountDialogSaved"
     />
-    <PoolConfigDialog
+    <PoolSchedulingDialog
       v-if="selectedProviderId"
-      v-model="showConfigDialog"
+      v-model="showSchedulingDialog"
       :provider-id="selectedProviderId"
-      :provider-type="selectedProviderData?.provider_type"
+      :provider-type="selectedProviderType"
       :current-config="selectedProviderConfig"
-      :current-claude-config="selectedProviderData?.claude_code_advanced"
+      :current-claude-config="selectedProviderClaudeConfig"
       @saved="loadOverview"
     />
     <KeyFormDialog
@@ -1132,7 +1151,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import {
   Search,
   Upload,
-  Settings,
+  ChevronDown,
   RefreshCw,
   Power,
   Database,
@@ -1176,6 +1195,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { parseApiError } from '@/utils/errorParser'
 import {
   getPoolOverview,
+  getPoolSchedulingPresets,
   listPoolKeys,
   clearPoolCooldown,
   cleanupBannedPoolKeys,
@@ -1193,18 +1213,20 @@ import type {
   PoolOverviewItem,
   PoolKeyDetail,
   PoolKeysPageResponse,
+  PoolPresetMeta,
 } from '@/api/endpoints/pool'
-import type { EndpointAPIKey, PoolAdvancedConfig, ProviderWithEndpointsSummary } from '@/api/endpoints/types/provider'
+import type { ClaudeCodeAdvancedConfig, EndpointAPIKey, PoolAdvancedConfig, ProviderWithEndpointsSummary } from '@/api/endpoints/types/provider'
 import { getProvider } from '@/api/endpoints'
 import { useProxyNodesStore } from '@/stores/proxy-nodes'
-import PoolConfigDialog from '@/features/pool/components/PoolConfigDialog.vue'
+import PoolSchedulingDialog from '@/features/pool/components/PoolSchedulingDialog.vue'
 import KeyAllowedModelsEditDialog from '@/features/providers/components/KeyAllowedModelsEditDialog.vue'
 import KeyFormDialog from '@/features/providers/components/KeyFormDialog.vue'
 import OAuthKeyEditDialog from '@/features/providers/components/OAuthKeyEditDialog.vue'
 import OAuthAccountDialog from '@/features/providers/components/OAuthAccountDialog.vue'
 import ProxyNodeSelect from '@/features/providers/components/ProxyNodeSelect.vue'
+import { isAccountLevelBlockReason, cleanAccountBlockReason } from '@/utils/accountBlock'
 
-const { success, error: showError } = useToast()
+const { success, error: showError, warning: showWarning } = useToast()
 const { confirm } = useConfirm()
 const { copyToClipboard } = useClipboard()
 const { tick: countdownTick, start: startCountdownTimer } = useCountdownTimer()
@@ -1273,6 +1295,81 @@ const selectedProviderConfig = computed<PoolAdvancedConfig | null>(() => {
   return (selectedProviderData.value as Record<string, unknown> | null)?.pool_advanced as PoolAdvancedConfig | null ?? null
 })
 
+const selectedProviderClaudeConfig = computed(() => {
+  return (selectedProviderData.value as Record<string, unknown> | null)?.claude_code_advanced as ClaudeCodeAdvancedConfig | null ?? null
+})
+
+const DEFAULT_PRESET_LABELS: Record<string, string> = {
+  lru: 'LRU',
+  free_team_first: 'Free/Team',
+  recent_refresh: '刷新优先',
+  quota_balanced: '额度均衡',
+  single_account: '单号优先',
+}
+const presetLabelsByName = ref<Record<string, string>>({ ...DEFAULT_PRESET_LABELS })
+
+function normalizePresetName(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase()
+}
+
+async function loadSchedulingPresetMetas(): Promise<void> {
+  try {
+    const metas = await getPoolSchedulingPresets()
+    const next: Record<string, string> = {}
+    for (const meta of metas as PoolPresetMeta[]) {
+      const name = normalizePresetName(meta.name)
+      if (!name) continue
+      const label = String(meta.label ?? '').trim()
+      next[name] = label || name
+    }
+    if (Object.keys(next).length > 0) {
+      presetLabelsByName.value = next
+    }
+  } catch {
+    presetLabelsByName.value = { ...DEFAULT_PRESET_LABELS }
+  }
+}
+
+const poolSchedulingLabel = computed(() => {
+  const cfg = selectedProviderConfig.value
+  const presets = Array.isArray(cfg?.scheduling_presets) ? cfg.scheduling_presets : []
+  const presetLabels = presetLabelsByName.value
+
+  if (presets.length > 0) {
+    // New format: object list with { preset, enabled }
+    const first = presets[0]
+    if (typeof first === 'object' && first !== null && 'preset' in first) {
+      const enabledLabels = (presets as Array<{ preset: string; enabled?: boolean }>)
+        .filter(p => p.enabled !== false)
+        .map(p => presetLabels[normalizePresetName(p.preset)])
+        .filter(Boolean)
+      return enabledLabels.length > 0 ? enabledLabels.join('+') : '无启用维度'
+    }
+
+    // Legacy string list format
+    if (typeof first === 'string') {
+      const labels = (presets as string[])
+        .map(p => presetLabels[normalizePresetName(p)])
+        .filter(Boolean)
+      if (labels.length > 0) return labels.join('+')
+    }
+  }
+
+  // Fallback: legacy scheduling_mode field
+  if (cfg?.scheduling_mode === 'multi_score') {
+    return '多维评分'
+  }
+
+  const lruEnabled = cfg?.lru_enabled !== false
+  const stickyTtl = Number(cfg?.sticky_session_ttl_seconds ?? 3600)
+  const stickyEnabled = Number.isFinite(stickyTtl) && stickyTtl > 0
+
+  if (lruEnabled && stickyEnabled) return 'LRU + 粘性'
+  if (lruEnabled) return 'LRU'
+  if (stickyEnabled) return '粘性'
+  return '随机'
+})
+
 const selectedProviderType = computed(() => {
   const fromDetail = String(selectedProviderData.value?.provider_type || '').trim().toLowerCase()
   if (fromDetail) return fromDetail
@@ -1330,11 +1427,11 @@ async function refresh() {
 const keyPage = ref<PoolKeysPageResponse>({ total: 0, page: 1, page_size: 50, keys: [] })
 const keysLoading = ref(false)
 const refreshingCurrentPageQuota = ref(false)
-const queuedCurrentPageQuotaRefresh = ref(false)
 const searchQuery = ref('')
 const statusFilter = ref('all')
 const currentPage = ref(1)
 const pageSize = ref(50)
+const MANUAL_QUOTA_REFRESH_COOLDOWN_SECONDS = 5 * 60
 const refreshingOAuthKeyId = ref<string | null>(null)
 const revealedKeys = ref<Map<string, string>>(new Map())
 const recoveringHealthKeyId = ref<string | null>(null)
@@ -1372,57 +1469,123 @@ const quotaRefreshSupported = computed(() => {
     || selectedProviderType.value === 'antigravity'
 })
 
-function getCurrentPageQuotaKeyIds(): string[] {
-  const ids: string[] = []
+const refreshCurrentPageLoading = computed(() => {
+  return keysLoading.value || refreshingCurrentPageQuota.value
+})
+
+function normalizeQuotaUpdatedAt(raw: number | null | undefined): number | null {
+  const value = Number(raw ?? 0)
+  if (!Number.isFinite(value) || value <= 0) return null
+  if (value > 1_000_000_000_000) {
+    return Math.floor(value / 1000)
+  }
+  return Math.floor(value)
+}
+
+const currentPageQuotaRefreshStats = computed(() => {
+  void countdownTick.value
   const seen = new Set<string>()
+  const eligibleIds: string[] = []
+  let cooledDownCount = 0
+  let minRemainingSeconds = 0
+  const nowSeconds = Math.floor(Date.now() / 1000)
   for (const key of keyPage.value.keys) {
     const id = String(key.key_id || '').trim()
     if (!id || seen.has(id)) continue
     seen.add(id)
-    ids.push(id)
+    const updatedAt = normalizeQuotaUpdatedAt(key.quota_updated_at ?? null)
+    if (updatedAt == null) {
+      eligibleIds.push(id)
+      continue
+    }
+    const remaining = MANUAL_QUOTA_REFRESH_COOLDOWN_SECONDS - (nowSeconds - updatedAt)
+    if (remaining > 0) {
+      cooledDownCount += 1
+      if (minRemainingSeconds <= 0 || remaining < minRemainingSeconds) {
+        minRemainingSeconds = remaining
+      }
+      continue
+    }
+    eligibleIds.push(id)
   }
-  return ids
-}
+  return {
+    total: seen.size,
+    eligibleIds,
+    cooledDownCount,
+    minRemainingSeconds,
+  }
+})
 
-async function refreshCurrentPageQuotaInBackground(options: { silent?: boolean } = {}) {
-  if (!selectedProviderId.value || !quotaRefreshSupported.value) return
+async function refreshCurrentPageQuotaInBackground(
+  options: { silent?: boolean; reloadAfter?: boolean } = {},
+): Promise<boolean> {
+  if (!selectedProviderId.value || !quotaRefreshSupported.value) return false
 
   const providerId = selectedProviderId.value
-  const keyIds = getCurrentPageQuotaKeyIds()
-  if (keyIds.length === 0) return
+  const quotaStats = currentPageQuotaRefreshStats.value
+  if (quotaStats.eligibleIds.length === 0) {
+    if (!options.silent && quotaStats.total > 0 && quotaStats.cooledDownCount > 0) {
+      const waitText = quotaStats.minRemainingSeconds > 0
+        ? formatTTL(quotaStats.minRemainingSeconds)
+        : '稍后'
+      showWarning(`当前页额度均在冷却中，请 ${waitText} 后再试`)
+    }
+    return false
+  }
 
   if (refreshingCurrentPageQuota.value) {
-    queuedCurrentPageQuotaRefresh.value = true
-    return
+    return false
   }
 
   refreshingCurrentPageQuota.value = true
   try {
-    const result = await refreshProviderQuota(providerId, keyIds)
+    const result = await refreshProviderQuota(providerId, quotaStats.eligibleIds)
     const successCount = Number(result.success || 0)
     const failedCount = Number(result.failed || 0)
+    const skippedCount = Math.max(quotaStats.total - quotaStats.eligibleIds.length, 0)
 
     // 刷新当前页数据，展示最新额度与状态
-    if (selectedProviderId.value === providerId) {
+    if (selectedProviderId.value === providerId && options.reloadAfter !== false) {
       await loadKeys()
     }
 
     if (!options.silent) {
-      success(`当前页额度刷新完成：成功 ${successCount}，失败 ${failedCount}`)
+      const skippedText = skippedCount > 0 ? `，冷却跳过 ${skippedCount}` : ''
+      success(`当前页额度刷新完成：成功 ${successCount}，失败 ${failedCount}${skippedText}`)
     }
+    return true
   } catch (err) {
     showError(parseApiError(err, '刷新当前页额度失败'))
+    return false
   } finally {
     refreshingCurrentPageQuota.value = false
-    if (queuedCurrentPageQuotaRefresh.value) {
-      queuedCurrentPageQuotaRefresh.value = false
-      void refreshCurrentPageQuotaInBackground(options)
-    }
   }
 }
 
+const refreshButtonTitle = computed(() => {
+  if (refreshCurrentPageLoading.value) return '刷新中...'
+  if (!selectedProviderId.value) return '刷新'
+  if (!quotaRefreshSupported.value) return '刷新数据'
+
+  const quotaStats = currentPageQuotaRefreshStats.value
+  if (quotaStats.total === 0) return '刷新数据和额度'
+  if (quotaStats.eligibleIds.length === 0 && quotaStats.cooledDownCount > 0) {
+    const waitText = quotaStats.minRemainingSeconds > 0
+      ? formatTTL(quotaStats.minRemainingSeconds)
+      : '稍后'
+    return `刷新数据（额度冷却 ${waitText}）`
+  }
+  if (quotaStats.cooledDownCount > 0) {
+    return `刷新数据和额度（可刷新 ${quotaStats.eligibleIds.length}/${quotaStats.total}）`
+  }
+  return '刷新数据和额度'
+})
+
 async function refreshCurrentPage() {
-  await refresh()
+  const quotaDidReload = await refreshCurrentPageQuotaInBackground({ reloadAfter: true })
+  if (!quotaDidReload) {
+    await refresh()
+  }
 }
 
 async function loadKeys() {
@@ -1807,11 +1970,13 @@ async function handleCleanupBannedKeys() {
 
 // --- Dialogs ---
 const showImportDialog = ref(false)
-const showConfigDialog = ref(false)
+const showSchedulingDialog = ref(false)
 
 async function handleAccountDialogSaved() {
   showImportDialog.value = false
   await Promise.all([loadKeys(), loadOverview()])
+  // 导入账号后补一次静默额度刷新，避免新账号在列表里暂无额度信息
+  await refreshCurrentPageQuotaInBackground({ silent: true })
 }
 
 // --- Formatting ---
@@ -1831,6 +1996,8 @@ function formatCooldownReason(reason: string): string {
 type PoolStatusVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning' | 'dark'
 
 function getSchedulingStatus(key: PoolKeyDetail): 'available' | 'degraded' | 'blocked' {
+  if (getAccountAlertLabel(key)) return 'blocked'
+
   const status = key.scheduling_status
   if (status === 'available' || status === 'degraded' || status === 'blocked') {
     return status
@@ -1845,6 +2012,9 @@ function getSchedulingStatus(key: PoolKeyDetail): 'available' | 'degraded' | 'bl
 }
 
 function getSchedulingBadgeLabel(key: PoolKeyDetail): string {
+  const accountAlert = getAccountAlertLabel(key)
+  if (accountAlert) return accountAlert
+
   const rawLabel = String(key.scheduling_label || '').trim()
   if (rawLabel) {
     if (rawLabel === '禁用' || rawLabel === '停用') return '禁用'
@@ -1861,6 +2031,8 @@ function getSchedulingBadgeLabel(key: PoolKeyDetail): string {
 }
 
 function getSchedulingBadgeVariant(key: PoolKeyDetail): PoolStatusVariant {
+  if (getAccountAlertLabel(key)) return 'destructive'
+
   const reason = key.scheduling_reason
   if (reason === 'manual_disabled') return 'dark'
   if (reason === 'cooldown' || reason === 'circuit_open' || reason === 'cost_exhausted') return 'destructive'
@@ -1875,6 +2047,9 @@ function getSchedulingBadgeVariant(key: PoolKeyDetail): PoolStatusVariant {
 }
 
 function getSchedulingTitle(key: PoolKeyDetail): string {
+  const accountAlertTitle = getAccountAlertTitle(key)
+  if (accountAlertTitle) return accountAlertTitle
+
   if (key.scheduling_dimensions && key.scheduling_dimensions.length > 0) {
     return key.scheduling_dimensions.map((item) => {
       const ttl = item.ttl_seconds && item.ttl_seconds > 0 ? ` (${formatTTL(item.ttl_seconds)})` : ''
@@ -2048,6 +2223,41 @@ function getOAuthStatusTitle(key: PoolKeyDetail): string {
   return `Token 剩余有效期: ${status.text}`
 }
 
+const _accountAlertCache = new WeakMap<PoolKeyDetail, string | null>()
+
+function getAccountAlertLabel(key: PoolKeyDetail): string | null {
+  const cached = _accountAlertCache.get(key)
+  if (cached !== undefined) return cached
+
+  let result: string | null = null
+  const quotaText = String(key.account_quota || '').trim()
+  // 后端 _build_account_quota 返回的确切文本: "账号已封禁" / "访问受限"
+  if (quotaText === '账号已封禁' || quotaText === '封禁') result = '账号封禁'
+  else if (quotaText === '访问受限') result = '访问受限'
+  else if (isAccountLevelBlockReason(key.oauth_invalid_reason)) result = '账号异常'
+
+  _accountAlertCache.set(key, result)
+  return result
+}
+
+function getAccountAlertTitle(key: PoolKeyDetail): string {
+  const label = getAccountAlertLabel(key)
+  if (!label) return ''
+
+  const reason = String(key.oauth_invalid_reason || '').trim()
+  if (reason) {
+    if (isAccountLevelBlockReason(reason)) {
+      const cleaned = cleanAccountBlockReason(reason)
+      return cleaned ? `${label}: ${cleaned}` : label
+    }
+    return `${label}: ${reason}`
+  }
+
+  const quotaText = String(key.account_quota || '').trim()
+  if (quotaText) return `${label}: ${quotaText}`
+  return label
+}
+
 function normalizeQuotaLabel(label: string): string {
   const normalized = label.trim()
   if (!normalized) return '额度'
@@ -2214,8 +2424,7 @@ function formatRelativeTime(isoStr: string): string {
 // --- Init ---
 onMounted(async () => {
   startCountdownTimer()
-  await loadOverview()
-  void refreshCurrentPageQuotaInBackground({ silent: true })
+  await Promise.all([loadSchedulingPresetMetas(), loadOverview()])
 })
 
 onBeforeUnmount(() => {

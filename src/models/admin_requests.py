@@ -127,6 +127,80 @@ class FailoverRulesConfig(BaseModel):
     )
 
 
+class ScoringWeightsConfig(BaseModel):
+    """多维评分权重配置。"""
+
+    lru: float = Field(0.3, ge=0.0, le=1.0)
+    latency: float = Field(0.25, ge=0.0, le=1.0)
+    health: float = Field(0.2, ge=0.0, le=1.0)
+    cost_remaining: float = Field(0.25, ge=0.0, le=1.0)
+
+
+def _allowed_pool_preset_names() -> set[str]:
+    from src.services.provider.pool.dimensions import get_preset_names
+
+    return get_preset_names() | {"lru"}
+
+
+def _preset_mode_meta(name: str) -> tuple[set[str], str | None]:
+    from src.services.provider.pool.dimensions import get_preset_dimension
+
+    dim = get_preset_dimension(name)
+    if dim is None or not dim.modes:
+        return set(), None
+
+    ordered_modes = [str(mode).strip().lower() for mode in dim.modes if str(mode).strip()]
+    if not ordered_modes:
+        return set(), None
+    modes = set(ordered_modes)
+    default_mode = str(dim.default_mode or "").strip().lower()
+    if not default_mode or default_mode not in modes:
+        default_mode = ordered_modes[0]
+    return modes, default_mode
+
+
+class SchedulingPresetItem(BaseModel):
+    """调度预设条目（新格式：有序对象列表）。"""
+
+    preset: str
+    enabled: bool = True
+    mode: str | None = None
+
+    @field_validator("preset")
+    @classmethod
+    def validate_preset(cls, v: str) -> str:
+        normalized = v.strip().lower()
+        allowed = _allowed_pool_preset_names()
+        if normalized not in allowed:
+            raise ValueError(f"无效的 preset: {normalized}")
+        return normalized
+
+    @field_validator("mode")
+    @classmethod
+    def normalize_mode(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        normalized = v.strip().lower()
+        return normalized or None
+
+    @model_validator(mode="after")
+    def validate_mode(self) -> "SchedulingPresetItem":
+        allowed_modes, default_mode = _preset_mode_meta(self.preset)
+        if not allowed_modes:
+            self.mode = None
+            return self
+
+        if self.mode is None:
+            self.mode = default_mode
+            return self
+
+        if self.mode not in allowed_modes:
+            raise ValueError(
+                f"preset={self.preset} 的 mode 必须是: {', '.join(sorted(allowed_modes))}"
+            )
+        return self
+
+
 class PoolAdvancedConfig(BaseModel):
     """通用号池配置（适用于所有 Provider 类型）。"""
 
@@ -148,7 +222,33 @@ class PoolAdvancedConfig(BaseModel):
         le=100,
         description="负载率阈值（%），超过时该 Key 被降权。默认 80",
     )
+    # 保留旧字段供向后兼容（新客户端不再发送）
     lru_enabled: bool = Field(True, description="LRU 调度（优先选择最久未用的 Key）")
+    scheduling_mode: str | None = Field(
+        None,
+        pattern="^(lru|multi_score)$",
+        description="号池调度模式：lru 或 multi_score",
+    )
+    scheduling_presets: list[SchedulingPresetItem] | list[str] | None = Field(
+        None,
+        description=(
+            "调度预设列表（新格式：对象列表 [{preset, enabled, mode}]；"
+            "旧格式：字符串列表 ['quota_balanced', ...]）"
+        ),
+    )
+    scoring_weights: ScoringWeightsConfig | None = Field(None, description="多维评分权重")
+    latency_window_seconds: int | None = Field(
+        None,
+        ge=300,
+        le=86400,
+        description="延迟窗口（秒），仅 multi_score 生效",
+    )
+    latency_sample_limit: int | None = Field(
+        None,
+        ge=10,
+        le=200,
+        description="每个 Key 的延迟样本上限，仅 multi_score 生效",
+    )
     cost_window_seconds: int | None = Field(
         None,
         ge=3600,

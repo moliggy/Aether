@@ -30,6 +30,25 @@ class PoolOverviewResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Scheduling presets metadata
+# ---------------------------------------------------------------------------
+
+
+class PresetModeMetaResponse(BaseModel):
+    value: str
+    label: str
+
+
+class PresetDimensionMetaResponse(BaseModel):
+    name: str
+    label: str
+    description: str
+    providers: list[str] = Field(default_factory=list)
+    modes: list[PresetModeMetaResponse] | None = None
+    default_mode: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Paginated key list
 # ---------------------------------------------------------------------------
 

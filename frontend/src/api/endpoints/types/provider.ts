@@ -453,11 +453,29 @@ export interface ClaudeCodeAdvancedConfig {
   cli_only_enabled?: boolean
 }
 
+export interface SchedulingPresetItem {
+  preset: string
+  enabled: boolean
+  mode?: string | null
+}
+
 export interface PoolAdvancedConfig {
   global_priority?: number | null
   sticky_session_ttl_seconds?: number | null
   load_threshold_percent?: number | null
+  // 旧字段（兼容读取）
   lru_enabled?: boolean
+  scheduling_mode?: 'lru' | 'multi_score' | null
+  // 新格式：对象列表；旧格式：字符串列表
+  scheduling_presets?: SchedulingPresetItem[] | string[] | null
+  scoring_weights?: {
+    lru?: number
+    latency?: number
+    health?: number
+    cost_remaining?: number
+  } | null
+  latency_window_seconds?: number | null
+  latency_sample_limit?: number | null
   cost_window_seconds?: number | null
   cost_limit_per_key_tokens?: number | null
   cost_soft_threshold_percent?: number | null
