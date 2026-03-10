@@ -234,7 +234,9 @@ class MaintenanceScheduler:
 
         # 启动时执行一次初始化任务
         if config.maintenance_startup_tasks_enabled:
-            asyncio.create_task(self._run_startup_tasks())
+            from src.utils.async_utils import safe_create_task
+
+            safe_create_task(self._run_startup_tasks())
         else:
             logger.info("维护调度器启动任务已禁用（MAINTENANCE_STARTUP_TASKS_ENABLED=false）")
 

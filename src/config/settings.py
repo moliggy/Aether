@@ -26,7 +26,7 @@ class Config:
         self.port = int(os.getenv("PORT", "8084"))
         self.log_level = os.getenv("LOG_LEVEL", "INFO")
         self.worker_processes = int(
-            os.getenv("WEB_CONCURRENCY", os.getenv("GUNICORN_WORKERS", "4"))
+            os.getenv("WEB_CONCURRENCY", os.getenv("GUNICORN_WORKERS", "1"))
         )
 
         # PostgreSQL 连接池计算相关配置
@@ -364,18 +364,18 @@ class Config:
         - 单 Worker: 200 连接（适合开发/低负载）
         - 多 Worker: 按比例分配，确保总数不超过系统限制
 
-        范围: 50 - 500
+        范围: 50 - 200
         """
-        # 基础连接数：假设系统可用 socket 约 800 个用于 HTTP
+        # 基础连接数：默认将总 HTTP 连接预算控制在 200
         # （预留给 DB、Redis、内部服务等）
-        base_connections = 800
+        base_connections = 200
         workers = max(self.worker_processes, 1)
 
         # 每个 Worker 分配的连接数
         per_worker = base_connections // workers
 
-        # 限制范围：最小 50（保证基本并发），最大 500（避免资源耗尽）
-        return max(50, min(per_worker, 500))
+        # 限制范围：最小 50（保证基本并发），最大 200（控制内存与 socket 占用）
+        return max(50, min(per_worker, 200))
 
     def _auto_http_keepalive_connections(self) -> int:
         """

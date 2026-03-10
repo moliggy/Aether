@@ -93,6 +93,7 @@ class CacheAffinityManager:
         self.redis = redis_client
         self.default_ttl = default_ttl
         self._memory_store: dict[str, dict[str, Any]] = {}
+        self._memory_store_max_size: int = 5000  # 内存模式最大条目数
         self._memory_lock: asyncio.Lock | None = None
 
         # L1 缓存（即使使用 Redis 也启用，减少网络往返）
@@ -257,6 +258,12 @@ class CacheAffinityManager:
         lock = self._get_memory_lock()
         async with lock:
             self._memory_store[cache_key] = dict(affinity_dict)
+            # 超出上限时清理过期条目
+            if len(self._memory_store) > self._memory_store_max_size:
+                now = time.time()
+                expired = [k for k, v in self._memory_store.items() if now > v.get("expire_at", 0)]
+                for k in expired:
+                    del self._memory_store[k]
         await self._set_l1_entry(cache_key, affinity_dict)
 
     async def _delete_affinity_key(self, cache_key: str) -> None:

@@ -367,6 +367,8 @@ class EmailNotificationPlugin(NotificationPlugin):
     def __del__(self) -> None:
         """清理资源"""
         try:
-            asyncio.create_task(self.close())
-        except:
+            from src.utils.async_utils import safe_create_task
+
+            safe_create_task(self.close())
+        except Exception:
             pass

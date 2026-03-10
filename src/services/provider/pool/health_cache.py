@@ -12,6 +12,7 @@ import time
 from typing import Any
 
 _TTL_SECONDS = 30.0
+_MAX_PROVIDERS = 500  # 最大缓存 provider 数量，防止无界增长
 _LOCK = threading.Lock()
 _CACHE: dict[str, tuple[float, dict[str, float]]] = {}
 
@@ -74,6 +75,14 @@ def get_health_scores(provider_id: str, keys: list[Any]) -> dict[str, float]:
 
     with _LOCK:
         _CACHE[provider_id] = (now + _TTL_SECONDS, fresh)
+        # 超出上限时清理过期条目，仍超限则淘汰最旧条目
+        if len(_CACHE) > _MAX_PROVIDERS:
+            expired = [k for k, (exp, _) in _CACHE.items() if now >= exp]
+            for k in expired:
+                del _CACHE[k]
+            if len(_CACHE) > _MAX_PROVIDERS:
+                oldest_key = min(_CACHE, key=lambda k: _CACHE[k][0])
+                del _CACHE[oldest_key]
     return dict(fresh)
 
 
