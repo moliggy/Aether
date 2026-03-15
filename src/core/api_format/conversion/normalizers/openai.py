@@ -797,7 +797,9 @@ class OpenAINormalizer(FormatNormalizer):
             tool_name = event.tool_name or ""
             tool_index = self._ensure_tool_call_index(ss, tool_id, event.block_index)
             if tool_id:
-                ss.setdefault("block_to_tool_id", {})[int(event.block_index)] = str(tool_id)
+                self._ss_dict(ss, "block_to_tool_id")[int(event.block_index)] = str(tool_id)
+            if tool_name:
+                self._ss_dict(ss, "block_to_tool_name")[int(event.block_index)] = str(tool_name)
             out.append(
                 base_chunk(
                     {
@@ -828,10 +830,7 @@ class OpenAINormalizer(FormatNormalizer):
                 # 构造 data URL 格式的图片
                 data_url = f"data:{image_media_type};base64,{image_data}"
                 # 存储图片数据，在 ContentBlockStopEvent 时输出
-                image_blocks = ss.get("image_blocks")
-                if not isinstance(image_blocks, dict):
-                    image_blocks = {}
-                    ss["image_blocks"] = image_blocks
+                image_blocks = self._ss_dict(ss, "image_blocks")
                 image_blocks[int(event.block_index)] = {
                     "url": data_url,
                     "media_type": image_media_type,
@@ -865,14 +864,18 @@ class OpenAINormalizer(FormatNormalizer):
 
         if isinstance(event, ToolCallDeltaEvent):
             tool_id = str(event.tool_id or "")
-            block_to_tool_id = ss.setdefault("block_to_tool_id", {})
+            block_to_tool_id = self._ss_dict(ss, "block_to_tool_id")
             if not tool_id:
                 tool_id = str(block_to_tool_id.get(int(event.block_index)) or "")
             else:
                 block_to_tool_id[int(event.block_index)] = tool_id
 
+            tool_name = str(
+                self._ss_dict(ss, "block_to_tool_name").get(int(event.block_index)) or ""
+            )
+
             tool_index = self._ensure_tool_call_index(ss, tool_id, event.block_index)
-            # 对严格客户端重复携带 id/type，避免它们把后续 delta 视为无效 tool_call。
+            # 对严格客户端重复携带 id/type/name，避免它们把后续 delta 视为无效 tool_call。
             tc_delta: dict[str, Any] = {
                 "index": tool_index,
                 "type": "function",
@@ -880,6 +883,8 @@ class OpenAINormalizer(FormatNormalizer):
             }
             if tool_id:
                 tc_delta["id"] = tool_id
+            if tool_name:
+                tc_delta["function"]["name"] = tool_name
             out.append(base_chunk({"tool_calls": [tc_delta]}))
             return out
 
@@ -1804,11 +1809,17 @@ class OpenAINormalizer(FormatNormalizer):
         except ValueError:
             return ErrorType.UNKNOWN
 
+    @staticmethod
+    def _ss_dict(ss: dict[str, Any], key: str) -> dict:
+        """Get or create a dict entry in stream state."""
+        val = ss.get(key)
+        if not isinstance(val, dict):
+            val = {}
+            ss[key] = val
+        return val
+
     def _ensure_tool_block_index(self, ss: dict[str, Any], tool_key: str) -> int:
-        mapping = ss.get("tool_id_to_block_index")
-        if not isinstance(mapping, dict):
-            mapping = {}
-            ss["tool_id_to_block_index"] = mapping
+        mapping = self._ss_dict(ss, "tool_id_to_block_index")
 
         if tool_key in mapping:
             return int(mapping[tool_key])
@@ -1828,10 +1839,7 @@ class OpenAINormalizer(FormatNormalizer):
             ss["next_tool_index"] = 0
 
         # block_index -> tool_index 的辅助映射，用于 tool_id 丢失时回落
-        block_mapping: dict[int, int] = ss.get("block_to_tool_index")  # type: ignore[assignment]
-        if not isinstance(block_mapping, dict):
-            block_mapping = {}
-            ss["block_to_tool_index"] = block_mapping
+        block_mapping: dict[int, int] = self._ss_dict(ss, "block_to_tool_index")  # type: ignore[assignment]
 
         # 优先用 tool_id 查找
         if tool_id and tool_id in mapping:

@@ -332,6 +332,7 @@ def test_openai_stream_chunk_and_event_roundtrip_basic() -> None:
     )
     assert tool_delta["choices"][0]["delta"]["tool_calls"][0]["id"] == "call_1"
     assert tool_delta["choices"][0]["delta"]["tool_calls"][0]["index"] == 0
+    assert tool_delta["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "get_weather"
 
     # 最终 stop chunk finish_reason=tool_calls
     assert out_chunks[-1]["choices"][0]["finish_reason"] == "tool_calls"

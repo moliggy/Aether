@@ -858,6 +858,7 @@ def test_tool_call_stream_index_stable_across_deltas() -> None:
     # 收集所有 tool_calls chunk
     tc_indices: list[int] = []
     tc_ids: list[str] = []
+    tc_names: list[str] = []
     for event in all_events:
         for choice in event.get("choices", []):
             tcs = choice.get("delta", {}).get("tool_calls")
@@ -865,6 +866,7 @@ def test_tool_call_stream_index_stable_across_deltas() -> None:
                 for tc in tcs:
                     tc_indices.append(tc["index"])
                     tc_ids.append(str(tc.get("id") or ""))
+                    tc_names.append(str((tc.get("function") or {}).get("name") or ""))
 
     assert len(tc_indices) >= 2, f"expected at least 2 tool_call chunks, got {len(tc_indices)}"
     # 同一个 tool call 的所有 chunk 必须使用相同的 index
@@ -874,4 +876,8 @@ def test_tool_call_stream_index_stable_across_deltas() -> None:
     assert all(tc_id == "fc_001" for tc_id in tc_ids), (
         "tool_call id should be repeated on every delta for strict OpenAI-compatible clients, "
         f"got: {tc_ids}"
+    )
+    assert all(tc_name == "get_weather" for tc_name in tc_names), (
+        "tool_call function.name should be repeated on every delta for strict "
+        f"OpenAI-compatible clients, got: {tc_names}"
     )
