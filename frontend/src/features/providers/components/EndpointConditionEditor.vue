@@ -10,6 +10,16 @@
     >
       <!-- Group header: mode selector + actions -->
       <div class="flex items-center gap-1.5 mb-2">
+        <Button
+          v-if="!nested"
+          variant="ghost"
+          size="icon"
+          class="h-6 w-6 shrink-0 text-muted-foreground"
+          title="转回单条件"
+          @click="convertToLeaf"
+        >
+          <ListFilter class="w-3.5 h-3.5" />
+        </Button>
         <Select
           :model-value="modelValue.mode"
           @update:model-value="(value: string) => updateGroupMode(value as ConditionGroupMode)"
@@ -38,10 +48,10 @@
           条件
         </Button>
         <Button
+          v-if="!nested"
           variant="ghost"
           size="sm"
           class="h-6 px-1.5 text-xs text-muted-foreground"
-          title="添加嵌套条件组"
           @click="addGroupChild(modelValue.mode === 'all' ? 'any' : 'all')"
         >
           <Plus class="w-3 h-3 mr-0.5" />
@@ -98,7 +108,7 @@
       class="flex flex-wrap items-center gap-1.5 rounded-md px-2 py-1.5"
       :class="nested ? 'bg-background/60' : 'bg-muted/10 border border-border'"
     >
-      <!-- Toggle to group mode (icon button at the start) -->
+      <!-- Toggle to group mode (icon button at the start, top-level only) -->
       <Button
         v-if="!nested"
         variant="ghost"
@@ -230,6 +240,10 @@ function updateGroupMode(mode: ConditionGroupMode): void {
   const next = cloneEditableCondition(props.modelValue) as EditableConditionGroup
   next.mode = mode
   emit('update:modelValue', next)
+}
+
+function convertToLeaf(): void {
+  emit('update:modelValue', createEmptyConditionLeaf())
 }
 
 function convertToGroup(mode: ConditionGroupMode): void {
