@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from src.core.enums import AuthSource
+from src.core.enums import AuthSource, UserRole
+from src.models.database import Base, OAuthProvider, User, UserOAuthLink
 from src.services.auth.oauth.service import OAuthService
 from src.services.auth.oauth.state import OAuthStateData
 
@@ -127,3 +131,79 @@ async def test_handle_callback_allows_bind_state_without_device_id(
     parsed = urlparse(result.redirect_url)
     assert result.refresh_token is None
     assert parse_qs(parsed.query)["oauth_bound"] == ["GitHub"]
+
+
+def test_handle_login_sync_returns_user_snapshot_outside_db_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(
+        engine,
+        tables=[User.__table__, OAuthProvider.__table__, UserOAuthLink.__table__],
+    )
+    SessionLocal = sessionmaker(bind=engine)
+
+    with SessionLocal() as db:
+        provider = OAuthProvider(
+            provider_type="linuxdo",
+            display_name="Linux Do",
+            client_id="client-id",
+            redirect_uri="https://api.example.com/api/oauth/linuxdo/callback",
+            frontend_callback_url="https://app.example.com/auth/callback",
+            is_enabled=True,
+        )
+        user = User(
+            email="user@example.com",
+            email_verified=True,
+            username="tester",
+            auth_source=AuthSource.OAUTH,
+            role=UserRole.USER,
+            is_active=True,
+            is_deleted=False,
+        )
+        db.add(provider)
+        db.add(user)
+        db.flush()
+        user_id = str(user.id)
+        db.add(
+            UserOAuthLink(
+                user_id=user_id,
+                provider_type="linuxdo",
+                provider_user_id="linuxdo-user-1",
+                provider_username="tester",
+                provider_email="user@example.com",
+                extra_data={},
+            )
+        )
+        db.commit()
+
+    @contextmanager
+    def _fake_get_db_context():
+        db = SessionLocal()
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    monkeypatch.setattr("src.services.auth.oauth.service.get_db_context", _fake_get_db_context)
+
+    snapshot = OAuthService._handle_login_sync(
+        "linuxdo",
+        SimpleNamespace(
+            id="linuxdo-user-1",
+            username="tester",
+            email="user@example.com",
+            email_verified=True,
+            raw={},
+        ),
+    )
+
+    assert snapshot.user_id == user_id
+    assert snapshot.email == "user@example.com"
+    assert snapshot.role == UserRole.USER
+
+    engine.dispose()

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import base64
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
+
+import httpx
 
 from src.core.logger import logger
 from src.services.auth.oauth.base import OAuthProviderBase
@@ -41,12 +46,50 @@ class LinuxDoOAuthProvider(OAuthProviderBase):
     authorization_url = "https://connect.linux.do/oauth2/authorize"
     token_url = "https://connect.linux.do/oauth2/token"
     userinfo_url = "https://connect.linux.do/api/user"
+    backup_token_url = "https://connect.linuxdo.org/oauth2/token"
+    backup_userinfo_url = "https://connect.linuxdo.org/api/user"
 
     # LinuxDo 不需要 scope
     default_scopes = ()
 
+    @staticmethod
+    def _build_basic_auth_header(client_id: str, client_secret: str) -> str:
+        credentials = f"{client_id}:{client_secret}".encode("utf-8")
+        return f"Basic {base64.b64encode(credentials).decode('ascii')}"
+
+    @staticmethod
+    def _build_candidate_urls(primary_url: str, backup_url: str) -> list[str]:
+        parsed = urlparse(primary_url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        backup_path = urlparse(backup_url).path
+        urls = [primary_url]
+        if parsed.scheme == "https" and host == "connect.linux.do" and parsed.path == backup_path:
+            urls.append(backup_url)
+        return urls
+
+    @staticmethod
+    async def _request_with_fallback(
+        candidate_urls: list[str],
+        request_fn: Callable[[str], Awaitable[httpx.Response]],
+        error_code: str,
+        label: str,
+    ) -> httpx.Response:
+        resp: httpx.Response | None = None
+        for idx, url in enumerate(candidate_urls):
+            try:
+                resp = await request_fn(url)
+                break
+            except httpx.HTTPError as exc:
+                if idx < len(candidate_urls) - 1:
+                    logger.warning("LinuxDo {} 端点不可达，尝试备用端点: {} ({})", label, url, exc)
+                    continue
+                logger.warning("LinuxDo {} 请求失败: {} ({})", label, url, exc)
+                raise OAuthFlowError(error_code, "transport_error") from exc
+        if resp is None:
+            raise OAuthFlowError(error_code, "no_response")
+        return resp
+
     async def exchange_code(self, config: OAuthProvider, code: str) -> OAuthToken:
-        url = self.get_effective_token_url(config)
         client_secret = config.get_client_secret()
         if not client_secret:
             raise OAuthFlowError("provider_unavailable", "client_secret 未配置")
@@ -56,15 +99,26 @@ class LinuxDoOAuthProvider(OAuthProviderBase):
         if not redirect_uri or not client_id:
             raise OAuthFlowError("provider_unavailable", "redirect_uri/client_id 未配置")
 
-        resp = await self._http_post_form(
-            url,
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": redirect_uri,
-                "client_id": client_id,
-                "client_secret": client_secret,
-            },
+        candidate_urls = self._build_candidate_urls(
+            self.get_effective_token_url(config), self.backup_token_url
+        )
+        headers = {
+            "Authorization": self._build_basic_auth_header(client_id, client_secret),
+            "Accept": "application/json",
+        }
+        resp = await self._request_with_fallback(
+            candidate_urls,
+            lambda url: self._http_post_form(
+                url,
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                },
+                headers=headers,
+            ),
+            error_code="token_exchange_failed",
+            label="token",
         )
 
         if resp.status_code >= 400:
@@ -87,8 +141,15 @@ class LinuxDoOAuthProvider(OAuthProviderBase):
         )
 
     async def get_user_info(self, config: OAuthProvider, access_token: str) -> OAuthUserInfo:
-        url = self.get_effective_userinfo_url(config)
-        resp = await self._http_get(url, headers={"Authorization": f"Bearer {access_token}"})
+        candidate_urls = self._build_candidate_urls(
+            self.get_effective_userinfo_url(config), self.backup_userinfo_url
+        )
+        resp = await self._request_with_fallback(
+            candidate_urls,
+            lambda url: self._http_get(url, headers={"Authorization": f"Bearer {access_token}"}),
+            error_code="userinfo_fetch_failed",
+            label="userinfo",
+        )
 
         if resp.status_code >= 400:
             logger.warning("LinuxDo userinfo 获取失败: status={}", resp.status_code)

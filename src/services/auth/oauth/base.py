@@ -74,10 +74,12 @@ class OAuthProviderBase(ABC):
                 "response_type": "code",
                 "client_id": client_id,
                 "redirect_uri": redirect_uri,
-                "scope": self.get_effective_scopes(config),
                 "state": state,
             }
         )
+        scopes = self.get_effective_scopes(config)
+        if scopes:
+            query["scope"] = scopes
 
         return urlunparse(parsed._replace(query=urlencode(query)))
 

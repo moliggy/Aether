@@ -46,148 +46,178 @@ class OAuthCallbackResult:
     refresh_token: str | None = field(default=None, repr=False)
 
 
+@dataclass(frozen=True)
+class OAuthAuthenticatedUser:
+    user_id: str
+    email: str | None
+    role: UserRole
+    created_at: datetime | None
+
+
 class OAuthService:
     """OAuth 核心业务服务（v1）。"""
 
     @staticmethod
-    def _handle_login_sync(provider_type: str, oauth_user: OAuthUserInfo) -> User:
+    def _handle_login_sync(provider_type: str, oauth_user: OAuthUserInfo) -> OAuthAuthenticatedUser:
         now = datetime.now(timezone.utc)
 
         with get_db_context() as db:
-            existing_link = (
-                db.query(UserOAuthLink)
-                .filter(
-                    UserOAuthLink.provider_type == provider_type,
-                    UserOAuthLink.provider_user_id == oauth_user.id,
+            original_expire_on_commit = getattr(db, "expire_on_commit", True)
+            db.expire_on_commit = False
+            try:
+                existing_link = (
+                    db.query(UserOAuthLink)
+                    .filter(
+                        UserOAuthLink.provider_type == provider_type,
+                        UserOAuthLink.provider_user_id == oauth_user.id,
+                    )
+                    .first()
                 )
-                .first()
-            )
-            if existing_link:
-                linked_user = db.query(User).filter(User.id == existing_link.user_id).first()
-                if not linked_user or not linked_user.is_active or linked_user.is_deleted:
-                    raise OAuthFlowError("account_disabled", "用户不存在或已禁用")
+                if existing_link:
+                    linked_user = db.query(User).filter(User.id == existing_link.user_id).first()
+                    if not linked_user or not linked_user.is_active or linked_user.is_deleted:
+                        raise OAuthFlowError("account_disabled", "用户不存在或已禁用")
 
-                linked_user.last_login_at = now
-                existing_link.last_login_at = now
-                db.commit()
-                db.expunge(linked_user)
-                return linked_user
+                    linked_user.last_login_at = now
+                    existing_link.last_login_at = now
+                    db.commit()
+                    assert linked_user.id is not None
+                    assert linked_user.role is not None
+                    return OAuthAuthenticatedUser(
+                        user_id=linked_user.id,
+                        email=linked_user.email,
+                        role=linked_user.role,
+                        created_at=linked_user.created_at,
+                    )
 
-            enable_registration = SystemConfigService.get_config(
-                db, "enable_registration", default=False
-            )
-            if not enable_registration:
-                raise OAuthFlowError("registration_disabled")
+                enable_registration = SystemConfigService.get_config(
+                    db, "enable_registration", default=False
+                )
+                if not enable_registration:
+                    raise OAuthFlowError("registration_disabled")
 
-            email = oauth_user.email
-            if email:
-                if not OAuthService._validate_email_suffix(db, email):
-                    raise OAuthFlowError("email_suffix_denied")
+                email = oauth_user.email
+                if email:
+                    if not OAuthService._validate_email_suffix(db, email):
+                        raise OAuthFlowError("email_suffix_denied")
 
-                existing_user = db.query(User).filter(User.email == email).first()
-                if existing_user and not existing_user.is_deleted:
-                    if existing_user.auth_source == AuthSource.LOCAL:
-                        raise OAuthFlowError("email_exists_local")
-                    if existing_user.auth_source == AuthSource.LDAP:
-                        raise OAuthFlowError("email_is_ldap")
-                    raise OAuthFlowError("email_is_oauth")
+                    existing_user = db.query(User).filter(User.email == email).first()
+                    if existing_user and not existing_user.is_deleted:
+                        if existing_user.auth_source == AuthSource.LOCAL:
+                            raise OAuthFlowError("email_exists_local")
+                        if existing_user.auth_source == AuthSource.LDAP:
+                            raise OAuthFlowError("email_is_ldap")
+                        raise OAuthFlowError("email_is_oauth")
 
-            base_username = (
-                oauth_user.username
-                or (email.split("@", 1)[0] if email else None)
-                or f"user_{uuid.uuid4().hex[:8]}"
-            )
-            default_initial_gift = SystemConfigService.get_config(
-                db, "default_user_initial_gift_usd", default=None
-            )
+                base_username = (
+                    oauth_user.username
+                    or (email.split("@", 1)[0] if email else None)
+                    or f"user_{uuid.uuid4().hex[:8]}"
+                )
+                default_initial_gift = SystemConfigService.get_config(
+                    db, "default_user_initial_gift_usd", default=None
+                )
 
-            user: User | None = None
-            last_error: Exception | None = None
-            for _ in range(3):
+                user: User | None = None
+                last_error: Exception | None = None
+                for _ in range(3):
+                    try:
+                        username = OAuthService._generate_unique_username(db, base_username)
+                        user = User(
+                            email=email,
+                            email_verified=bool(oauth_user.email_verified) if email else False,
+                            username=username,
+                            password_hash=None,
+                            auth_source=AuthSource.OAUTH,
+                            role=UserRole.USER,
+                            is_active=True,
+                            last_login_at=now,
+                        )
+                        db.add(user)
+                        db.flush()
+
+                        from src.services.wallet import WalletService
+
+                        WalletService.initialize_user_wallet(
+                            db,
+                            user=user,
+                            initial_gift_usd=default_initial_gift,
+                            unlimited=False,
+                            description="OAuth 注册初始赠款",
+                        )
+
+                        db.commit()
+                        db.refresh(user)
+                        last_error = None
+                        break
+                    except IntegrityError as e:
+                        db.rollback()
+                        last_error = e
+                    except Exception as e:
+                        db.rollback()
+                        last_error = e
+
+                if last_error is not None or user is None:
+                    raise OAuthFlowError("provider_error", "user_create_failed")
+
+                assert user.id is not None
                 try:
-                    username = OAuthService._generate_unique_username(db, base_username)
-                    user = User(
-                        email=email,
-                        email_verified=bool(oauth_user.email_verified) if email else False,
-                        username=username,
-                        password_hash=None,
-                        auth_source=AuthSource.OAUTH,
-                        role=UserRole.USER,
-                        is_active=True,
+                    link = UserOAuthLink(
+                        user_id=user.id,
+                        provider_type=provider_type,
+                        provider_user_id=oauth_user.id,
+                        provider_username=oauth_user.username,
+                        provider_email=email,
+                        extra_data=oauth_user.raw,
+                        linked_at=now,
                         last_login_at=now,
                     )
-                    db.add(user)
-                    db.flush()
-
-                    from src.services.wallet import WalletService
-
-                    WalletService.initialize_user_wallet(
-                        db,
-                        user=user,
-                        initial_gift_usd=default_initial_gift,
-                        unlimited=False,
-                        description="OAuth 注册初始赠款",
-                    )
-
+                    db.add(link)
                     db.commit()
-                    db.refresh(user)
-                    last_error = None
-                    break
                 except IntegrityError as e:
                     db.rollback()
-                    last_error = e
-                except Exception as e:
-                    db.rollback()
-                    last_error = e
+                    constraint = OAuthService._get_constraint_name(e)
+                    if constraint == "uq_oauth_provider_user":
+                        existing_link = (
+                            db.query(UserOAuthLink)
+                            .filter(
+                                UserOAuthLink.provider_type == provider_type,
+                                UserOAuthLink.provider_user_id == oauth_user.id,
+                            )
+                            .first()
+                        )
+                        if existing_link:
+                            existing_user = (
+                                db.query(User).filter(User.id == existing_link.user_id).first()
+                            )
+                            if (
+                                existing_user
+                                and existing_user.is_active
+                                and not existing_user.is_deleted
+                            ):
+                                existing_user.last_login_at = now
+                                existing_link.last_login_at = now
+                                db.commit()
+                                assert existing_user.id is not None
+                                assert existing_user.role is not None
+                                return OAuthAuthenticatedUser(
+                                    user_id=existing_user.id,
+                                    email=existing_user.email,
+                                    role=existing_user.role,
+                                    created_at=existing_user.created_at,
+                                )
+                        raise OAuthFlowError("oauth_already_bound")
+                    raise OAuthFlowError("provider_error", "link_create_failed")
 
-            if last_error is not None or user is None:
-                raise OAuthFlowError("provider_error", "user_create_failed")
-
-            assert user.id is not None
-            try:
-                link = UserOAuthLink(
+                assert user.role is not None
+                return OAuthAuthenticatedUser(
                     user_id=user.id,
-                    provider_type=provider_type,
-                    provider_user_id=oauth_user.id,
-                    provider_username=oauth_user.username,
-                    provider_email=email,
-                    extra_data=oauth_user.raw,
-                    linked_at=now,
-                    last_login_at=now,
+                    email=user.email,
+                    role=user.role,
+                    created_at=user.created_at,
                 )
-                db.add(link)
-                db.commit()
-            except IntegrityError as e:
-                db.rollback()
-                constraint = OAuthService._get_constraint_name(e)
-                if constraint == "uq_oauth_provider_user":
-                    existing_link = (
-                        db.query(UserOAuthLink)
-                        .filter(
-                            UserOAuthLink.provider_type == provider_type,
-                            UserOAuthLink.provider_user_id == oauth_user.id,
-                        )
-                        .first()
-                    )
-                    if existing_link:
-                        existing_user = (
-                            db.query(User).filter(User.id == existing_link.user_id).first()
-                        )
-                        if (
-                            existing_user
-                            and existing_user.is_active
-                            and not existing_user.is_deleted
-                        ):
-                            existing_user.last_login_at = now
-                            existing_link.last_login_at = now
-                            db.commit()
-                            db.expunge(existing_user)
-                            return existing_user
-                    raise OAuthFlowError("oauth_already_bound")
-                raise OAuthFlowError("provider_error", "link_create_failed")
-
-            db.expunge(user)
-            return user
+            finally:
+                db.expire_on_commit = original_expire_on_commit
 
     @staticmethod
     def _handle_bind_sync(
@@ -747,13 +777,18 @@ class OAuthService:
                 )
             )
 
-        assert user.id is not None
-        assert user.role is not None
+        db_user = db.query(User).filter(User.id == user.user_id).first()
+        if not db_user or not db_user.is_active or db_user.is_deleted:
+            return OAuthCallbackResult(
+                redirect_url=OAuthService._build_frontend_error_redirect(
+                    frontend_callback_url, error_code="account_disabled"
+                )
+            )
 
         session_id = str(uuid.uuid4())
         access_token = AuthService.create_access_token(
             data={
-                "user_id": user.id,
+                "user_id": user.user_id,
                 "role": user.role.value,
                 "created_at": user.created_at.isoformat() if user.created_at else None,
                 "session_id": session_id,
@@ -761,7 +796,7 @@ class OAuthService:
         )
         refresh_token = AuthService.create_refresh_token(
             data={
-                "user_id": user.id,
+                "user_id": user.user_id,
                 "created_at": user.created_at.isoformat() if user.created_at else None,
                 "session_id": session_id,
                 "jti": str(uuid.uuid4()),
@@ -775,7 +810,7 @@ class OAuthService:
         )
         SessionService.create_session(
             db,
-            user=user,
+            user=db_user,
             session_id=session_id,
             refresh_token=refresh_token,
             expires_at=AuthService.get_refresh_token_expiry(),
@@ -793,14 +828,13 @@ class OAuthService:
     @staticmethod
     async def _handle_login(
         db: Session, *, config: OAuthProvider, oauth_user: OAuthUserInfo
-    ) -> User:
+    ) -> OAuthAuthenticatedUser:
         user = await run_in_threadpool(
             OAuthService._handle_login_sync,
             config.provider_type,
             oauth_user,
         )
-        assert user.id is not None
-        await UserCacheService.invalidate_user_cache(user.id, user.email)
+        await UserCacheService.invalidate_user_cache(user.user_id, user.email)
         return user
 
     @staticmethod
