@@ -1159,7 +1159,7 @@ function restoreOriginalPlaceholder(value: unknown): unknown {
     }
     return value
   }
-  if (Array.isArray(value)) return value.map(restoreOriginalPlaceholder)
+  if (Array.isArray(value)) return value.map(item => restoreOriginalPlaceholder(item))
   if (value !== null && typeof value === 'object') {
     const result: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) result[k] = restoreOriginalPlaceholder(v)
@@ -1262,7 +1262,7 @@ async function loadDefaultBodyRulesForFormat(apiFormat: string, force = false): 
   } catch (error: unknown) {
     defaultBodyRulesByFormat.value[cacheKey] = []
     defaultBodyRulesLoaded.value[cacheKey] = true
-    log.warn('加载默认请求体规则失败', apiFormat, error)
+    log.warn('加载默认请求体规则失败', { apiFormat, error })
     return []
   } finally {
     loadingDefaultBodyRulesByFormat.value[cacheKey] = false
