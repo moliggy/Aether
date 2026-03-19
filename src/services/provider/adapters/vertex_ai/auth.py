@@ -12,7 +12,7 @@ from typing import Any
 from src.core.provider_auth_types import ProviderAuthInfo
 
 
-async def _auth_service_account(key: Any) -> ProviderAuthInfo:
+async def _auth_service_account(key: Any, endpoint: Any | None = None) -> ProviderAuthInfo:
     """Service Account 认证：SA JSON → JWT → Access Token。"""
     from src.core.crypto import crypto_service
     from src.core.exceptions import InvalidRequestException
@@ -38,11 +38,14 @@ async def _auth_service_account(key: Any) -> ProviderAuthInfo:
             raise InvalidRequestException("Service Account JSON 无效，请重新添加该密钥。")
 
         # 获取 Access Token（注入代理配置）
+        from src.services.provider.auth import _get_proxy_config
         from src.services.proxy_node.resolver import build_proxy_client_kwargs
+
+        effective_proxy = _get_proxy_config(key, endpoint)
 
         service = VertexAuthService(sa_json)
         access_token = await service.get_access_token(
-            httpx_client_kwargs=build_proxy_client_kwargs(timeout=30),
+            httpx_client_kwargs=build_proxy_client_kwargs(effective_proxy, timeout=30),
         )
 
         return ProviderAuthInfo(

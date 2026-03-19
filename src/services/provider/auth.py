@@ -556,7 +556,7 @@ async def get_provider_auth(
         # "vertex_ai" 保留为向后兼容（迁移期间旧数据可能仍使用该值）
         from src.services.provider.adapters.vertex_ai.auth import _auth_service_account
 
-        return await _auth_service_account(key)
+        return await _auth_service_account(key, endpoint)
 
     # 标准 API Key：返回 None，由 build_headers 处理
     return None

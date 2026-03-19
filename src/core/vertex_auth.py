@@ -174,8 +174,16 @@ class VertexAuthService:
             raise VertexAuthError(
                 f"Failed to get access token: HTTP {e.response.status_code}: {error_body}"
             )
+        except httpx.TimeoutException:
+            raw = client_kwargs.get("timeout")
+            suffix = f" after {raw}s" if isinstance(raw, (int, float)) else ""
+            raise VertexAuthError(f"Failed to get access token: request timed out{suffix}")
+        except httpx.RequestError as e:
+            detail = str(e).strip() or type(e).__name__
+            raise VertexAuthError(f"Failed to get access token: {detail}")
         except Exception as e:
-            raise VertexAuthError(f"Failed to get access token: {e}")
+            detail = str(e).strip() or type(e).__name__
+            raise VertexAuthError(f"Failed to get access token: {detail}")
 
     @classmethod
     def clear_cache(cls, client_email: str | None = None) -> None:
