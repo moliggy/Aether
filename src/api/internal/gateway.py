@@ -115,6 +115,16 @@ class GatewaySyncReportRequest(BaseModel):
     telemetry: dict[str, Any] | None = None
 
 
+class GatewayStreamReportRequest(BaseModel):
+    trace_id: str | None = Field(None, max_length=128)
+    report_kind: str = Field(..., min_length=1, max_length=128)
+    report_context: dict[str, Any] = Field(default_factory=dict)
+    status_code: int = Field(..., ge=100, le=599)
+    headers: dict[str, str] = Field(default_factory=dict)
+    body_base64: str | None = None
+    telemetry: dict[str, Any] | None = None
+
+
 def classify_gateway_route(
     method: str,
     path: str,
@@ -334,6 +344,29 @@ async def report_gateway_sync(
 ) -> dict[str, Any]:
     ensure_loopback(request)
     await _apply_gateway_sync_report(payload, db=db)
+    return {"ok": True}
+
+
+@router.post("/finalize-sync")
+async def finalize_gateway_sync(
+    request: Request,
+    payload: GatewaySyncReportRequest,
+    db: Session = Depends(get_db),
+) -> Response:
+    ensure_loopback(request)
+    response = await _finalize_gateway_sync_response(payload, db=db)
+    response.headers[CONTROL_EXECUTED_HEADER] = "true"
+    return response
+
+
+@router.post("/report-stream")
+async def report_gateway_stream(
+    request: Request,
+    payload: GatewayStreamReportRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    ensure_loopback(request)
+    await _apply_gateway_stream_report(payload, db=db)
     return {"ok": True}
 
 
@@ -806,6 +839,72 @@ async def _build_gateway_stream_plan_response(
     if auth_context is None or not auth_context.access_allowed:
         return None
 
+    if decision.route_family == "openai" and decision.route_kind == "chat":
+        planned = await _build_openai_chat_stream_plan(
+            request=request,
+            payload=payload,
+            db=db,
+            auth_context=auth_context,
+            decision=decision,
+        )
+        if planned is not None:
+            return planned
+
+    if decision.route_family == "claude" and decision.route_kind == "chat":
+        planned = await _build_claude_chat_stream_plan(
+            request=request,
+            payload=payload,
+            db=db,
+            auth_context=auth_context,
+            decision=decision,
+        )
+        if planned is not None:
+            return planned
+
+    if decision.route_family == "gemini" and decision.route_kind == "chat":
+        planned = await _build_gemini_chat_stream_plan(
+            request=request,
+            payload=payload,
+            db=db,
+            auth_context=auth_context,
+            decision=decision,
+        )
+        if planned is not None:
+            return planned
+
+    if decision.route_family == "openai" and decision.route_kind == "cli":
+        planned = await _build_openai_cli_stream_plan(
+            request=request,
+            payload=payload,
+            db=db,
+            auth_context=auth_context,
+            decision=decision,
+        )
+        if planned is not None:
+            return planned
+
+    if decision.route_family == "claude" and decision.route_kind == "cli":
+        planned = await _build_claude_cli_stream_plan(
+            request=request,
+            payload=payload,
+            db=db,
+            auth_context=auth_context,
+            decision=decision,
+        )
+        if planned is not None:
+            return planned
+
+    if decision.route_family == "gemini" and decision.route_kind == "cli":
+        planned = await _build_gemini_cli_stream_plan(
+            request=request,
+            payload=payload,
+            db=db,
+            auth_context=auth_context,
+            decision=decision,
+        )
+        if planned is not None:
+            return planned
+
     if decision.route_family == "gemini" and decision.route_kind == "files":
         download_match = _GEMINI_FILES_DOWNLOAD_ROUTE_RE.match(str(payload.path or "").strip())
         if not download_match or str(payload.method or "").strip().upper() != "GET":
@@ -929,6 +1028,82 @@ async def _build_gateway_sync_plan_response(
         )
         if planned is not None:
             return planned
+
+    if decision.route_family == "openai" and decision.route_kind == "video":
+        normalized_path = str(payload.path or "").strip()
+        normalized_method = str(payload.method or "").strip().upper()
+        if normalized_method == "POST" and normalized_path == "/v1/videos":
+            planned = await _build_openai_video_create_sync_plan(
+                request=request,
+                payload=payload,
+                db=db,
+                auth_context=auth_context,
+                decision=decision,
+            )
+            if planned is not None:
+                return planned
+        remix_match = _OPENAI_VIDEO_REMIX_ROUTE_RE.match(normalized_path)
+        if normalized_method == "POST" and remix_match:
+            planned = await _build_openai_video_remix_sync_plan(
+                request=request,
+                payload=payload,
+                db=db,
+                auth_context=auth_context,
+                task_id=str(remix_match.group("task_id") or "").strip(),
+            )
+            if planned is not None:
+                return planned
+        cancel_match = _OPENAI_VIDEO_CANCEL_ROUTE_RE.match(normalized_path)
+        if normalized_method == "POST" and cancel_match:
+            planned = await _build_openai_video_cancel_sync_plan(
+                request=request,
+                payload=payload,
+                db=db,
+                auth_context=auth_context,
+                task_id=str(cancel_match.group("task_id") or "").strip(),
+            )
+            if planned is not None:
+                return planned
+        task_match = _OPENAI_VIDEO_TASK_ROUTE_RE.match(normalized_path)
+        if normalized_method == "DELETE" and task_match:
+            planned = await _build_openai_video_delete_sync_plan(
+                request=request,
+                payload=payload,
+                db=db,
+                auth_context=auth_context,
+                task_id=str(task_match.group("task_id") or "").strip(),
+            )
+            if planned is not None:
+                return planned
+
+    if decision.route_family == "gemini" and decision.route_kind == "video":
+        normalized_path = str(payload.path or "").strip()
+        normalized_method = str(payload.method or "").strip().upper()
+        create_match = _GEMINI_VIDEO_CREATE_ROUTE_RE.match(normalized_path)
+        if normalized_method == "POST" and create_match:
+            planned = await _build_gemini_video_create_sync_plan(
+                request=request,
+                payload=payload,
+                db=db,
+                auth_context=auth_context,
+                model=str(create_match.group("model") or "").strip(),
+            )
+            if planned is not None:
+                return planned
+        if normalized_method == "POST" and (
+            _GEMINI_MODEL_OPERATION_CANCEL_RE.match(normalized_path)
+            or _GEMINI_OPERATION_CANCEL_RE.match(normalized_path)
+        ):
+            task_id = str(_extract_gemini_video_path_params(normalized_path).get("task_id") or "")
+            planned = await _build_gemini_video_cancel_sync_plan(
+                request=request,
+                payload=payload,
+                db=db,
+                auth_context=auth_context,
+                task_id=task_id,
+            )
+            if planned is not None:
+                return planned
 
     if decision.route_family == "gemini" and decision.route_kind == "files":
         resource_match = _GEMINI_FILES_RESOURCE_ROUTE_RE.match(str(payload.path or "").strip())
@@ -1187,6 +1362,308 @@ async def _build_openai_chat_sync_plan(
     )
 
 
+async def _build_chat_stream_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    decision: GatewayRouteDecision,
+    expected_api_format: str,
+    plan_kind: str,
+    report_kind: str,
+) -> GatewayExecutionPlanResponse | None:
+    from src.api.handlers.base.chat_adapter_base import ChatAdapterBase
+    from src.config.settings import config
+    from src.core.api_format.headers import set_accept_if_absent
+    from src.services.provider.auth import get_provider_auth
+    from src.services.provider.transport import build_provider_url
+    from src.services.proxy_node.resolver import (
+        build_proxy_url_async,
+        get_system_proxy_config_async,
+        resolve_delegate_config_async,
+        resolve_effective_proxy,
+        resolve_proxy_info_async,
+    )
+    from src.services.request.executor_plan import (
+        ExecutionPlan,
+        ExecutionPlanTimeouts,
+        ExecutionProxySnapshot,
+        build_execution_plan_body,
+        is_remote_contract_eligible,
+    )
+
+    if str(payload.method or "").strip().upper() != "POST":
+        return None
+
+    adapter, path_params = _resolve_gateway_sync_adapter(decision, payload.path)
+    if not isinstance(adapter, ChatAdapterBase):
+        return None
+    if not _is_stream_request_payload(payload.body_json, path_params):
+        return None
+
+    user, api_key = _load_gateway_auth_models(db, auth_context)
+    pipeline = get_pipeline()
+    await pipeline._check_user_rate_limit(request, db, user, api_key)
+
+    context = _build_gateway_request_context(
+        request=request,
+        payload=payload,
+        db=db,
+        user=user,
+        api_key=api_key,
+        adapter=adapter,
+        path_params=path_params,
+        balance_remaining=auth_context.balance_remaining,
+    )
+    authorize_result = adapter.authorize(context)
+    if hasattr(authorize_result, "__await__"):
+        await authorize_result
+
+    original_request_body = await context.ensure_json_body_async()
+    if context.path_params:
+        original_request_body = adapter._merge_path_params(
+            original_request_body,
+            context.path_params,
+        )
+    request_obj = adapter._validate_request_body(original_request_body, context.path_params)
+    if isinstance(request_obj, JSONResponse):
+        return None
+
+    handler = adapter._create_handler(
+        db=db,
+        user=user,
+        api_key=api_key,
+        request_id=context.request_id,
+        client_ip=context.client_ip,
+        user_agent=context.user_agent,
+        start_time=context.start_time,
+        api_family=adapter.API_FAMILY.value if adapter.API_FAMILY else None,
+        endpoint_kind=adapter.ENDPOINT_KIND.value if adapter.ENDPOINT_KIND else None,
+    )
+
+    converted_request = await handler._convert_request(request_obj)
+    model = getattr(converted_request, "model", original_request_body.get("model", "unknown"))
+    api_format = handler.allowed_api_formats[0]
+    capability_requirements = handler._resolve_capability_requirements(
+        model_name=model,
+        request_headers=context.original_headers,
+        request_body=original_request_body,
+    )
+    preferred_key_ids = await handler._resolve_preferred_key_ids(
+        model_name=model,
+        request_body=original_request_body,
+    )
+
+    candidate = await _select_gateway_direct_candidate(
+        db=db,
+        redis_client=getattr(handler, "redis", None),
+        api_format=str(api_format),
+        model_name=str(model or "unknown"),
+        user_api_key=api_key,
+        request_id=context.request_id,
+        is_stream=True,
+        capability_requirements=capability_requirements or None,
+        preferred_key_ids=preferred_key_ids or None,
+        request_body=original_request_body,
+    )
+    if candidate is None:
+        return None
+
+    provider = candidate.provider
+    endpoint = candidate.endpoint
+    key = candidate.key
+    provider_api_format = str(endpoint.api_format or api_format or "")
+    prep = await handler._prepare_provider_request(
+        model=str(model or "unknown"),
+        provider=provider,
+        endpoint=endpoint,
+        key=key,
+        working_request_body=dict(original_request_body),
+        original_headers=context.original_headers,
+        client_api_format=str(api_format),
+        provider_api_format=provider_api_format,
+        candidate=candidate,
+        client_is_stream=True,
+    )
+    provider_api_format = str(prep.provider_api_format or "")
+
+    provider_payload, provider_headers = handler._request_builder.build(
+        prep.request_body,
+        context.original_headers,
+        endpoint,
+        key,
+        is_stream=prep.upstream_is_stream,
+        extra_headers=prep.extra_headers if prep.extra_headers else None,
+        pre_computed_auth=prep.auth_info.as_tuple() if prep.auth_info else None,
+        envelope=prep.envelope,
+        provider_api_format=prep.provider_api_format,
+    )
+    if prep.upstream_is_stream:
+        set_accept_if_absent(provider_headers)
+
+    auth_info = prep.auth_info or await get_provider_auth(endpoint, key)
+    upstream_url = build_provider_url(
+        endpoint,
+        query_params=context.query_params,
+        path_params={"model": prep.url_model},
+        is_stream=prep.upstream_is_stream,
+        key=key,
+        decrypted_auth_config=auth_info.decrypted_auth_config if auth_info else None,
+    )
+
+    effective_proxy = resolve_effective_proxy(provider.proxy, getattr(key, "proxy", None))
+    proxy_info = await resolve_proxy_info_async(effective_proxy)
+    delegate_cfg = await resolve_delegate_config_async(effective_proxy)
+    effective_proxy_for_contract = effective_proxy
+    if not effective_proxy_for_contract or not effective_proxy_for_contract.get("enabled", True):
+        effective_proxy_for_contract = await get_system_proxy_config_async()
+    is_tunnel_delegate = bool(delegate_cfg and delegate_cfg.get("tunnel"))
+
+    proxy_url: str | None = None
+    if effective_proxy_for_contract and not is_tunnel_delegate:
+        proxy_url = await build_proxy_url_async(effective_proxy_for_contract)
+
+    contract = ExecutionPlan(
+        request_id=str(context.request_id or ""),
+        candidate_id=str(
+            getattr(candidate, "request_candidate_id", "") or getattr(candidate, "id", "") or ""
+        )
+        or None,
+        provider_name=str(provider.name),
+        provider_id=str(provider.id),
+        endpoint_id=str(endpoint.id),
+        key_id=str(key.id),
+        method="POST",
+        url=upstream_url,
+        headers=dict(provider_headers),
+        body=build_execution_plan_body(
+            provider_payload,
+            content_type=str(provider_headers.get("content-type") or "").strip() or None,
+        ),
+        stream=True,
+        provider_api_format=provider_api_format,
+        client_api_format=str(api_format),
+        model_name=str(model or ""),
+        content_type=str(provider_headers.get("content-type") or "").strip() or None,
+        content_encoding=context.client_content_encoding,
+        proxy=ExecutionProxySnapshot.from_proxy_info(
+            proxy_info,
+            proxy_url=proxy_url,
+            mode_override="tunnel" if is_tunnel_delegate else None,
+            node_id_override=(
+                str(delegate_cfg.get("node_id") or "").strip() or None
+                if is_tunnel_delegate
+                else None
+            ),
+        ),
+        tls_profile=prep.tls_profile,
+        timeouts=ExecutionPlanTimeouts(
+            connect_ms=int(config.http_connect_timeout * 1000),
+            read_ms=int(config.http_read_timeout * 1000),
+            write_ms=int(config.http_write_timeout * 1000),
+            pool_ms=int(config.http_pool_timeout * 1000),
+            total_ms=None,
+        ),
+    )
+
+    if (
+        not prep.upstream_is_stream
+        or prep.needs_conversion
+        or prep.envelope is not None
+        or not is_remote_contract_eligible(contract)
+        or provider_api_format.strip().lower() != expected_api_format
+        or str(contract.client_api_format or "").strip().lower() != expected_api_format
+    ):
+        return None
+
+    return GatewayExecutionPlanResponse(
+        action="executor_stream",
+        plan_kind=plan_kind,
+        plan=contract.to_payload(),
+        report_kind=report_kind,
+        report_context={
+            "user_id": str(user.id),
+            "api_key_id": str(api_key.id),
+            "request_id": str(context.request_id),
+            "model": str(model or "unknown"),
+            "provider_name": str(contract.provider_name or "unknown"),
+            "provider_id": str(contract.provider_id or ""),
+            "endpoint_id": str(contract.endpoint_id or ""),
+            "key_id": str(contract.key_id or ""),
+            "candidate_id": str(contract.candidate_id or ""),
+            "provider_api_format": str(contract.provider_api_format or ""),
+            "client_api_format": str(contract.client_api_format or ""),
+            "mapped_model": prep.mapped_model,
+            "original_headers": dict(context.original_headers),
+            "original_request_body": original_request_body,
+            "provider_request_headers": dict(provider_headers),
+            "provider_request_body": provider_payload,
+            "proxy_info": proxy_info,
+        },
+    )
+
+
+async def _build_openai_chat_stream_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    decision: GatewayRouteDecision,
+) -> GatewayExecutionPlanResponse | None:
+    return await _build_chat_stream_plan(
+        request=request,
+        payload=payload,
+        db=db,
+        auth_context=auth_context,
+        decision=decision,
+        expected_api_format="openai:chat",
+        plan_kind="openai_chat_stream",
+        report_kind="openai_chat_stream_success",
+    )
+
+
+async def _build_claude_chat_stream_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    decision: GatewayRouteDecision,
+) -> GatewayExecutionPlanResponse | None:
+    return await _build_chat_stream_plan(
+        request=request,
+        payload=payload,
+        db=db,
+        auth_context=auth_context,
+        decision=decision,
+        expected_api_format="claude:chat",
+        plan_kind="claude_chat_stream",
+        report_kind="claude_chat_stream_success",
+    )
+
+
+async def _build_gemini_chat_stream_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    decision: GatewayRouteDecision,
+) -> GatewayExecutionPlanResponse | None:
+    return await _build_chat_stream_plan(
+        request=request,
+        payload=payload,
+        db=db,
+        auth_context=auth_context,
+        decision=decision,
+        expected_api_format="gemini:chat",
+        plan_kind="gemini_chat_stream",
+        report_kind="gemini_chat_stream_success",
+    )
+
+
 async def _build_claude_chat_sync_plan(
     *,
     request: Request,
@@ -1224,6 +1701,239 @@ async def _build_gemini_chat_sync_plan(
         expected_api_format="gemini:chat",
         plan_kind="gemini_chat_sync",
         report_kind="gemini_chat_sync_success",
+    )
+
+
+async def _build_cli_stream_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    decision: GatewayRouteDecision,
+    expected_provider_formats: set[str],
+    plan_kind: str,
+    report_kind: str,
+    log_label: str,
+) -> GatewayExecutionPlanResponse | None:
+    from loguru import logger
+
+    from src.api.handlers.base.cli_adapter_base import CliAdapterBase
+    from src.config.settings import config
+    from src.services.provider.transport import redact_url_for_log
+    from src.services.proxy_node.resolver import (
+        build_proxy_url_async,
+        resolve_delegate_config_async,
+        resolve_effective_proxy,
+        resolve_proxy_info_async,
+    )
+    from src.services.request.executor_plan import (
+        ExecutionPlan,
+        ExecutionPlanTimeouts,
+        ExecutionProxySnapshot,
+        build_execution_plan_body,
+        is_remote_contract_eligible,
+    )
+
+    if str(payload.method or "").strip().upper() != "POST":
+        return None
+
+    adapter, path_params = _resolve_gateway_sync_adapter(decision, payload.path)
+    if not isinstance(adapter, CliAdapterBase):
+        return None
+    if decision.route_kind == "compact":
+        return None
+    if not _is_stream_request_payload(payload.body_json, path_params):
+        return None
+
+    user, api_key = _load_gateway_auth_models(db, auth_context)
+    pipeline = get_pipeline()
+    await pipeline._check_user_rate_limit(request, db, user, api_key)
+
+    context = _build_gateway_request_context(
+        request=request,
+        payload=payload,
+        db=db,
+        user=user,
+        api_key=api_key,
+        adapter=adapter,
+        path_params=path_params,
+        balance_remaining=auth_context.balance_remaining,
+    )
+    authorize_result = adapter.authorize(context)
+    if hasattr(authorize_result, "__await__"):
+        await authorize_result
+
+    original_request_body = await context.ensure_json_body_async()
+    if context.path_params:
+        original_request_body = adapter._merge_path_params(
+            original_request_body,
+            context.path_params,
+        )
+
+    handler = adapter.HANDLER_CLASS(
+        db=db,
+        user=user,
+        api_key=api_key,
+        request_id=context.request_id,
+        client_ip=context.client_ip,
+        user_agent=context.user_agent,
+        start_time=context.start_time,
+        allowed_api_formats=adapter.allowed_api_formats,
+        adapter_detector=adapter.detect_capability_requirements,
+        perf_metrics=context.extra.get("perf"),
+        api_family=adapter.API_FAMILY.value if adapter.API_FAMILY else None,
+        endpoint_kind=adapter.ENDPOINT_KIND.value if adapter.ENDPOINT_KIND else None,
+    )
+
+    model = handler.extract_model_from_request(original_request_body, context.path_params)
+    client_api_format = handler.primary_api_format
+    capability_requirements = handler._resolve_capability_requirements(
+        model_name=model,
+        request_headers=context.original_headers,
+        request_body=original_request_body,
+    )
+    preferred_key_ids = await handler._resolve_preferred_key_ids(
+        model_name=model,
+        request_body=original_request_body,
+    )
+
+    candidate = await _select_gateway_direct_candidate(
+        db=db,
+        redis_client=getattr(handler, "redis", None),
+        api_format=str(client_api_format),
+        model_name=str(model or "unknown"),
+        user_api_key=api_key,
+        request_id=context.request_id,
+        is_stream=True,
+        capability_requirements=capability_requirements or None,
+        preferred_key_ids=preferred_key_ids or None,
+        request_body=original_request_body,
+    )
+    if candidate is None:
+        return None
+
+    provider = candidate.provider
+    endpoint = candidate.endpoint
+    key = candidate.key
+    provider_api_format = str(endpoint.api_format or "")
+    mapped_model = candidate.mapping_matched_model if candidate else None
+    if not mapped_model:
+        mapped_model = await handler._get_mapped_model(
+            source_model=str(model or "unknown"),
+            provider_id=str(provider.id),
+        )
+    needs_conversion = bool(getattr(candidate, "needs_conversion", False))
+
+    upstream_request = await handler._build_upstream_request(
+        provider=provider,
+        endpoint=endpoint,
+        key=key,
+        request_body=dict(original_request_body),
+        original_headers=context.original_headers,
+        query_params=context.query_params,
+        client_api_format=str(client_api_format),
+        provider_api_format=provider_api_format,
+        fallback_model=str(model or "unknown"),
+        mapped_model=mapped_model,
+        client_is_stream=True,
+        needs_conversion=needs_conversion,
+        output_limit=candidate.output_limit if candidate else None,
+    )
+
+    effective_proxy = resolve_effective_proxy(provider.proxy, getattr(key, "proxy", None))
+    stream_proxy_info = await resolve_proxy_info_async(effective_proxy)
+    delegate_cfg = await resolve_delegate_config_async(effective_proxy)
+    is_tunnel_delegate = bool(delegate_cfg and delegate_cfg.get("tunnel"))
+    proxy_url: str | None = None
+    if effective_proxy and not is_tunnel_delegate:
+        proxy_url = await build_proxy_url_async(effective_proxy)
+
+    contract = ExecutionPlan(
+        request_id=str(context.request_id or ""),
+        candidate_id=str(
+            getattr(candidate, "request_candidate_id", "") or getattr(candidate, "id", "") or ""
+        )
+        or None,
+        provider_name=str(provider.name),
+        provider_id=str(provider.id),
+        endpoint_id=str(endpoint.id),
+        key_id=str(key.id),
+        method="POST",
+        url=upstream_request.url,
+        headers=dict(upstream_request.headers),
+        body=build_execution_plan_body(
+            upstream_request.payload,
+            content_type=str(upstream_request.headers.get("content-type") or "").strip() or None,
+        ),
+        stream=True,
+        provider_api_format=provider_api_format,
+        client_api_format=str(client_api_format),
+        model_name=str(model or ""),
+        content_type=str(upstream_request.headers.get("content-type") or "").strip() or None,
+        content_encoding=context.client_content_encoding,
+        proxy=ExecutionProxySnapshot.from_proxy_info(
+            stream_proxy_info,
+            proxy_url=proxy_url,
+            mode_override="tunnel" if is_tunnel_delegate else None,
+            node_id_override=(
+                str(delegate_cfg.get("node_id") or "").strip() or None
+                if is_tunnel_delegate
+                else None
+            ),
+        ),
+        tls_profile=upstream_request.tls_profile,
+        timeouts=ExecutionPlanTimeouts(
+            connect_ms=int(config.http_connect_timeout * 1000),
+            read_ms=int(config.http_read_timeout * 1000),
+            write_ms=int(config.http_write_timeout * 1000),
+            pool_ms=int(config.http_pool_timeout * 1000),
+            total_ms=None,
+        ),
+    )
+
+    if (
+        not upstream_request.upstream_is_stream
+        or needs_conversion
+        or upstream_request.envelope is not None
+        or not is_remote_contract_eligible(contract)
+        or provider_api_format != str(client_api_format)
+        or provider_api_format not in expected_provider_formats
+    ):
+        return None
+
+    logger.debug(
+        "[gateway] {} stream direct executor candidate accepted: path={} provider={} url={}",
+        log_label,
+        payload.path,
+        provider.name,
+        redact_url_for_log(upstream_request.url),
+    )
+
+    return GatewayExecutionPlanResponse(
+        action="executor_stream",
+        plan_kind=plan_kind,
+        plan=contract.to_payload(),
+        report_kind=report_kind,
+        report_context={
+            "user_id": str(user.id),
+            "api_key_id": str(api_key.id),
+            "request_id": str(context.request_id),
+            "model": str(model or "unknown"),
+            "provider_name": str(contract.provider_name or "unknown"),
+            "provider_id": str(contract.provider_id or ""),
+            "endpoint_id": str(contract.endpoint_id or ""),
+            "key_id": str(contract.key_id or ""),
+            "candidate_id": str(contract.candidate_id or ""),
+            "provider_api_format": str(contract.provider_api_format or ""),
+            "client_api_format": str(contract.client_api_format or ""),
+            "mapped_model": mapped_model,
+            "original_headers": dict(context.original_headers),
+            "original_request_body": original_request_body,
+            "provider_request_headers": dict(upstream_request.headers),
+            "provider_request_body": upstream_request.payload,
+            "proxy_info": stream_proxy_info,
+        },
     )
 
 
@@ -1459,6 +2169,69 @@ async def _build_cli_sync_plan(
     )
 
 
+async def _build_openai_cli_stream_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    decision: GatewayRouteDecision,
+) -> GatewayExecutionPlanResponse | None:
+    return await _build_cli_stream_plan(
+        request=request,
+        payload=payload,
+        db=db,
+        auth_context=auth_context,
+        decision=decision,
+        expected_provider_formats={"openai:cli"},
+        plan_kind="openai_cli_stream",
+        report_kind="openai_cli_stream_success",
+        log_label="openai cli",
+    )
+
+
+async def _build_claude_cli_stream_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    decision: GatewayRouteDecision,
+) -> GatewayExecutionPlanResponse | None:
+    return await _build_cli_stream_plan(
+        request=request,
+        payload=payload,
+        db=db,
+        auth_context=auth_context,
+        decision=decision,
+        expected_provider_formats={"claude:cli"},
+        plan_kind="claude_cli_stream",
+        report_kind="claude_cli_stream_success",
+        log_label="claude cli",
+    )
+
+
+async def _build_gemini_cli_stream_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    decision: GatewayRouteDecision,
+) -> GatewayExecutionPlanResponse | None:
+    return await _build_cli_stream_plan(
+        request=request,
+        payload=payload,
+        db=db,
+        auth_context=auth_context,
+        decision=decision,
+        expected_provider_formats={"gemini:cli"},
+        plan_kind="gemini_cli_stream",
+        report_kind="gemini_cli_stream_success",
+        log_label="gemini cli",
+    )
+
+
 async def _build_openai_cli_sync_plan(
     *,
     request: Request,
@@ -1477,6 +2250,867 @@ async def _build_openai_cli_sync_plan(
         plan_kind="openai_compact_sync" if decision.route_kind == "compact" else "openai_cli_sync",
         report_kind="openai_cli_sync_success",
         log_label="openai cli",
+    )
+
+
+async def _build_openai_video_create_sync_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    decision: GatewayRouteDecision,
+) -> GatewayExecutionPlanResponse | None:
+    from src.api.handlers.base.request_builder import apply_body_rules
+    from src.api.handlers.openai.video_adapter import OpenAIVideoAdapter
+    from src.api.handlers.openai.video_handler import OpenAIVideoHandler
+    from src.core.api_format import make_signature_key
+    from src.services.request.executor_plan import (
+        ExecutionPlan,
+        ExecutionPlanTimeouts,
+        build_execution_plan_body,
+        is_remote_contract_eligible,
+    )
+
+    if (
+        str(payload.method or "").strip().upper() != "POST"
+        or str(payload.path or "").strip() != "/v1/videos"
+    ):
+        return None
+    if payload.body_base64:
+        return None
+
+    adapter = OpenAIVideoAdapter()
+    user, api_key = _load_gateway_auth_models(db, auth_context)
+    gateway_request = _build_gateway_forward_request(request=request, payload=payload)
+    pipeline = get_pipeline()
+    await pipeline._check_user_rate_limit(gateway_request, db, user, api_key)
+
+    context = _build_gateway_request_context(
+        request=gateway_request,
+        payload=payload,
+        db=db,
+        user=user,
+        api_key=api_key,
+        adapter=adapter,
+        path_params={},
+        balance_remaining=auth_context.balance_remaining,
+    )
+    authorize_result = adapter.authorize(context)
+    if hasattr(authorize_result, "__await__"):
+        await authorize_result
+
+    original_request_body = await context.ensure_json_body_async()
+    handler = OpenAIVideoHandler(
+        db=db,
+        user=user,
+        api_key=api_key,
+        request_id=context.request_id,
+        client_ip=context.client_ip,
+        user_agent=context.user_agent,
+        start_time=context.start_time,
+        allowed_api_formats=adapter.allowed_api_formats,
+    )
+
+    internal_request = handler._normalizer.video_request_to_internal(original_request_body)
+    candidate = await _select_gateway_direct_candidate(
+        db=db,
+        redis_client=None,
+        api_format=handler.FORMAT_ID,
+        model_name=str(internal_request.model or "unknown"),
+        user_api_key=api_key,
+        request_id=context.request_id,
+        is_stream=False,
+        capability_requirements=None,
+        preferred_key_ids=None,
+        request_body=original_request_body,
+    )
+    if candidate is None:
+        return None
+
+    provider_api_format = make_signature_key(
+        str(getattr(candidate.endpoint, "api_family", "")).strip().lower(),
+        str(getattr(candidate.endpoint, "endpoint_kind", "")).strip().lower(),
+    )
+    if provider_api_format != handler.FORMAT_ID or bool(
+        getattr(candidate, "needs_conversion", False)
+    ):
+        return None
+
+    upstream_key, endpoint, provider_key, _auth_info = await handler._resolve_upstream_key(
+        candidate
+    )
+    request_body = dict(original_request_body)
+    if "seconds" in request_body and request_body["seconds"] is not None:
+        request_body["seconds"] = str(request_body["seconds"])
+
+    endpoint_body_rules = getattr(endpoint, "body_rules", None)
+    if endpoint_body_rules:
+        request_body = apply_body_rules(
+            request_body,
+            endpoint_body_rules,
+            original_body=original_request_body,
+        )
+
+    upstream_url = handler._build_upstream_url(endpoint.base_url)
+    headers = handler._build_upstream_headers(
+        context.original_headers,
+        upstream_key,
+        endpoint,
+        body=request_body,
+        original_body=original_request_body,
+    )
+
+    content_type = str(headers.get("content-type") or "").strip() or "application/json"
+    contract = ExecutionPlan(
+        request_id=str(context.request_id or ""),
+        candidate_id=str(
+            getattr(candidate, "request_candidate_id", "") or getattr(candidate, "id", "") or ""
+        )
+        or None,
+        provider_name=str(candidate.provider.name),
+        provider_id=str(candidate.provider.id),
+        endpoint_id=str(endpoint.id),
+        key_id=str(provider_key.id),
+        method="POST",
+        url=upstream_url,
+        headers=dict(headers),
+        body=build_execution_plan_body(request_body, content_type=content_type),
+        stream=False,
+        provider_api_format=provider_api_format,
+        client_api_format=handler.FORMAT_ID,
+        model_name=str(internal_request.model or ""),
+        content_type=content_type,
+        content_encoding=context.client_content_encoding,
+        timeouts=ExecutionPlanTimeouts(
+            connect_ms=30_000,
+            read_ms=300_000,
+            write_ms=300_000,
+            pool_ms=30_000,
+            total_ms=300_000,
+        ),
+    )
+    if not is_remote_contract_eligible(contract):
+        return None
+
+    return GatewayExecutionPlanResponse(
+        action="executor_sync",
+        plan_kind="openai_video_create_sync",
+        plan=contract.to_payload(),
+        report_kind="openai_video_create_sync_finalize",
+        report_context={
+            "user_id": str(user.id),
+            "api_key_id": str(api_key.id),
+            "request_id": str(context.request_id),
+            "model": str(internal_request.model or "unknown"),
+            "provider_name": str(candidate.provider.name),
+            "provider_id": str(candidate.provider.id),
+            "endpoint_id": str(endpoint.id),
+            "key_id": str(provider_key.id),
+            "provider_api_format": provider_api_format,
+            "client_api_format": handler.FORMAT_ID,
+            "original_headers": dict(context.original_headers),
+            "original_request_body": original_request_body,
+            "provider_request_headers": dict(headers),
+            "provider_request_body": request_body,
+        },
+    )
+
+
+async def _build_openai_video_remix_sync_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    task_id: str,
+) -> GatewayExecutionPlanResponse | None:
+    from src.api.handlers.base.request_builder import apply_body_rules
+    from src.api.handlers.openai.video_adapter import OpenAIVideoAdapter
+    from src.api.handlers.openai.video_handler import OpenAIVideoHandler
+    from src.core.api_format import make_signature_key
+    from src.core.api_format.conversion.internal_video import VideoStatus
+    from src.core.crypto import crypto_service
+    from src.models.database import Provider
+    from src.services.request.executor_plan import (
+        ExecutionPlan,
+        ExecutionPlanTimeouts,
+        build_execution_plan_body,
+        is_remote_contract_eligible,
+    )
+
+    if str(payload.method or "").strip().upper() != "POST" or not task_id or payload.body_base64:
+        return None
+
+    adapter = OpenAIVideoAdapter()
+    user, api_key = _load_gateway_auth_models(db, auth_context)
+    gateway_request = _build_gateway_forward_request(request=request, payload=payload)
+    pipeline = get_pipeline()
+    await pipeline._check_user_rate_limit(gateway_request, db, user, api_key)
+
+    context = _build_gateway_request_context(
+        request=gateway_request,
+        payload=payload,
+        db=db,
+        user=user,
+        api_key=api_key,
+        adapter=adapter,
+        path_params={"task_id": task_id},
+        balance_remaining=auth_context.balance_remaining,
+    )
+    authorize_result = adapter.authorize(context)
+    if hasattr(authorize_result, "__await__"):
+        await authorize_result
+
+    original_request_body = await context.ensure_json_body_async()
+    try:
+        handler = OpenAIVideoHandler(
+            db=db,
+            user=user,
+            api_key=api_key,
+            request_id=context.request_id,
+            client_ip=context.client_ip,
+            user_agent=context.user_agent,
+            start_time=context.start_time,
+            allowed_api_formats=adapter.allowed_api_formats,
+        )
+        original_task = handler._get_task(task_id)
+        if original_task.status != VideoStatus.COMPLETED.value:
+            return None
+        if not original_task.external_task_id:
+            return None
+
+        endpoint, key = handler._get_endpoint_and_key(original_task)
+        if not getattr(key, "api_key", None):
+            return None
+        provider = db.query(Provider).filter(Provider.id == original_task.provider_id).first()
+        if provider is None:
+            return None
+
+        upstream_key = crypto_service.decrypt(key.api_key)
+        upstream_url = handler._build_upstream_url(
+            endpoint.base_url,
+            f"{original_task.external_task_id}/remix",
+        )
+
+        request_body = dict(original_request_body)
+        if "seconds" in request_body and request_body["seconds"] is not None:
+            request_body["seconds"] = str(request_body["seconds"])
+
+        endpoint_body_rules = getattr(endpoint, "body_rules", None)
+        if endpoint_body_rules:
+            request_body = apply_body_rules(
+                request_body,
+                endpoint_body_rules,
+                original_body=original_request_body,
+            )
+
+        headers = handler._build_upstream_headers(
+            context.original_headers,
+            upstream_key,
+            endpoint,
+            body=request_body,
+            original_body=original_request_body,
+        )
+
+        provider_api_format = make_signature_key(
+            str(getattr(endpoint, "api_family", "")).strip().lower(),
+            str(getattr(endpoint, "endpoint_kind", "")).strip().lower(),
+        )
+        if provider_api_format != handler.FORMAT_ID:
+            return None
+    except HTTPException:
+        return None
+    except Exception:
+        return None
+
+    content_type = str(headers.get("content-type") or "").strip() or "application/json"
+    contract = ExecutionPlan(
+        request_id=str(context.request_id or ""),
+        candidate_id=None,
+        provider_name=str(provider.name),
+        provider_id=str(provider.id),
+        endpoint_id=str(endpoint.id),
+        key_id=str(key.id),
+        method="POST",
+        url=upstream_url,
+        headers=dict(headers),
+        body=build_execution_plan_body(request_body, content_type=content_type),
+        stream=False,
+        provider_api_format=provider_api_format,
+        client_api_format=handler.FORMAT_ID,
+        model_name=str(getattr(original_task, "model", "") or ""),
+        content_type=content_type,
+        content_encoding=context.client_content_encoding,
+        timeouts=ExecutionPlanTimeouts(
+            connect_ms=30_000,
+            read_ms=300_000,
+            write_ms=300_000,
+            pool_ms=30_000,
+            total_ms=300_000,
+        ),
+    )
+    if not is_remote_contract_eligible(contract):
+        return None
+
+    return GatewayExecutionPlanResponse(
+        action="executor_sync",
+        plan_kind="openai_video_remix_sync",
+        plan=contract.to_payload(),
+        report_kind="openai_video_remix_sync_finalize",
+        report_context={
+            "user_id": str(user.id),
+            "api_key_id": str(api_key.id),
+            "request_id": str(context.request_id),
+            "task_id": task_id,
+            "original_headers": dict(context.original_headers),
+            "original_request_body": original_request_body,
+        },
+    )
+
+
+async def _build_gemini_video_create_sync_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    model: str,
+) -> GatewayExecutionPlanResponse | None:
+    from src.api.handlers.base.request_builder import apply_body_rules
+    from src.api.handlers.gemini.video_adapter import GeminiVeoAdapter
+    from src.api.handlers.gemini.video_handler import GeminiVeoHandler
+    from src.core.api_format import make_signature_key
+    from src.services.request.executor_plan import (
+        ExecutionPlan,
+        ExecutionPlanTimeouts,
+        build_execution_plan_body,
+        is_remote_contract_eligible,
+    )
+
+    if str(payload.method or "").strip().upper() != "POST" or not model or payload.body_base64:
+        return None
+
+    adapter = GeminiVeoAdapter()
+    user, api_key = _load_gateway_auth_models(db, auth_context)
+    gateway_request = _build_gateway_forward_request(request=request, payload=payload)
+    pipeline = get_pipeline()
+    await pipeline._check_user_rate_limit(gateway_request, db, user, api_key)
+
+    context = _build_gateway_request_context(
+        request=gateway_request,
+        payload=payload,
+        db=db,
+        user=user,
+        api_key=api_key,
+        adapter=adapter,
+        path_params={"model": model},
+        balance_remaining=auth_context.balance_remaining,
+    )
+    authorize_result = adapter.authorize(context)
+    if hasattr(authorize_result, "__await__"):
+        await authorize_result
+
+    original_request_body = await context.ensure_json_body_async()
+    request_with_model = {**original_request_body, "model": model}
+    try:
+        handler = GeminiVeoHandler(
+            db=db,
+            user=user,
+            api_key=api_key,
+            request_id=context.request_id,
+            client_ip=context.client_ip,
+            user_agent=context.user_agent,
+            start_time=context.start_time,
+            allowed_api_formats=adapter.allowed_api_formats,
+        )
+        internal_request = handler._normalizer.video_request_to_internal(request_with_model)
+        candidate = await _select_gateway_direct_candidate(
+            db=db,
+            redis_client=None,
+            api_format=handler.FORMAT_ID,
+            model_name=str(internal_request.model or "unknown"),
+            user_api_key=api_key,
+            request_id=context.request_id,
+            is_stream=False,
+            capability_requirements=None,
+            preferred_key_ids=None,
+            request_body=request_with_model,
+        )
+        if candidate is None:
+            return None
+
+        provider_api_format = make_signature_key(
+            str(getattr(candidate.endpoint, "api_family", "")).strip().lower(),
+            str(getattr(candidate.endpoint, "endpoint_kind", "")).strip().lower(),
+        )
+        if provider_api_format != handler.FORMAT_ID or bool(
+            getattr(candidate, "needs_conversion", False)
+        ):
+            return None
+
+        upstream_key, endpoint, provider_key, auth_info = await handler._resolve_upstream_key(
+            candidate
+        )
+        endpoint_body_rules = getattr(endpoint, "body_rules", None)
+        request_body = dict(original_request_body)
+        if endpoint_body_rules:
+            request_body = apply_body_rules(
+                request_body,
+                endpoint_body_rules,
+                original_body=original_request_body,
+            )
+
+        upstream_url = handler._build_upstream_url(endpoint.base_url, internal_request.model)
+        headers = handler._build_upstream_headers(
+            context.original_headers,
+            upstream_key,
+            endpoint,
+            auth_info,
+            body=request_body,
+            original_body=original_request_body,
+        )
+    except HTTPException:
+        return None
+    except Exception:
+        return None
+
+    content_type = str(headers.get("content-type") or "").strip() or "application/json"
+    contract = ExecutionPlan(
+        request_id=str(context.request_id or ""),
+        candidate_id=str(
+            getattr(candidate, "request_candidate_id", "") or getattr(candidate, "id", "") or ""
+        )
+        or None,
+        provider_name=str(candidate.provider.name),
+        provider_id=str(candidate.provider.id),
+        endpoint_id=str(endpoint.id),
+        key_id=str(provider_key.id),
+        method="POST",
+        url=upstream_url,
+        headers=dict(headers),
+        body=build_execution_plan_body(request_body, content_type=content_type),
+        stream=False,
+        provider_api_format=provider_api_format,
+        client_api_format=handler.FORMAT_ID,
+        model_name=str(internal_request.model or ""),
+        content_type=content_type,
+        content_encoding=context.client_content_encoding,
+        timeouts=ExecutionPlanTimeouts(
+            connect_ms=30_000,
+            read_ms=300_000,
+            write_ms=300_000,
+            pool_ms=30_000,
+            total_ms=300_000,
+        ),
+    )
+    if not is_remote_contract_eligible(contract):
+        return None
+
+    return GatewayExecutionPlanResponse(
+        action="executor_sync",
+        plan_kind="gemini_video_create_sync",
+        plan=contract.to_payload(),
+        report_kind="gemini_video_create_sync_finalize",
+        report_context={
+            "user_id": str(user.id),
+            "api_key_id": str(api_key.id),
+            "request_id": str(context.request_id),
+            "model": str(internal_request.model or model),
+            "provider_name": str(candidate.provider.name),
+            "provider_id": str(candidate.provider.id),
+            "endpoint_id": str(endpoint.id),
+            "key_id": str(provider_key.id),
+            "provider_api_format": provider_api_format,
+            "client_api_format": handler.FORMAT_ID,
+            "original_headers": dict(context.original_headers),
+            "original_request_body": original_request_body,
+            "provider_request_headers": dict(headers),
+            "provider_request_body": request_body,
+        },
+    )
+
+
+async def _build_openai_video_cancel_sync_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    task_id: str,
+) -> GatewayExecutionPlanResponse | None:
+    from src.api.handlers.openai.video_adapter import OpenAIVideoAdapter
+    from src.api.handlers.openai.video_handler import OpenAIVideoHandler
+    from src.core.api_format import make_signature_key
+    from src.core.api_format.conversion.internal_video import VideoStatus
+    from src.core.crypto import crypto_service
+    from src.services.request.executor_plan import (
+        ExecutionPlan,
+        ExecutionPlanBody,
+        ExecutionPlanTimeouts,
+        is_remote_contract_eligible,
+    )
+
+    if str(payload.method or "").strip().upper() != "POST" or not task_id:
+        return None
+
+    adapter = OpenAIVideoAdapter()
+    user, api_key = _load_gateway_auth_models(db, auth_context)
+    gateway_request = _build_gateway_forward_request(request=request, payload=payload)
+    pipeline = get_pipeline()
+    await pipeline._check_user_rate_limit(gateway_request, db, user, api_key)
+
+    context = _build_gateway_request_context(
+        request=gateway_request,
+        payload=payload,
+        db=db,
+        user=user,
+        api_key=api_key,
+        adapter=adapter,
+        path_params={"task_id": task_id, "action": "cancel"},
+        balance_remaining=auth_context.balance_remaining,
+    )
+    authorize_result = adapter.authorize(context)
+    if hasattr(authorize_result, "__await__"):
+        await authorize_result
+
+    try:
+        handler = OpenAIVideoHandler(
+            db=db,
+            user=user,
+            api_key=api_key,
+            request_id=context.request_id,
+            client_ip=context.client_ip,
+            user_agent=context.user_agent,
+            start_time=context.start_time,
+            allowed_api_formats=adapter.allowed_api_formats,
+        )
+        task = handler._get_task(task_id)
+        if task.status in {
+            VideoStatus.COMPLETED.value,
+            VideoStatus.FAILED.value,
+            VideoStatus.CANCELLED.value,
+            VideoStatus.EXPIRED.value,
+        }:
+            return None
+        if not task.external_task_id:
+            return None
+
+        endpoint, key = handler._get_endpoint_and_key(task)
+        if not getattr(key, "api_key", None):
+            return None
+        upstream_key = crypto_service.decrypt(key.api_key)
+        upstream_url = handler._build_upstream_url(endpoint.base_url, task.external_task_id)
+        headers = handler._build_upstream_headers(
+            context.original_headers,
+            upstream_key,
+            endpoint,
+        )
+        provider_api_format = make_signature_key(
+            str(getattr(endpoint, "api_family", "")).strip().lower(),
+            str(getattr(endpoint, "endpoint_kind", "")).strip().lower(),
+        )
+        if provider_api_format != handler.FORMAT_ID:
+            return None
+    except HTTPException:
+        return None
+    except Exception:
+        return None
+
+    contract = ExecutionPlan(
+        request_id=str(context.request_id or ""),
+        candidate_id=None,
+        provider_name="openai",
+        provider_id=str(getattr(endpoint, "provider_id", "") or ""),
+        endpoint_id=str(getattr(endpoint, "id", "") or ""),
+        key_id=str(getattr(key, "id", "") or ""),
+        method="DELETE",
+        url=upstream_url,
+        headers=dict(headers),
+        body=ExecutionPlanBody(),
+        stream=False,
+        provider_api_format=provider_api_format,
+        client_api_format=handler.FORMAT_ID,
+        model_name=str(getattr(task, "model", "") or ""),
+        content_encoding=context.client_content_encoding,
+        timeouts=ExecutionPlanTimeouts(
+            connect_ms=30_000,
+            read_ms=300_000,
+            write_ms=300_000,
+            pool_ms=30_000,
+            total_ms=300_000,
+        ),
+    )
+    if not is_remote_contract_eligible(contract):
+        return None
+
+    return GatewayExecutionPlanResponse(
+        action="executor_sync",
+        plan_kind="openai_video_cancel_sync",
+        plan=contract.to_payload(),
+        report_kind="openai_video_cancel_sync_finalize",
+        report_context={
+            "user_id": str(user.id),
+            "api_key_id": str(api_key.id),
+            "task_id": task_id,
+        },
+    )
+
+
+async def _build_openai_video_delete_sync_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    task_id: str,
+) -> GatewayExecutionPlanResponse | None:
+    from src.api.handlers.openai.video_adapter import OpenAIVideoAdapter
+    from src.api.handlers.openai.video_handler import OpenAIVideoHandler
+    from src.core.api_format import make_signature_key
+    from src.core.api_format.conversion.internal_video import VideoStatus
+    from src.core.crypto import crypto_service
+    from src.services.request.executor_plan import (
+        ExecutionPlan,
+        ExecutionPlanBody,
+        ExecutionPlanTimeouts,
+        is_remote_contract_eligible,
+    )
+
+    if str(payload.method or "").strip().upper() != "DELETE" or not task_id:
+        return None
+
+    adapter = OpenAIVideoAdapter()
+    user, api_key = _load_gateway_auth_models(db, auth_context)
+    gateway_request = _build_gateway_forward_request(request=request, payload=payload)
+    pipeline = get_pipeline()
+    await pipeline._check_user_rate_limit(gateway_request, db, user, api_key)
+
+    context = _build_gateway_request_context(
+        request=gateway_request,
+        payload=payload,
+        db=db,
+        user=user,
+        api_key=api_key,
+        adapter=adapter,
+        path_params={"task_id": task_id},
+        balance_remaining=auth_context.balance_remaining,
+    )
+    authorize_result = adapter.authorize(context)
+    if hasattr(authorize_result, "__await__"):
+        await authorize_result
+
+    try:
+        handler = OpenAIVideoHandler(
+            db=db,
+            user=user,
+            api_key=api_key,
+            request_id=context.request_id,
+            client_ip=context.client_ip,
+            user_agent=context.user_agent,
+            start_time=context.start_time,
+            allowed_api_formats=adapter.allowed_api_formats,
+        )
+        task = handler._get_task(task_id)
+        if task.status not in (VideoStatus.COMPLETED.value, VideoStatus.FAILED.value):
+            return None
+        if not task.external_task_id:
+            return None
+
+        endpoint, key = handler._get_endpoint_and_key(task)
+        if not getattr(key, "api_key", None):
+            return None
+        upstream_key = crypto_service.decrypt(key.api_key)
+        upstream_url = handler._build_upstream_url(endpoint.base_url, task.external_task_id)
+        headers = handler._build_upstream_headers(
+            context.original_headers,
+            upstream_key,
+            endpoint,
+        )
+        provider_api_format = make_signature_key(
+            str(getattr(endpoint, "api_family", "")).strip().lower(),
+            str(getattr(endpoint, "endpoint_kind", "")).strip().lower(),
+        )
+        if provider_api_format != handler.FORMAT_ID:
+            return None
+    except HTTPException:
+        return None
+    except Exception:
+        return None
+
+    contract = ExecutionPlan(
+        request_id=str(context.request_id or ""),
+        candidate_id=None,
+        provider_name="openai",
+        provider_id=str(getattr(endpoint, "provider_id", "") or ""),
+        endpoint_id=str(getattr(endpoint, "id", "") or ""),
+        key_id=str(getattr(key, "id", "") or ""),
+        method="DELETE",
+        url=upstream_url,
+        headers=dict(headers),
+        body=ExecutionPlanBody(),
+        stream=False,
+        provider_api_format=provider_api_format,
+        client_api_format=handler.FORMAT_ID,
+        model_name=str(getattr(task, "model", "") or ""),
+        content_encoding=context.client_content_encoding,
+        timeouts=ExecutionPlanTimeouts(
+            connect_ms=30_000,
+            read_ms=300_000,
+            write_ms=300_000,
+            pool_ms=30_000,
+            total_ms=300_000,
+        ),
+    )
+    if not is_remote_contract_eligible(contract):
+        return None
+
+    return GatewayExecutionPlanResponse(
+        action="executor_sync",
+        plan_kind="openai_video_delete_sync",
+        plan=contract.to_payload(),
+        report_kind="openai_video_delete_sync_finalize",
+        report_context={
+            "user_id": str(user.id),
+            "api_key_id": str(api_key.id),
+            "task_id": task_id,
+        },
+    )
+
+
+async def _build_gemini_video_cancel_sync_plan(
+    *,
+    request: Request,
+    payload: GatewayExecuteRequest,
+    db: Session,
+    auth_context: GatewayAuthContext,
+    task_id: str,
+) -> GatewayExecutionPlanResponse | None:
+    from src.api.handlers.gemini.video_adapter import GeminiVeoAdapter
+    from src.api.handlers.gemini.video_handler import GeminiVeoHandler
+    from src.core.api_format import make_signature_key
+    from src.core.api_format.conversion.internal_video import VideoStatus
+    from src.services.provider.auth import get_provider_auth
+    from src.services.request.executor_plan import (
+        ExecutionPlan,
+        ExecutionPlanTimeouts,
+        build_execution_plan_body,
+        is_remote_contract_eligible,
+    )
+
+    if str(payload.method or "").strip().upper() != "POST" or not task_id:
+        return None
+
+    adapter = GeminiVeoAdapter()
+    user, api_key = _load_gateway_auth_models(db, auth_context)
+    gateway_request = _build_gateway_forward_request(request=request, payload=payload)
+    pipeline = get_pipeline()
+    await pipeline._check_user_rate_limit(gateway_request, db, user, api_key)
+
+    context = _build_gateway_request_context(
+        request=gateway_request,
+        payload=payload,
+        db=db,
+        user=user,
+        api_key=api_key,
+        adapter=adapter,
+        path_params={"task_id": task_id, "action": "cancel"},
+        balance_remaining=auth_context.balance_remaining,
+    )
+    authorize_result = adapter.authorize(context)
+    if hasattr(authorize_result, "__await__"):
+        await authorize_result
+
+    try:
+        handler = GeminiVeoHandler(
+            db=db,
+            user=user,
+            api_key=api_key,
+            request_id=context.request_id,
+            client_ip=context.client_ip,
+            user_agent=context.user_agent,
+            start_time=context.start_time,
+            allowed_api_formats=adapter.allowed_api_formats,
+        )
+        task = handler._get_task_by_external_id(task_id)
+        if task.status in {
+            VideoStatus.COMPLETED.value,
+            VideoStatus.FAILED.value,
+            VideoStatus.CANCELLED.value,
+            VideoStatus.EXPIRED.value,
+        }:
+            return None
+        if not task.external_task_id:
+            return None
+
+        endpoint, key = handler._get_endpoint_and_key(task)
+        if not getattr(key, "api_key", None):
+            return None
+        upstream_key = crypto_service.decrypt(key.api_key)
+        auth_info = await get_provider_auth(endpoint, key)
+        operation_name = str(task.external_task_id or "").strip()
+        if not (operation_name.startswith("operations/") or operation_name.startswith("models/")):
+            operation_name = f"operations/{operation_name}"
+        upstream_url = handler._build_cancel_url(endpoint.base_url, operation_name)
+        request_body: dict[str, Any] = {}
+        headers = handler._build_upstream_headers(
+            context.original_headers,
+            upstream_key,
+            endpoint,
+            auth_info,
+            body=request_body,
+            original_body=request_body,
+        )
+        provider_api_format = make_signature_key(
+            str(getattr(endpoint, "api_family", "")).strip().lower(),
+            str(getattr(endpoint, "endpoint_kind", "")).strip().lower(),
+        )
+        if provider_api_format != handler.FORMAT_ID:
+            return None
+    except HTTPException:
+        return None
+    except Exception:
+        return None
+
+    content_type = str(headers.get("content-type") or "").strip() or "application/json"
+    contract = ExecutionPlan(
+        request_id=str(context.request_id or ""),
+        candidate_id=None,
+        provider_name="gemini",
+        provider_id=str(getattr(endpoint, "provider_id", "") or ""),
+        endpoint_id=str(getattr(endpoint, "id", "") or ""),
+        key_id=str(getattr(key, "id", "") or ""),
+        method="POST",
+        url=upstream_url,
+        headers=dict(headers),
+        body=build_execution_plan_body(request_body, content_type=content_type),
+        stream=False,
+        provider_api_format=provider_api_format,
+        client_api_format=handler.FORMAT_ID,
+        model_name=str(getattr(task, "model", "") or ""),
+        content_type=content_type,
+        content_encoding=context.client_content_encoding,
+        timeouts=ExecutionPlanTimeouts(
+            connect_ms=30_000,
+            read_ms=300_000,
+            write_ms=300_000,
+            pool_ms=30_000,
+            total_ms=300_000,
+        ),
+    )
+    if not is_remote_contract_eligible(contract):
+        return None
+
+    return GatewayExecutionPlanResponse(
+        action="executor_sync",
+        plan_kind="gemini_video_cancel_sync",
+        plan=contract.to_payload(),
+        report_kind="gemini_video_cancel_sync_finalize",
+        report_context={
+            "user_id": str(user.id),
+            "api_key_id": str(api_key.id),
+            "task_id": task_id,
+        },
     )
 
 
@@ -1981,6 +3615,45 @@ async def _apply_gateway_sync_report(
         await _record_gateway_passthrough_cli_sync_success(payload, db=db)
 
 
+async def _finalize_gateway_sync_response(
+    payload: GatewaySyncReportRequest,
+    *,
+    db: Session,
+) -> Response:
+    if payload.report_kind == "openai_video_create_sync_finalize":
+        return await _finalize_gateway_openai_video_create_sync(payload, db=db)
+    if payload.report_kind == "openai_video_remix_sync_finalize":
+        return await _finalize_gateway_openai_video_remix_sync(payload, db=db)
+    if payload.report_kind == "gemini_video_create_sync_finalize":
+        return await _finalize_gateway_gemini_video_create_sync(payload, db=db)
+    if payload.report_kind == "openai_video_cancel_sync_finalize":
+        return await _finalize_gateway_openai_video_cancel_sync(payload, db=db)
+    if payload.report_kind == "openai_video_delete_sync_finalize":
+        return await _finalize_gateway_openai_video_delete_sync(payload, db=db)
+    if payload.report_kind == "gemini_video_cancel_sync_finalize":
+        return await _finalize_gateway_gemini_video_cancel_sync(payload, db=db)
+    raise HTTPException(status_code=400, detail="Unsupported gateway sync finalize kind")
+
+
+async def _apply_gateway_stream_report(
+    payload: GatewayStreamReportRequest,
+    *,
+    db: Session,
+) -> None:
+    if payload.report_kind == "openai_chat_stream_success":
+        await _record_gateway_openai_chat_stream_success(payload, db=db)
+    elif payload.report_kind == "claude_chat_stream_success":
+        await _record_gateway_passthrough_chat_stream_success(payload, db=db)
+    elif payload.report_kind == "gemini_chat_stream_success":
+        await _record_gateway_passthrough_chat_stream_success(payload, db=db)
+    elif payload.report_kind == "openai_cli_stream_success":
+        await _record_gateway_passthrough_cli_stream_success(payload, db=db)
+    elif payload.report_kind == "claude_cli_stream_success":
+        await _record_gateway_passthrough_cli_stream_success(payload, db=db)
+    elif payload.report_kind == "gemini_cli_stream_success":
+        await _record_gateway_passthrough_cli_stream_success(payload, db=db)
+
+
 async def _record_gateway_openai_chat_sync_success(
     payload: GatewaySyncReportRequest,
     *,
@@ -2271,7 +3944,981 @@ async def _record_gateway_passthrough_cli_sync_success(
     )
 
 
-def _extract_gateway_report_body_bytes(payload: GatewaySyncReportRequest) -> bytes:
+class _GatewayReportStreamContext:
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        return None
+
+
+async def _iter_gateway_report_body_chunks(body_bytes: bytes) -> Any:
+    yield body_bytes
+
+
+async def _record_gateway_openai_chat_stream_success(
+    payload: GatewayStreamReportRequest,
+    *,
+    db: Session,
+) -> None:
+    from src.api.handlers.base.stream_context import StreamContext
+    from src.api.handlers.base.stream_processor import StreamProcessor
+    from src.api.handlers.base.stream_telemetry import StreamTelemetryRecorder
+    from src.api.handlers.openai import OpenAIChatAdapter
+    from src.services.system.config import SystemConfigService
+
+    if payload.status_code >= 400:
+        return
+
+    context = dict(payload.report_context or {})
+    user_id = str(context.get("user_id") or "").strip()
+    api_key_id = str(context.get("api_key_id") or "").strip()
+    if not user_id or not api_key_id:
+        return
+
+    body_bytes = _extract_gateway_report_body_bytes(payload)
+    if not body_bytes:
+        return
+
+    user = db.query(User).filter(User.id == user_id).first()
+    api_key = db.query(ApiKey).filter(ApiKey.id == api_key_id).first()
+    if not user or not api_key:
+        return
+
+    adapter = OpenAIChatAdapter()
+    handler = adapter._create_handler(
+        db=db,
+        user=user,
+        api_key=api_key,
+        request_id=str(context.get("request_id") or payload.trace_id or uuid.uuid4().hex[:8]),
+        client_ip="127.0.0.1",
+        user_agent=str(
+            (context.get("original_headers") or {}).get("user-agent") or "aether-gateway"
+        ),
+        start_time=time.time(),
+        api_family=adapter.API_FAMILY.value if adapter.API_FAMILY else None,
+        endpoint_kind=adapter.ENDPOINT_KIND.value if adapter.ENDPOINT_KIND else None,
+    )
+
+    ctx = StreamContext(
+        model=str(context.get("model") or "unknown"),
+        api_format=handler.allowed_api_formats[0],
+        api_family=adapter.API_FAMILY.value if adapter.API_FAMILY else None,
+        endpoint_kind=adapter.ENDPOINT_KIND.value if adapter.ENDPOINT_KIND else None,
+    )
+    ctx.request_id = handler.request_id
+    ctx.client_api_format = str(context.get("client_api_format") or "openai:chat")
+    ctx.provider_type = str(context.get("provider_name") or "openai")
+    ctx.update_provider_info(
+        provider_name=str(context.get("provider_name") or "openai"),
+        provider_id=str(context.get("provider_id") or ""),
+        endpoint_id=str(context.get("endpoint_id") or ""),
+        key_id=str(context.get("key_id") or ""),
+        provider_api_format=str(context.get("provider_api_format") or "openai:chat"),
+    )
+    ctx.mapped_model = str(context.get("mapped_model") or "") or None
+    ctx.provider_request_headers = dict(context.get("provider_request_headers") or {})
+    ctx.provider_request_body = context.get("provider_request_body")
+    ctx.response_headers = dict(payload.headers or {})
+    ctx.status_code = payload.status_code
+    ctx.record_parsed_chunks = SystemConfigService.should_log_body(db)
+    if str(context.get("candidate_id") or "").strip():
+        ctx.attempt_id = str(context.get("candidate_id"))
+
+    proxy_info = context.get("proxy_info")
+    if isinstance(proxy_info, dict):
+        ctx.proxy_info = dict(proxy_info)
+    ctx.set_proxy_timing(ctx.response_headers)
+
+    telemetry = payload.telemetry if isinstance(payload.telemetry, dict) else {}
+    ttfb_ms = telemetry.get("ttfb_ms")
+    if ttfb_ms is not None:
+        try:
+            ctx.first_byte_time_ms = max(int(ttfb_ms), 0)
+        except (TypeError, ValueError):
+            ctx.first_byte_time_ms = None
+    if ctx.proxy_info is not None and ctx.first_byte_time_ms is not None:
+        ctx.set_ttfb_ms(ctx.first_byte_time_ms)
+
+    stream_processor = StreamProcessor(
+        request_id=ctx.request_id,
+        default_parser=handler.parser,
+        on_streaming_start=None,
+    )
+    stream = stream_processor.create_response_stream(
+        ctx,
+        _iter_gateway_report_body_chunks(body_bytes),
+        _GatewayReportStreamContext(),
+        start_time=time.time(),
+    )
+    async for _chunk in stream:
+        pass
+
+    elapsed_ms = telemetry.get("elapsed_ms")
+    try:
+        response_elapsed_ms = max(int(elapsed_ms or 0), 0)
+    except (TypeError, ValueError):
+        response_elapsed_ms = 0
+    request_start_time = (
+        time.time() - (response_elapsed_ms / 1000.0) if response_elapsed_ms > 0 else time.time()
+    )
+
+    telemetry_recorder = StreamTelemetryRecorder(
+        request_id=ctx.request_id,
+        user_id=str(user.id),
+        api_key_id=str(api_key.id),
+        client_ip="127.0.0.1",
+        format_id=handler.FORMAT_ID,
+    )
+    await telemetry_recorder.record_stream_stats(
+        ctx,
+        dict(context.get("original_headers") or {}),
+        dict(context.get("original_request_body") or {}),
+        request_start_time,
+    )
+
+
+async def _record_gateway_passthrough_chat_stream_success(
+    payload: GatewayStreamReportRequest,
+    *,
+    db: Session,
+) -> None:
+    from src.api.handlers.base.stream_context import StreamContext
+    from src.api.handlers.base.stream_processor import StreamProcessor
+    from src.api.handlers.base.stream_telemetry import StreamTelemetryRecorder
+    from src.api.handlers.claude import ClaudeChatAdapter
+    from src.api.handlers.gemini import GeminiChatAdapter
+    from src.api.handlers.openai import OpenAIChatAdapter
+    from src.services.system.config import SystemConfigService
+
+    if payload.status_code >= 400:
+        return
+
+    context = dict(payload.report_context or {})
+    user_id = str(context.get("user_id") or "").strip()
+    api_key_id = str(context.get("api_key_id") or "").strip()
+    client_api_format = str(context.get("client_api_format") or "").strip().lower()
+    if not user_id or not api_key_id or not client_api_format:
+        return
+
+    body_bytes = _extract_gateway_report_body_bytes(payload)
+    if not body_bytes:
+        return
+
+    user = db.query(User).filter(User.id == user_id).first()
+    api_key = db.query(ApiKey).filter(ApiKey.id == api_key_id).first()
+    if not user or not api_key:
+        return
+
+    if client_api_format == "claude:chat":
+        adapter = ClaudeChatAdapter()
+    elif client_api_format == "gemini:chat":
+        adapter = GeminiChatAdapter()
+    elif client_api_format == "openai:chat":
+        adapter = OpenAIChatAdapter()
+    else:
+        return
+
+    handler = adapter._create_handler(
+        db=db,
+        user=user,
+        api_key=api_key,
+        request_id=str(context.get("request_id") or payload.trace_id or uuid.uuid4().hex[:8]),
+        client_ip="127.0.0.1",
+        user_agent=str(
+            (context.get("original_headers") or {}).get("user-agent") or "aether-gateway"
+        ),
+        start_time=time.time(),
+        api_family=adapter.API_FAMILY.value if adapter.API_FAMILY else None,
+        endpoint_kind=adapter.ENDPOINT_KIND.value if adapter.ENDPOINT_KIND else None,
+    )
+
+    ctx = StreamContext(
+        model=str(context.get("model") or "unknown"),
+        api_format=handler.allowed_api_formats[0],
+        api_family=adapter.API_FAMILY.value if adapter.API_FAMILY else None,
+        endpoint_kind=adapter.ENDPOINT_KIND.value if adapter.ENDPOINT_KIND else None,
+    )
+    ctx.request_id = handler.request_id
+    ctx.client_api_format = client_api_format
+    ctx.provider_type = str(context.get("provider_name") or "unknown")
+    ctx.update_provider_info(
+        provider_name=str(context.get("provider_name") or "unknown"),
+        provider_id=str(context.get("provider_id") or ""),
+        endpoint_id=str(context.get("endpoint_id") or ""),
+        key_id=str(context.get("key_id") or ""),
+        provider_api_format=str(context.get("provider_api_format") or client_api_format),
+    )
+    ctx.mapped_model = str(context.get("mapped_model") or "") or None
+    ctx.provider_request_headers = dict(context.get("provider_request_headers") or {})
+    ctx.provider_request_body = context.get("provider_request_body")
+    ctx.response_headers = dict(payload.headers or {})
+    ctx.status_code = payload.status_code
+    ctx.record_parsed_chunks = SystemConfigService.should_log_body(db)
+    if str(context.get("candidate_id") or "").strip():
+        ctx.attempt_id = str(context.get("candidate_id"))
+
+    proxy_info = context.get("proxy_info")
+    if isinstance(proxy_info, dict):
+        ctx.proxy_info = dict(proxy_info)
+    ctx.set_proxy_timing(ctx.response_headers)
+
+    telemetry = payload.telemetry if isinstance(payload.telemetry, dict) else {}
+    ttfb_ms = telemetry.get("ttfb_ms")
+    if ttfb_ms is not None:
+        try:
+            ctx.first_byte_time_ms = max(int(ttfb_ms), 0)
+        except (TypeError, ValueError):
+            ctx.first_byte_time_ms = None
+    if ctx.proxy_info is not None and ctx.first_byte_time_ms is not None:
+        ctx.set_ttfb_ms(ctx.first_byte_time_ms)
+
+    stream_processor = StreamProcessor(
+        request_id=ctx.request_id,
+        default_parser=handler.parser,
+        on_streaming_start=None,
+    )
+    stream = stream_processor.create_response_stream(
+        ctx,
+        _iter_gateway_report_body_chunks(body_bytes),
+        _GatewayReportStreamContext(),
+        start_time=time.time(),
+    )
+    async for _chunk in stream:
+        pass
+
+    elapsed_ms = telemetry.get("elapsed_ms")
+    try:
+        response_elapsed_ms = max(int(elapsed_ms or 0), 0)
+    except (TypeError, ValueError):
+        response_elapsed_ms = 0
+    request_start_time = (
+        time.time() - (response_elapsed_ms / 1000.0) if response_elapsed_ms > 0 else time.time()
+    )
+
+    telemetry_recorder = StreamTelemetryRecorder(
+        request_id=ctx.request_id,
+        user_id=str(user.id),
+        api_key_id=str(api_key.id),
+        client_ip="127.0.0.1",
+        format_id=handler.FORMAT_ID,
+    )
+    await telemetry_recorder.record_stream_stats(
+        ctx,
+        dict(context.get("original_headers") or {}),
+        dict(context.get("original_request_body") or {}),
+        request_start_time,
+    )
+
+
+async def _record_gateway_passthrough_cli_stream_success(
+    payload: GatewayStreamReportRequest,
+    *,
+    db: Session,
+) -> None:
+    from src.api.handlers.base.stream_context import StreamContext
+    from src.api.handlers.claude_cli import ClaudeCliAdapter
+    from src.api.handlers.gemini_cli import GeminiCliAdapter
+    from src.api.handlers.openai_cli import OpenAICliAdapter
+    from src.services.system.config import SystemConfigService
+
+    if payload.status_code >= 400:
+        return
+
+    context = dict(payload.report_context or {})
+    user_id = str(context.get("user_id") or "").strip()
+    api_key_id = str(context.get("api_key_id") or "").strip()
+    client_api_format = str(context.get("client_api_format") or "").strip().lower()
+    if not user_id or not api_key_id or not client_api_format:
+        return
+
+    body_bytes = _extract_gateway_report_body_bytes(payload)
+    if not body_bytes:
+        return
+
+    user = db.query(User).filter(User.id == user_id).first()
+    api_key = db.query(ApiKey).filter(ApiKey.id == api_key_id).first()
+    if not user or not api_key:
+        return
+
+    if client_api_format == "claude:cli":
+        adapter = ClaudeCliAdapter()
+    elif client_api_format == "gemini:cli":
+        adapter = GeminiCliAdapter()
+    elif client_api_format == "openai:cli":
+        adapter = OpenAICliAdapter()
+    else:
+        return
+
+    handler = adapter.HANDLER_CLASS(
+        db=db,
+        user=user,
+        api_key=api_key,
+        request_id=str(context.get("request_id") or payload.trace_id or uuid.uuid4().hex[:8]),
+        client_ip="127.0.0.1",
+        user_agent=str(
+            (context.get("original_headers") or {}).get("user-agent") or "aether-gateway"
+        ),
+        start_time=time.time(),
+        allowed_api_formats=adapter.allowed_api_formats,
+        adapter_detector=adapter.detect_capability_requirements,
+        api_family=adapter.API_FAMILY.value if adapter.API_FAMILY else None,
+        endpoint_kind=adapter.ENDPOINT_KIND.value if adapter.ENDPOINT_KIND else None,
+    )
+
+    ctx = StreamContext(
+        model=str(context.get("model") or "unknown"),
+        api_format=handler.primary_api_format,
+        api_family=adapter.API_FAMILY.value if adapter.API_FAMILY else None,
+        endpoint_kind=adapter.ENDPOINT_KIND.value if adapter.ENDPOINT_KIND else None,
+        request_id=handler.request_id,
+        user_id=user.id,
+        api_key_id=api_key.id,
+    )
+    ctx.client_api_format = client_api_format
+    ctx.provider_type = str(context.get("provider_name") or "unknown")
+    ctx.update_provider_info(
+        provider_name=str(context.get("provider_name") or "unknown"),
+        provider_id=str(context.get("provider_id") or ""),
+        endpoint_id=str(context.get("endpoint_id") or ""),
+        key_id=str(context.get("key_id") or ""),
+        provider_api_format=str(context.get("provider_api_format") or client_api_format),
+    )
+    ctx.mapped_model = str(context.get("mapped_model") or "") or None
+    ctx.provider_request_headers = dict(context.get("provider_request_headers") or {})
+    ctx.provider_request_body = context.get("provider_request_body")
+    ctx.response_headers = dict(payload.headers or {})
+    ctx.status_code = payload.status_code
+    ctx.record_parsed_chunks = SystemConfigService.should_log_body(db)
+    if str(context.get("candidate_id") or "").strip():
+        ctx.attempt_id = str(context.get("candidate_id"))
+
+    proxy_info = context.get("proxy_info")
+    if isinstance(proxy_info, dict):
+        ctx.proxy_info = dict(proxy_info)
+    ctx.set_proxy_timing(ctx.response_headers)
+
+    telemetry = payload.telemetry if isinstance(payload.telemetry, dict) else {}
+    ttfb_ms = telemetry.get("ttfb_ms")
+    if ttfb_ms is not None:
+        try:
+            ctx.first_byte_time_ms = max(int(ttfb_ms), 0)
+        except (TypeError, ValueError):
+            ctx.first_byte_time_ms = None
+    if ctx.proxy_info is not None and ctx.first_byte_time_ms is not None:
+        ctx.set_ttfb_ms(ctx.first_byte_time_ms)
+
+    elapsed_ms = telemetry.get("elapsed_ms")
+    try:
+        response_elapsed_ms = max(int(elapsed_ms or 0), 0)
+    except (TypeError, ValueError):
+        response_elapsed_ms = 0
+    if response_elapsed_ms > 0:
+        handler.start_time = time.time() - (response_elapsed_ms / 1000.0)
+
+    stream = handler._create_response_stream_with_prefetch(
+        ctx,
+        _iter_gateway_report_body_chunks(body_bytes),
+        _GatewayReportStreamContext(),
+        [],
+    )
+    async for _chunk in stream:
+        pass
+
+    await handler._record_stream_stats(
+        ctx,
+        dict(context.get("original_headers") or {}),
+        dict(context.get("original_request_body") or {}),
+    )
+
+
+async def _finalize_gateway_openai_video_create_sync(
+    payload: GatewaySyncReportRequest,
+    *,
+    db: Session,
+) -> Response:
+    from sqlalchemy.exc import IntegrityError
+
+    from src.api.handlers.openai.video_handler import OpenAIVideoHandler
+    from src.models.database import Provider, ProviderAPIKey, ProviderEndpoint
+    from src.services.billing.rule_service import BillingRuleService
+    from src.services.scheduling.schemas import ProviderCandidate
+    from src.services.usage.service import UsageService
+
+    if payload.status_code >= 400:
+        return JSONResponse(
+            status_code=payload.status_code,
+            content=payload.body_json if isinstance(payload.body_json, dict) else {},
+            headers=dict(payload.headers or {}),
+        )
+    if not isinstance(payload.body_json, dict):
+        raise HTTPException(status_code=502, detail="Invalid upstream response from video provider")
+
+    context = dict(payload.report_context or {})
+    user_id = str(context.get("user_id") or "").strip()
+    api_key_id = str(context.get("api_key_id") or "").strip()
+    provider_id = str(context.get("provider_id") or "").strip()
+    endpoint_id = str(context.get("endpoint_id") or "").strip()
+    key_id = str(context.get("key_id") or "").strip()
+    request_id = str(context.get("request_id") or payload.trace_id or uuid.uuid4().hex[:8]).strip()
+    if not all([user_id, api_key_id, provider_id, endpoint_id, key_id]):
+        raise HTTPException(status_code=400, detail="Missing gateway video finalize context")
+
+    external_task_id = str(payload.body_json.get("id") or "").strip()
+    if not external_task_id:
+        raise HTTPException(status_code=502, detail="Upstream video response missing task id")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    api_key = db.query(ApiKey).filter(ApiKey.id == api_key_id).first()
+    provider = db.query(Provider).filter(Provider.id == provider_id).first()
+    endpoint = db.query(ProviderEndpoint).filter(ProviderEndpoint.id == endpoint_id).first()
+    key = db.query(ProviderAPIKey).filter(ProviderAPIKey.id == key_id).first()
+    if not user or not api_key or not provider or not endpoint or not key:
+        raise HTTPException(status_code=400, detail="Invalid gateway video finalize context")
+
+    handler = OpenAIVideoHandler(
+        db=db,
+        user=user,
+        api_key=api_key,
+        request_id=request_id,
+        client_ip="127.0.0.1",
+        user_agent=str(
+            (context.get("original_headers") or {}).get("user-agent") or "aether-gateway"
+        ),
+        start_time=time.time(),
+    )
+
+    original_request_body = dict(context.get("original_request_body") or {})
+    original_headers = dict(context.get("original_headers") or {})
+    internal_request = handler._normalizer.video_request_to_internal(original_request_body)
+    candidate = ProviderCandidate(provider=provider, endpoint=endpoint, key=key)
+
+    rule_lookup = BillingRuleService.find_rule(
+        db,
+        provider_id=provider.id,
+        model_name=internal_request.model,
+        task_type="video",
+    )
+    billing_rule_snapshot = handler._build_billing_rule_snapshot(rule_lookup)
+
+    task = handler._create_task_record(
+        external_task_id=external_task_id,
+        candidate=candidate,
+        original_request_body=original_request_body,
+        internal_request=internal_request,
+        original_headers=original_headers,
+        billing_rule_snapshot=billing_rule_snapshot,
+    )
+
+    try:
+        db.add(task)
+        UsageService.begin_pending_usage(
+            db,
+            request_id=request_id,
+            user=user,
+            api_key=api_key,
+            model=internal_request.model,
+            is_stream=False,
+            request_type="video",
+            api_format=handler.FORMAT_ID,
+            request_headers=original_headers,
+            request_body=original_request_body,
+        )
+
+        response_body = handler._normalizer.video_task_from_internal(
+            handler._task_to_internal(task)
+        )
+        telemetry = payload.telemetry if isinstance(payload.telemetry, dict) else {}
+        raw_elapsed_ms = telemetry.get("elapsed_ms")
+        try:
+            response_time_ms = max(int(raw_elapsed_ms or 0), 0)
+        except (TypeError, ValueError):
+            response_time_ms = 0
+
+        UsageService.finalize_submitted(
+            db,
+            request_id=request_id,
+            provider_name=str(context.get("provider_name") or "openai"),
+            provider_id=provider_id or None,
+            provider_endpoint_id=endpoint_id or None,
+            provider_api_key_id=key_id or None,
+            response_time_ms=response_time_ms,
+            status_code=payload.status_code,
+            endpoint_api_format=str(context.get("provider_api_format") or handler.FORMAT_ID)
+            or None,
+            provider_request_headers=dict(context.get("provider_request_headers") or {}),
+            response_headers=dict(payload.headers or {}),
+            response_body=response_body,
+        )
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Task already exists") from exc
+    except Exception:
+        db.rollback()
+        raise
+
+    return JSONResponse(response_body)
+
+
+async def _finalize_gateway_openai_video_remix_sync(
+    payload: GatewaySyncReportRequest,
+    *,
+    db: Session,
+) -> Response:
+    from sqlalchemy.exc import IntegrityError
+
+    from src.api.handlers.openai.video_handler import OpenAIVideoHandler
+    from src.core.api_format.conversion.internal_video import InternalVideoTask, VideoStatus
+    from src.models.database import Provider
+    from src.services.scheduling.schemas import ProviderCandidate
+
+    if payload.status_code >= 400:
+        return JSONResponse(
+            status_code=payload.status_code,
+            content=payload.body_json if isinstance(payload.body_json, dict) else {},
+            headers=dict(payload.headers or {}),
+        )
+    if not isinstance(payload.body_json, dict):
+        raise HTTPException(status_code=502, detail="Invalid upstream response from video provider")
+
+    context = dict(payload.report_context or {})
+    user_id = str(context.get("user_id") or "").strip()
+    api_key_id = str(context.get("api_key_id") or "").strip()
+    task_id = str(context.get("task_id") or "").strip()
+    request_id = str(context.get("request_id") or payload.trace_id or uuid.uuid4().hex[:8]).strip()
+    if not all([user_id, api_key_id, task_id]):
+        raise HTTPException(status_code=400, detail="Missing gateway video remix finalize context")
+
+    external_task_id = str(payload.body_json.get("id") or "").strip()
+    if not external_task_id:
+        raise HTTPException(status_code=502, detail="Upstream video response missing task id")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    api_key = db.query(ApiKey).filter(ApiKey.id == api_key_id).first()
+    if not user or not api_key:
+        raise HTTPException(status_code=400, detail="Invalid gateway video remix finalize context")
+
+    handler = OpenAIVideoHandler(
+        db=db,
+        user=user,
+        api_key=api_key,
+        request_id=request_id,
+        client_ip="127.0.0.1",
+        user_agent=str(
+            (context.get("original_headers") or {}).get("user-agent") or "aether-gateway"
+        ),
+        start_time=time.time(),
+    )
+
+    original_task = handler._get_task(task_id)
+    if original_task.status != VideoStatus.COMPLETED.value:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Can only remix completed videos (current status: {original_task.status})",
+        )
+    if not original_task.external_task_id:
+        raise HTTPException(status_code=500, detail="Original task missing external_task_id")
+
+    endpoint, key = handler._get_endpoint_and_key(original_task)
+    provider = db.query(Provider).filter(Provider.id == original_task.provider_id).first()
+    if provider is None:
+        raise HTTPException(status_code=500, detail="Provider not found")
+
+    original_request_body = dict(context.get("original_request_body") or {})
+    original_headers = dict(context.get("original_headers") or {})
+    try:
+        internal_request = handler._normalizer.video_request_to_internal(
+            {
+                "prompt": original_request_body.get("prompt", ""),
+                "model": original_task.model,
+                "size": original_task.size,
+                "seconds": original_task.duration_seconds,
+            }
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    billing_rule_snapshot = None
+    if isinstance(original_task.request_metadata, dict):
+        billing_rule_snapshot = original_task.request_metadata.get("billing_rule_snapshot")
+
+    candidate = ProviderCandidate(provider=provider, endpoint=endpoint, key=key)
+    task = handler._create_task_record(
+        external_task_id=external_task_id,
+        candidate=candidate,
+        original_request_body={
+            **original_request_body,
+            "remix_video_id": task_id,
+        },
+        internal_request=internal_request,
+        original_headers=original_headers,
+        billing_rule_snapshot=billing_rule_snapshot,
+    )
+
+    try:
+        db.add(task)
+        db.flush()
+        db.commit()
+        db.refresh(task)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Task already exists") from exc
+    except Exception:
+        db.rollback()
+        raise
+
+    internal_task = InternalVideoTask(
+        id=task.id,
+        external_id=external_task_id,
+        status=VideoStatus.SUBMITTED,
+        created_at=task.created_at,
+        original_request=internal_request,
+    )
+    response_body = handler._normalizer.video_task_from_internal(internal_task)
+    return JSONResponse(response_body)
+
+
+async def _finalize_gateway_gemini_video_create_sync(
+    payload: GatewaySyncReportRequest,
+    *,
+    db: Session,
+) -> Response:
+    from sqlalchemy.exc import IntegrityError
+
+    from src.api.handlers.base.video_handler_base import normalize_gemini_operation_id
+    from src.api.handlers.gemini.video_handler import GeminiVeoHandler
+    from src.core.api_format.conversion.internal_video import InternalVideoTask, VideoStatus
+    from src.models.database import Provider, ProviderAPIKey, ProviderEndpoint
+    from src.services.billing.rule_service import BillingRuleService
+    from src.services.scheduling.schemas import ProviderCandidate
+    from src.services.usage.service import UsageService
+
+    if payload.status_code >= 400:
+        return JSONResponse(
+            status_code=payload.status_code,
+            content=payload.body_json if isinstance(payload.body_json, dict) else {},
+            headers=dict(payload.headers or {}),
+        )
+    if not isinstance(payload.body_json, dict):
+        raise HTTPException(status_code=502, detail="Invalid upstream response from video provider")
+
+    context = dict(payload.report_context or {})
+    user_id = str(context.get("user_id") or "").strip()
+    api_key_id = str(context.get("api_key_id") or "").strip()
+    provider_id = str(context.get("provider_id") or "").strip()
+    endpoint_id = str(context.get("endpoint_id") or "").strip()
+    key_id = str(context.get("key_id") or "").strip()
+    request_id = str(context.get("request_id") or payload.trace_id or uuid.uuid4().hex[:8]).strip()
+    model = str(context.get("model") or "").strip()
+    if not all([user_id, api_key_id, provider_id, endpoint_id, key_id, model]):
+        raise HTTPException(status_code=400, detail="Missing gateway video finalize context")
+
+    operation_name = str(payload.body_json.get("name") or payload.body_json.get("id") or "").strip()
+    if not operation_name:
+        raise HTTPException(
+            status_code=502, detail="Upstream video response missing operation name"
+        )
+    external_task_id = normalize_gemini_operation_id(operation_name)
+
+    user = db.query(User).filter(User.id == user_id).first()
+    api_key = db.query(ApiKey).filter(ApiKey.id == api_key_id).first()
+    provider = db.query(Provider).filter(Provider.id == provider_id).first()
+    endpoint = db.query(ProviderEndpoint).filter(ProviderEndpoint.id == endpoint_id).first()
+    key = db.query(ProviderAPIKey).filter(ProviderAPIKey.id == key_id).first()
+    if not user or not api_key or not provider or not endpoint or not key:
+        raise HTTPException(status_code=400, detail="Invalid gateway video finalize context")
+
+    handler = GeminiVeoHandler(
+        db=db,
+        user=user,
+        api_key=api_key,
+        request_id=request_id,
+        client_ip="127.0.0.1",
+        user_agent=str(
+            (context.get("original_headers") or {}).get("user-agent") or "aether-gateway"
+        ),
+        start_time=time.time(),
+    )
+
+    original_request_body = dict(context.get("original_request_body") or {})
+    original_headers = dict(context.get("original_headers") or {})
+    request_with_model = {**original_request_body, "model": model}
+    try:
+        internal_request = handler._normalizer.video_request_to_internal(request_with_model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    candidate = ProviderCandidate(provider=provider, endpoint=endpoint, key=key)
+    rule_lookup = BillingRuleService.find_rule(
+        db,
+        provider_id=provider.id,
+        model_name=internal_request.model,
+        task_type="video",
+    )
+    billing_rule_snapshot = handler._build_billing_rule_snapshot(rule_lookup)
+
+    task = handler._create_task_record(
+        external_task_id=external_task_id,
+        candidate=candidate,
+        original_request_body=original_request_body,
+        converted_request_body=original_request_body,
+        internal_request=internal_request,
+        original_headers=original_headers,
+        billing_rule_snapshot=billing_rule_snapshot,
+        format_converted=False,
+    )
+
+    try:
+        db.add(task)
+        UsageService.begin_pending_usage(
+            db,
+            request_id=request_id,
+            user=user,
+            api_key=api_key,
+            model=internal_request.model,
+            is_stream=False,
+            request_type="video",
+            api_format=handler.FORMAT_ID,
+            request_headers=original_headers,
+            request_body=original_request_body,
+        )
+        db.flush()
+        db.commit()
+        db.refresh(task)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Task already exists") from exc
+    except Exception:
+        db.rollback()
+        raise
+
+    internal_task = InternalVideoTask(
+        id=task.short_id,
+        external_id=external_task_id,
+        status=VideoStatus.SUBMITTED,
+        created_at=task.created_at,
+        original_request=internal_request,
+    )
+    response_body = handler._normalizer.video_task_from_internal(internal_task)
+
+    telemetry = payload.telemetry if isinstance(payload.telemetry, dict) else {}
+    raw_elapsed_ms = telemetry.get("elapsed_ms")
+    try:
+        response_time_ms = max(int(raw_elapsed_ms or 0), 0)
+    except (TypeError, ValueError):
+        response_time_ms = 0
+
+    try:
+        UsageService.finalize_submitted(
+            db,
+            request_id=request_id,
+            provider_name=str(context.get("provider_name") or "gemini"),
+            provider_id=provider_id or None,
+            provider_endpoint_id=endpoint_id or None,
+            provider_api_key_id=key_id or None,
+            response_time_ms=response_time_ms,
+            status_code=payload.status_code,
+            endpoint_api_format=str(context.get("provider_api_format") or handler.FORMAT_ID)
+            or None,
+            provider_request_headers=dict(context.get("provider_request_headers") or {}),
+            response_headers=dict(payload.headers or {}),
+            response_body=response_body,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return JSONResponse(response_body)
+
+
+async def _finalize_gateway_openai_video_delete_sync(
+    payload: GatewaySyncReportRequest,
+    *,
+    db: Session,
+) -> Response:
+    from src.api.handlers.openai.video_handler import OpenAIVideoHandler
+    from src.core.api_format.conversion.internal_video import VideoStatus
+
+    if payload.status_code >= 400 and payload.status_code != 404:
+        return JSONResponse(
+            status_code=payload.status_code,
+            content=payload.body_json if isinstance(payload.body_json, dict) else {},
+            headers=dict(payload.headers or {}),
+        )
+
+    context = dict(payload.report_context or {})
+    user_id = str(context.get("user_id") or "").strip()
+    api_key_id = str(context.get("api_key_id") or "").strip()
+    task_id = str(context.get("task_id") or "").strip()
+    if not all([user_id, api_key_id, task_id]):
+        raise HTTPException(status_code=400, detail="Missing gateway video delete finalize context")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    api_key = db.query(ApiKey).filter(ApiKey.id == api_key_id).first()
+    if not user or not api_key:
+        raise HTTPException(status_code=400, detail="Invalid gateway video delete finalize context")
+
+    handler = OpenAIVideoHandler(
+        db=db,
+        user=user,
+        api_key=api_key,
+        request_id=str(payload.trace_id or uuid.uuid4().hex[:8]),
+        client_ip="127.0.0.1",
+        user_agent="aether-gateway",
+        start_time=time.time(),
+    )
+    task = handler._get_task(task_id)
+    if task.status not in (VideoStatus.COMPLETED.value, VideoStatus.FAILED.value):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Can only delete completed or failed videos (current status: {task.status})",
+        )
+
+    db.delete(task)
+    db.commit()
+    return JSONResponse({"id": task_id, "object": "video", "deleted": True})
+
+
+async def _finalize_gateway_openai_video_cancel_sync(
+    payload: GatewaySyncReportRequest,
+    *,
+    db: Session,
+) -> Response:
+    from datetime import datetime, timezone
+
+    from src.api.handlers.openai.video_handler import OpenAIVideoHandler
+    from src.core.api_format.conversion.internal_video import VideoStatus
+    from src.services.usage.service import UsageService
+
+    if payload.status_code >= 400:
+        return JSONResponse(
+            status_code=payload.status_code,
+            content=payload.body_json if isinstance(payload.body_json, dict) else {},
+            headers=dict(payload.headers or {}),
+        )
+
+    context = dict(payload.report_context or {})
+    user_id = str(context.get("user_id") or "").strip()
+    api_key_id = str(context.get("api_key_id") or "").strip()
+    task_id = str(context.get("task_id") or "").strip()
+    if not all([user_id, api_key_id, task_id]):
+        raise HTTPException(status_code=400, detail="Missing gateway video cancel finalize context")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    api_key = db.query(ApiKey).filter(ApiKey.id == api_key_id).first()
+    if not user or not api_key:
+        raise HTTPException(status_code=400, detail="Invalid gateway video cancel finalize context")
+
+    handler = OpenAIVideoHandler(
+        db=db,
+        user=user,
+        api_key=api_key,
+        request_id=str(payload.trace_id or uuid.uuid4().hex[:8]),
+        client_ip="127.0.0.1",
+        user_agent="aether-gateway",
+        start_time=time.time(),
+    )
+    task = handler._get_task(task_id)
+    if task.status in (
+        VideoStatus.COMPLETED.value,
+        VideoStatus.FAILED.value,
+        VideoStatus.CANCELLED.value,
+        VideoStatus.EXPIRED.value,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task cannot be cancelled in status: {task.status}",
+        )
+
+    now = datetime.now(timezone.utc)
+    task.status = VideoStatus.CANCELLED.value
+    task.completed_at = getattr(task, "completed_at", None) or now
+    task.updated_at = now
+
+    try:
+        UsageService.finalize_void(
+            db,
+            request_id=task.request_id,
+            reason="cancelled_by_user",
+            finalized_at=task.completed_at,
+        )
+    except Exception:
+        pass
+
+    db.commit()
+    return JSONResponse({})
+
+
+async def _finalize_gateway_gemini_video_cancel_sync(
+    payload: GatewaySyncReportRequest,
+    *,
+    db: Session,
+) -> Response:
+    from datetime import datetime, timezone
+
+    from src.api.handlers.gemini.video_handler import GeminiVeoHandler
+    from src.core.api_format.conversion.internal_video import VideoStatus
+    from src.services.usage.service import UsageService
+
+    if payload.status_code >= 400:
+        return JSONResponse(
+            status_code=payload.status_code,
+            content=payload.body_json if isinstance(payload.body_json, dict) else {},
+            headers=dict(payload.headers or {}),
+        )
+
+    context = dict(payload.report_context or {})
+    user_id = str(context.get("user_id") or "").strip()
+    api_key_id = str(context.get("api_key_id") or "").strip()
+    task_id = str(context.get("task_id") or "").strip()
+    if not all([user_id, api_key_id, task_id]):
+        raise HTTPException(status_code=400, detail="Missing gateway video cancel finalize context")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    api_key = db.query(ApiKey).filter(ApiKey.id == api_key_id).first()
+    if not user or not api_key:
+        raise HTTPException(status_code=400, detail="Invalid gateway video cancel finalize context")
+
+    handler = GeminiVeoHandler(
+        db=db,
+        user=user,
+        api_key=api_key,
+        request_id=str(payload.trace_id or uuid.uuid4().hex[:8]),
+        client_ip="127.0.0.1",
+        user_agent="aether-gateway",
+        start_time=time.time(),
+    )
+    task = handler._get_task_by_external_id(task_id)
+    if task.status in (
+        VideoStatus.COMPLETED.value,
+        VideoStatus.FAILED.value,
+        VideoStatus.CANCELLED.value,
+        VideoStatus.EXPIRED.value,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task cannot be cancelled in status: {task.status}",
+        )
+
+    now = datetime.now(timezone.utc)
+    task.status = VideoStatus.CANCELLED.value
+    task.completed_at = getattr(task, "completed_at", None) or now
+    task.updated_at = now
+
+    try:
+        UsageService.finalize_void(
+            db,
+            request_id=task.request_id,
+            reason="cancelled_by_user",
+            finalized_at=task.completed_at,
+        )
+    except Exception:
+        pass
+
+    db.commit()
+    return JSONResponse({})
+
+
+def _extract_gateway_report_body_bytes(payload: Any) -> bytes:
     if payload.body_base64:
         try:
             return base64.b64decode(payload.body_base64, validate=True)
@@ -2279,6 +4926,6 @@ def _extract_gateway_report_body_bytes(payload: GatewaySyncReportRequest) -> byt
             raise HTTPException(
                 status_code=400, detail="Invalid gateway report body payload"
             ) from exc
-    if payload.body_json is not None:
+    if hasattr(payload, "body_json") and payload.body_json is not None:
         return JSONResponse(content=payload.body_json).body
     return b""

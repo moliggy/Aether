@@ -623,6 +623,8 @@ class StreamProcessor:
             _api_format_str = str(ctx.api_format or "")
             client_format = (ctx.client_api_format or _api_format_str).strip().lower()
             provider_format = (ctx.provider_api_format or _api_format_str).strip().lower()
+            client_is_openai_chat = client_format == "openai:chat"
+            client_is_openai_cli = client_format == "openai:cli"
             client_family = (
                 client_format.split(":", 1)[0] if ":" in client_format else client_format
             ) or "unknown"
@@ -727,9 +729,10 @@ class StreamProcessor:
             def _format_sse_event(evt: dict) -> bytes:
                 """根据客户端格式生成 SSE 事件字节。
 
-                Claude 格式需要 event: 行，OpenAI/Gemini 只需要 data: 行。
+                Claude 和 OpenAI Responses(openai:cli) 需要 event: 行；
+                OpenAI Chat/Gemini 只需要 data: 行。
                 """
-                if client_family == "claude":
+                if client_family == "claude" or client_is_openai_cli:
                     event_type_str = evt.get("type", "")
                     if event_type_str:
                         return f"event: {event_type_str}\ndata: {json.dumps(evt, ensure_ascii=False)}\n\n".encode()
@@ -770,13 +773,13 @@ class StreamProcessor:
                     if normalized_line.startswith("event:"):
                         return []
 
-                    # OpenAI done 信号（仅用于 OpenAI 客户端）
+                    # OpenAI Chat 的 [DONE] 哨兵仅适用于 Chat Completions 风格客户端
                     if (
                         normalized_line.startswith("data:")
                         and normalized_line[5:].strip() == "[DONE]"
                     ):
                         skip_next_blank_line = True
-                        if client_family == "openai":
+                        if client_is_openai_chat:
                             openai_done_sent = True
                             return [b"data: [DONE]\n\n"]
                         return []
@@ -846,7 +849,7 @@ class StreamProcessor:
                         logger.warning(f"[{self.request_id}] 流式格式转换失败: {conv_err}")
                         payload = _build_stream_error_payload("响应格式转换失败，请稍后重试")
                         error_bytes = _format_sse_event(payload)
-                        done_bytes = b"data: [DONE]\n\n" if client_family == "openai" else b""
+                        done_bytes = b"data: [DONE]\n\n" if client_is_openai_chat else b""
                         if done_bytes:
                             openai_done_sent = True
                         if perf_capture and convert_start is not None:
@@ -990,8 +993,8 @@ class StreamProcessor:
                                 if ctx.error_message == "format_conversion_failed":
                                     return
 
-                # Provider 流结束后，为 OpenAI 客户端补齐 [DONE]（许多上游不发送该哨兵）
-                if client_family == "openai" and not openai_done_sent:
+                # Provider 流结束后，仅为 OpenAI Chat 客户端补齐 [DONE]
+                if client_is_openai_chat and not openai_done_sent:
                     _mark_stream_started()
                     yield b"data: [DONE]\n\n"
 

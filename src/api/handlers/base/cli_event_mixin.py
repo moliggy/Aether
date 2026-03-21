@@ -478,12 +478,12 @@ class CliEventMixin:
 
         client_format = (ctx.client_api_format or "").strip().lower()
 
-        # [DONE] 标记处理：只有 OpenAI 客户端需要，Claude 客户端不需要
+        # [DONE] 标记处理：只有 OpenAI Chat 兼容流需要，Responses(openai:cli) 不需要
         if line == "data: [DONE]":
-            if client_format.startswith("openai"):
+            if client_format == "openai:chat":
                 return [line], []
             else:
-                # Claude/Gemini 客户端不需要 [DONE] 标记
+                # Claude/Gemini/Responses 客户端不需要 [DONE] 标记
                 return [], []
 
         provider_format = (ctx.provider_api_format or "").strip().lower()

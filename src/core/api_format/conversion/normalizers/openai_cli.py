@@ -448,6 +448,8 @@ class OpenAICliNormalizer(FormatNormalizer):
         *,
         requested_model: str | None = None,
     ) -> dict[str, Any]:
+        response_id = self._response_id(internal.id)
+        message_id = self._message_item_id(internal.id)
         output_items: list[dict[str, Any]] = []
 
         # 构建 output items：reasoning（思考）、message（文本）、function_call（工具调用）
@@ -456,9 +458,9 @@ class OpenAICliNormalizer(FormatNormalizer):
         for block in internal.content:
             if isinstance(block, ThinkingBlock) and block.thinking:
                 rs_id = (
-                    f"rs_{internal.id or 'resp'}"
+                    self._reasoning_item_id(internal.id)
                     if rs_idx == 0
-                    else f"rs_{internal.id or 'resp'}_{rs_idx}"
+                    else f"{self._reasoning_item_id(internal.id)}_{rs_idx}"
                 )
                 output_items.append(
                     {
@@ -474,7 +476,7 @@ class OpenAICliNormalizer(FormatNormalizer):
             output_items.append(
                 {
                     "type": "message",
-                    "id": f"msg_{internal.id or 'stream'}",
+                    "id": message_id,
                     "role": "assistant",
                     "status": "completed",
                     "content": [{"type": "output_text", "text": text, "annotations": []}],
@@ -506,7 +508,7 @@ class OpenAICliNormalizer(FormatNormalizer):
             output_items.append(
                 {
                     "type": "message",
-                    "id": f"msg_{internal.id or 'stream'}",
+                    "id": message_id,
                     "role": "assistant",
                     "status": "completed",
                     "content": [{"type": "output_text", "text": "", "annotations": []}],
@@ -535,7 +537,7 @@ class OpenAICliNormalizer(FormatNormalizer):
         model_name = requested_model if requested_model else (internal.model or "")
 
         result: dict[str, Any] = {
-            "id": internal.id or "resp",
+            "id": response_id,
             "object": "response",
             "created_at": int(time.time()),
             "status": "completed",
@@ -963,7 +965,7 @@ class OpenAICliNormalizer(FormatNormalizer):
         self, event: MessageStartEvent, state: StreamState, ss: dict[str, Any]
     ) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
-        state.message_id = event.message_id or state.message_id or "resp_stream"
+        state.message_id = self._response_id(event.message_id or state.message_id or "stream")
         # 保留初始化时设置的 model（客户端请求的模型），仅在空时用事件值
         if not state.model:
             state.model = event.model or ""
@@ -1126,7 +1128,7 @@ class OpenAICliNormalizer(FormatNormalizer):
                     ss["next_output_index"] = reasoning_output_index + 1
                     ss["reasoning_output_index"] = reasoning_output_index
                     ss["reasoning_output_started"] = True
-                    reasoning_id = f"rs_{state.message_id or 'stream'}"
+                    reasoning_id = self._reasoning_item_id(state.message_id or "stream")
                     ss["reasoning_id"] = reasoning_id
                     ss.setdefault("output_order", []).append(
                         {
@@ -1176,7 +1178,7 @@ class OpenAICliNormalizer(FormatNormalizer):
                 ss["next_output_index"] = output_index + 1
                 ss["message_output_index"] = output_index
                 ss["message_output_started"] = True
-                message_id = f"msg_{state.message_id or 'stream'}"
+                message_id = self._message_item_id(state.message_id or "stream")
                 ss.setdefault("output_order", []).append(
                     {"kind": "message", "id": message_id, "output_index": output_index}
                 )
@@ -1207,7 +1209,7 @@ class OpenAICliNormalizer(FormatNormalizer):
                 )
             ss["text_started"] = True
             ss["collected_text"] = str(ss.get("collected_text") or "") + event.text_delta
-            message_id = f"msg_{state.message_id or 'stream'}"
+            message_id = self._message_item_id(state.message_id or "stream")
             output_index = ss.get("message_output_index") or 0
             out.append(
                 {
@@ -1217,6 +1219,7 @@ class OpenAICliNormalizer(FormatNormalizer):
                     "output_index": output_index,
                     "content_index": 0,
                     "delta": event.text_delta,
+                    "logprobs": [],
                 }
             )
         return out
@@ -1224,6 +1227,9 @@ class OpenAICliNormalizer(FormatNormalizer):
     def _emit_message_stop(
         self, event: MessageStopEvent, state: StreamState, ss: dict[str, Any]
     ) -> list[dict[str, Any]]:
+        if ss.get("message_stop_emitted"):
+            return []
+
         out: list[dict[str, Any]] = []
         final_text = str(ss.get("collected_text") or "")
         final_thinking = str(ss.get("thinking_text") or "")
@@ -1265,7 +1271,7 @@ class OpenAICliNormalizer(FormatNormalizer):
                 }
             )
 
-        message_id = f"msg_{state.message_id or 'stream'}"
+        message_id = self._message_item_id(state.message_id or "stream")
         message_item = {
             "type": "message",
             "id": message_id,
@@ -1287,6 +1293,7 @@ class OpenAICliNormalizer(FormatNormalizer):
                     "output_index": msg_output_index,
                     "content_index": 0,
                     "text": final_text,
+                    "logprobs": [],
                 }
             )
             # content_part.done
@@ -1341,6 +1348,7 @@ class OpenAICliNormalizer(FormatNormalizer):
                 "response": response_obj,
             }
         )
+        ss["message_stop_emitted"] = True
         return out
 
     def _build_final_output_items(
@@ -1464,6 +1472,27 @@ class OpenAICliNormalizer(FormatNormalizer):
     @staticmethod
     def _last_block_index(ss: dict[str, Any]) -> int:
         return max(ss.get("next_block_index", 1) - 1, 0)
+
+    @staticmethod
+    def _response_id_suffix(raw_id: str | None) -> str:
+        value = str(raw_id or "").strip()
+        for prefix in ("resp_", "resp-", "chatcmpl-", "chatcmpl_", "msg_", "msg-", "rs_", "rs-"):
+            if value.startswith(prefix):
+                value = value[len(prefix) :]
+                break
+        return value or "stream"
+
+    @classmethod
+    def _response_id(cls, raw_id: str | None) -> str:
+        return f"resp_{cls._response_id_suffix(raw_id)}"
+
+    @classmethod
+    def _message_item_id(cls, raw_id: str | None) -> str:
+        return f"msg_{cls._response_id_suffix(raw_id)}"
+
+    @classmethod
+    def _reasoning_item_id(cls, raw_id: str | None) -> str:
+        return f"rs_{cls._response_id_suffix(raw_id)}"
 
     def _unwrap_response_object(self, response: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(response, dict):

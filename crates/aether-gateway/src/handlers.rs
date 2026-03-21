@@ -11,7 +11,7 @@ use tracing::info;
 
 use crate::gateway::constants::*;
 use crate::gateway::headers::{
-    extract_or_generate_trace_id, header_value_str, should_skip_request_header,
+    extract_or_generate_trace_id, header_value_str, is_json_request, should_skip_request_header,
 };
 use crate::gateway::{
     build_client_response, maybe_execute_via_control, maybe_execute_via_executor_stream,
@@ -132,6 +132,20 @@ pub(crate) async fn proxy_request(
         let buffered_body = to_bytes(body, usize::MAX)
             .await
             .map_err(|err| GatewayError::Internal(err.to_string()))?;
+        let stream_request = request_wants_stream(&parts, &buffered_body);
+        if stream_request {
+            if let Some(executor_response) = maybe_execute_via_executor_stream(
+                &state,
+                &parts,
+                &buffered_body,
+                &trace_id,
+                control_decision.as_ref(),
+            )
+            .await?
+            {
+                return Ok(executor_response);
+            }
+        }
         if let Some(executor_response) = maybe_execute_via_executor_sync(
             &state,
             &parts,
@@ -143,11 +157,18 @@ pub(crate) async fn proxy_request(
         {
             return Ok(executor_response);
         }
-        if let Some(executor_response) =
-            maybe_execute_via_executor_stream(&state, &parts, &trace_id, control_decision.as_ref())
-                .await?
-        {
-            return Ok(executor_response);
+        if parts.method != http::Method::POST {
+            if let Some(executor_response) = maybe_execute_via_executor_stream(
+                &state,
+                &parts,
+                &buffered_body,
+                &trace_id,
+                control_decision.as_ref(),
+            )
+            .await?
+            {
+                return Ok(executor_response);
+            }
         }
         if let Some(control_response) = maybe_execute_via_control(
             &state,
@@ -201,4 +222,17 @@ pub(crate) async fn proxy_request(
     );
 
     Ok(response)
+}
+
+fn request_wants_stream(parts: &http::request::Parts, body: &axum::body::Bytes) -> bool {
+    if parts.uri.path().contains(":streamGenerateContent") {
+        return true;
+    }
+    if !is_json_request(&parts.headers) || body.is_empty() {
+        return false;
+    }
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| value.get("stream").and_then(|stream| stream.as_bool()))
+        .unwrap_or(false)
 }

@@ -771,6 +771,841 @@ def test_plan_sync_route_returns_executor_plan_for_openai_chat(
     }
 
 
+def test_plan_sync_route_returns_executor_plan_for_openai_video_create(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+
+    fake_plan = {
+        "request_id": "plan-openai-video-create-123",
+        "provider_id": "provider-openai-video-create-123",
+        "endpoint_id": "endpoint-openai-video-create-123",
+        "key_id": "key-openai-video-create-123",
+        "provider_name": "openai",
+        "method": "POST",
+        "url": "https://api.openai.example/v1/videos",
+        "headers": {"authorization": "Bearer upstream-key", "content-type": "application/json"},
+        "body": {"json_body": {"model": "sora-2", "prompt": "hello"}},
+        "stream": False,
+        "provider_api_format": "openai:video",
+        "client_api_format": "openai:video",
+        "model_name": "sora-2",
+    }
+    monkeypatch.setattr(
+        "src.api.internal.gateway._build_openai_video_create_sync_plan",
+        AsyncMock(
+            return_value=GatewayExecutionPlanResponse(
+                action="executor_sync",
+                plan_kind="openai_video_create_sync",
+                plan=fake_plan,
+                report_kind="openai_video_create_sync_finalize",
+                report_context={"user_id": "user-123", "api_key_id": "key-123"},
+            )
+        ),
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/plan-sync",
+        json={
+            "trace_id": "trace-openai-video-create-plan",
+            "method": "POST",
+            "path": "/v1/videos",
+            "headers": {
+                "content-type": "application/json",
+                "authorization": "Bearer client-key",
+            },
+            "body_json": {"model": "sora-2", "prompt": "hello"},
+            "auth_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "access_allowed": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "executor_sync",
+        "plan_kind": "openai_video_create_sync",
+        "plan": fake_plan,
+        "report_kind": "openai_video_create_sync_finalize",
+        "report_context": {"user_id": "user-123", "api_key_id": "key-123"},
+    }
+
+
+def test_plan_sync_route_returns_executor_plan_for_openai_video_remix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+
+    fake_plan = {
+        "request_id": "plan-openai-video-remix-123",
+        "provider_id": "provider-openai-video-remix-123",
+        "endpoint_id": "endpoint-openai-video-remix-123",
+        "key_id": "key-openai-video-remix-123",
+        "provider_name": "openai",
+        "method": "POST",
+        "url": "https://api.openai.example/v1/videos/ext-123/remix",
+        "headers": {"authorization": "Bearer upstream-key", "content-type": "application/json"},
+        "body": {"json_body": {"prompt": "remix this"}},
+        "stream": False,
+        "provider_api_format": "openai:video",
+        "client_api_format": "openai:video",
+        "model_name": "sora-2",
+    }
+    monkeypatch.setattr(
+        "src.api.internal.gateway._build_openai_video_remix_sync_plan",
+        AsyncMock(
+            return_value=GatewayExecutionPlanResponse(
+                action="executor_sync",
+                plan_kind="openai_video_remix_sync",
+                plan=fake_plan,
+                report_kind="openai_video_remix_sync_finalize",
+                report_context={"user_id": "user-123", "api_key_id": "key-123"},
+            )
+        ),
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/plan-sync",
+        json={
+            "trace_id": "trace-openai-video-remix-plan",
+            "method": "POST",
+            "path": "/v1/videos/task-123/remix",
+            "headers": {
+                "content-type": "application/json",
+                "authorization": "Bearer client-key",
+            },
+            "body_json": {"prompt": "remix this"},
+            "auth_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "access_allowed": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "executor_sync",
+        "plan_kind": "openai_video_remix_sync",
+        "plan": fake_plan,
+        "report_kind": "openai_video_remix_sync_finalize",
+        "report_context": {"user_id": "user-123", "api_key_id": "key-123"},
+    }
+
+
+def test_plan_sync_route_returns_executor_plan_for_gemini_video_create(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+
+    fake_plan = {
+        "request_id": "plan-gemini-video-create-123",
+        "provider_id": "provider-gemini-video-create-123",
+        "endpoint_id": "endpoint-gemini-video-create-123",
+        "key_id": "key-gemini-video-create-123",
+        "provider_name": "gemini",
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/veo-3:predictLongRunning",
+        "headers": {"x-goog-api-key": "upstream-key", "content-type": "application/json"},
+        "body": {"json_body": {"prompt": "make a video"}},
+        "stream": False,
+        "provider_api_format": "gemini:video",
+        "client_api_format": "gemini:video",
+        "model_name": "veo-3",
+    }
+    monkeypatch.setattr(
+        "src.api.internal.gateway._build_gemini_video_create_sync_plan",
+        AsyncMock(
+            return_value=GatewayExecutionPlanResponse(
+                action="executor_sync",
+                plan_kind="gemini_video_create_sync",
+                plan=fake_plan,
+                report_kind="gemini_video_create_sync_finalize",
+                report_context={"user_id": "user-123", "api_key_id": "key-123"},
+            )
+        ),
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/plan-sync",
+        json={
+            "trace_id": "trace-gemini-video-create-plan",
+            "method": "POST",
+            "path": "/v1beta/models/veo-3:predictLongRunning",
+            "headers": {
+                "content-type": "application/json",
+                "x-goog-api-key": "client-key",
+            },
+            "body_json": {"prompt": "make a video"},
+            "auth_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "access_allowed": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "executor_sync",
+        "plan_kind": "gemini_video_create_sync",
+        "plan": fake_plan,
+        "report_kind": "gemini_video_create_sync_finalize",
+        "report_context": {"user_id": "user-123", "api_key_id": "key-123"},
+    }
+
+
+def test_plan_sync_route_returns_executor_plan_for_openai_video_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+
+    fake_plan = {
+        "request_id": "plan-openai-video-cancel-123",
+        "provider_id": "provider-openai-video-cancel-123",
+        "endpoint_id": "endpoint-openai-video-cancel-123",
+        "key_id": "key-openai-video-cancel-123",
+        "provider_name": "openai",
+        "method": "DELETE",
+        "url": "https://api.openai.example/v1/videos/ext-123",
+        "headers": {"authorization": "Bearer upstream-key"},
+        "body": {},
+        "stream": False,
+        "provider_api_format": "openai:video",
+        "client_api_format": "openai:video",
+        "model_name": "sora-2",
+    }
+    monkeypatch.setattr(
+        "src.api.internal.gateway._build_openai_video_cancel_sync_plan",
+        AsyncMock(
+            return_value=GatewayExecutionPlanResponse(
+                action="executor_sync",
+                plan_kind="openai_video_cancel_sync",
+                plan=fake_plan,
+                report_kind="openai_video_cancel_sync_finalize",
+                report_context={"user_id": "user-123", "api_key_id": "key-123"},
+            )
+        ),
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/plan-sync",
+        json={
+            "trace_id": "trace-openai-video-cancel-plan",
+            "method": "POST",
+            "path": "/v1/videos/task-123/cancel",
+            "headers": {
+                "authorization": "Bearer client-key",
+            },
+            "auth_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "access_allowed": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "executor_sync",
+        "plan_kind": "openai_video_cancel_sync",
+        "plan": fake_plan,
+        "report_kind": "openai_video_cancel_sync_finalize",
+        "report_context": {"user_id": "user-123", "api_key_id": "key-123"},
+    }
+
+
+def test_plan_sync_route_returns_executor_plan_for_openai_video_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+
+    fake_plan = {
+        "request_id": "plan-openai-video-delete-123",
+        "provider_id": "provider-openai-video-delete-123",
+        "endpoint_id": "endpoint-openai-video-delete-123",
+        "key_id": "key-openai-video-delete-123",
+        "provider_name": "openai",
+        "method": "DELETE",
+        "url": "https://api.openai.example/v1/videos/ext-123",
+        "headers": {"authorization": "Bearer upstream-key"},
+        "body": {},
+        "stream": False,
+        "provider_api_format": "openai:video",
+        "client_api_format": "openai:video",
+        "model_name": "sora-2",
+    }
+    monkeypatch.setattr(
+        "src.api.internal.gateway._build_openai_video_delete_sync_plan",
+        AsyncMock(
+            return_value=GatewayExecutionPlanResponse(
+                action="executor_sync",
+                plan_kind="openai_video_delete_sync",
+                plan=fake_plan,
+                report_kind="openai_video_delete_sync_finalize",
+                report_context={"user_id": "user-123", "api_key_id": "key-123"},
+            )
+        ),
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/plan-sync",
+        json={
+            "trace_id": "trace-openai-video-delete-plan",
+            "method": "DELETE",
+            "path": "/v1/videos/task-123",
+            "headers": {
+                "authorization": "Bearer client-key",
+            },
+            "auth_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "access_allowed": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "executor_sync",
+        "plan_kind": "openai_video_delete_sync",
+        "plan": fake_plan,
+        "report_kind": "openai_video_delete_sync_finalize",
+        "report_context": {"user_id": "user-123", "api_key_id": "key-123"},
+    }
+
+
+def test_plan_sync_route_returns_executor_plan_for_gemini_video_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+
+    fake_plan = {
+        "request_id": "plan-gemini-video-cancel-123",
+        "provider_id": "provider-gemini-video-cancel-123",
+        "endpoint_id": "endpoint-gemini-video-cancel-123",
+        "key_id": "key-gemini-video-cancel-123",
+        "provider_name": "gemini",
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/veo-3/operations/ext-123:cancel",
+        "headers": {"authorization": "Bearer upstream-key", "content-type": "application/json"},
+        "body": {"json_body": {}},
+        "stream": False,
+        "provider_api_format": "gemini:video",
+        "client_api_format": "gemini:video",
+        "model_name": "veo-3",
+    }
+    monkeypatch.setattr(
+        "src.api.internal.gateway._build_gemini_video_cancel_sync_plan",
+        AsyncMock(
+            return_value=GatewayExecutionPlanResponse(
+                action="executor_sync",
+                plan_kind="gemini_video_cancel_sync",
+                plan=fake_plan,
+                report_kind="gemini_video_cancel_sync_finalize",
+                report_context={"user_id": "user-123", "api_key_id": "key-123"},
+            )
+        ),
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/plan-sync",
+        json={
+            "trace_id": "trace-gemini-video-cancel-plan",
+            "method": "POST",
+            "path": "/v1beta/models/veo-3/operations/ext-123:cancel",
+            "headers": {
+                "x-goog-api-key": "client-key",
+            },
+            "body_json": {},
+            "auth_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "access_allowed": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "executor_sync",
+        "plan_kind": "gemini_video_cancel_sync",
+        "plan": fake_plan,
+        "report_kind": "gemini_video_cancel_sync_finalize",
+        "report_context": {"user_id": "user-123", "api_key_id": "key-123"},
+    }
+
+
+def test_plan_stream_route_returns_executor_plan_for_openai_chat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+
+    fake_plan = {
+        "request_id": "plan-openai-chat-stream-123",
+        "provider_id": "provider-openai-chat-stream-123",
+        "endpoint_id": "endpoint-openai-chat-stream-123",
+        "key_id": "key-openai-chat-stream-123",
+        "provider_name": "openai",
+        "method": "POST",
+        "url": "https://api.openai.example/v1/chat/completions",
+        "headers": {
+            "authorization": "Bearer upstream-key",
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+        },
+        "body": {
+            "json_body": {
+                "model": "gpt-5",
+                "messages": [],
+                "stream": True,
+            }
+        },
+        "stream": True,
+        "provider_api_format": "openai:chat",
+        "client_api_format": "openai:chat",
+        "model_name": "gpt-5",
+    }
+    monkeypatch.setattr(
+        "src.api.internal.gateway._build_openai_chat_stream_plan",
+        AsyncMock(
+            return_value=GatewayExecutionPlanResponse(
+                action="executor_stream",
+                plan_kind="openai_chat_stream",
+                plan=fake_plan,
+                report_kind="openai_chat_stream_success",
+                report_context={"user_id": "user-123", "api_key_id": "key-123"},
+            )
+        ),
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/plan-stream",
+        json={
+            "trace_id": "trace-openai-chat-stream-plan",
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "headers": {
+                "content-type": "application/json",
+                "authorization": "Bearer client-key",
+            },
+            "body_json": {"model": "gpt-5", "messages": [], "stream": True},
+            "auth_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "access_allowed": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "executor_stream",
+        "plan_kind": "openai_chat_stream",
+        "plan": fake_plan,
+        "report_kind": "openai_chat_stream_success",
+        "report_context": {"user_id": "user-123", "api_key_id": "key-123"},
+    }
+
+
+def test_plan_stream_route_returns_executor_plan_for_claude_chat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+
+    fake_plan = {
+        "request_id": "plan-claude-chat-stream-123",
+        "provider_id": "provider-claude-chat-stream-123",
+        "endpoint_id": "endpoint-claude-chat-stream-123",
+        "key_id": "key-claude-chat-stream-123",
+        "provider_name": "claude",
+        "method": "POST",
+        "url": "https://api.anthropic.example/v1/messages",
+        "headers": {
+            "x-api-key": "upstream-key",
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+        },
+        "body": {
+            "json_body": {
+                "model": "claude-sonnet-4",
+                "messages": [],
+                "stream": True,
+            }
+        },
+        "stream": True,
+        "provider_api_format": "claude:chat",
+        "client_api_format": "claude:chat",
+        "model_name": "claude-sonnet-4",
+    }
+    monkeypatch.setattr(
+        "src.api.internal.gateway._build_claude_chat_stream_plan",
+        AsyncMock(
+            return_value=GatewayExecutionPlanResponse(
+                action="executor_stream",
+                plan_kind="claude_chat_stream",
+                plan=fake_plan,
+                report_kind="claude_chat_stream_success",
+                report_context={"user_id": "user-123", "api_key_id": "key-123"},
+            )
+        ),
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/plan-stream",
+        json={
+            "trace_id": "trace-claude-chat-stream-plan",
+            "method": "POST",
+            "path": "/v1/messages",
+            "headers": {
+                "content-type": "application/json",
+                "x-api-key": "client-key",
+            },
+            "body_json": {"model": "claude-sonnet-4", "messages": [], "stream": True},
+            "auth_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "access_allowed": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "executor_stream",
+        "plan_kind": "claude_chat_stream",
+        "plan": fake_plan,
+        "report_kind": "claude_chat_stream_success",
+        "report_context": {"user_id": "user-123", "api_key_id": "key-123"},
+    }
+
+
+def test_plan_stream_route_returns_executor_plan_for_gemini_chat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+
+    fake_plan = {
+        "request_id": "plan-gemini-chat-stream-123",
+        "provider_id": "provider-gemini-chat-stream-123",
+        "endpoint_id": "endpoint-gemini-chat-stream-123",
+        "key_id": "key-gemini-chat-stream-123",
+        "provider_name": "gemini",
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent",
+        "headers": {
+            "x-goog-api-key": "upstream-key",
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+        },
+        "body": {"json_body": {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}},
+        "stream": True,
+        "provider_api_format": "gemini:chat",
+        "client_api_format": "gemini:chat",
+        "model_name": "gemini-2.5-pro",
+    }
+    monkeypatch.setattr(
+        "src.api.internal.gateway._build_gemini_chat_stream_plan",
+        AsyncMock(
+            return_value=GatewayExecutionPlanResponse(
+                action="executor_stream",
+                plan_kind="gemini_chat_stream",
+                plan=fake_plan,
+                report_kind="gemini_chat_stream_success",
+                report_context={"user_id": "user-123", "api_key_id": "key-123"},
+            )
+        ),
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/plan-stream",
+        json={
+            "trace_id": "trace-gemini-chat-stream-plan",
+            "method": "POST",
+            "path": "/v1beta/models/gemini-2.5-pro:streamGenerateContent",
+            "headers": {
+                "content-type": "application/json",
+                "x-goog-api-key": "client-key",
+            },
+            "body_json": {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
+            "auth_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "access_allowed": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "executor_stream",
+        "plan_kind": "gemini_chat_stream",
+        "plan": fake_plan,
+        "report_kind": "gemini_chat_stream_success",
+        "report_context": {"user_id": "user-123", "api_key_id": "key-123"},
+    }
+
+
+def test_plan_stream_route_returns_executor_plan_for_openai_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+
+    fake_plan = {
+        "request_id": "plan-openai-cli-stream-123",
+        "provider_id": "provider-openai-cli-stream-123",
+        "endpoint_id": "endpoint-openai-cli-stream-123",
+        "key_id": "key-openai-cli-stream-123",
+        "provider_name": "openai",
+        "method": "POST",
+        "url": "https://api.openai.example/v1/responses",
+        "headers": {
+            "authorization": "Bearer upstream-key",
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+        },
+        "body": {"json_body": {"model": "gpt-5", "input": "hello", "stream": True}},
+        "stream": True,
+        "provider_api_format": "openai:cli",
+        "client_api_format": "openai:cli",
+        "model_name": "gpt-5",
+    }
+    monkeypatch.setattr(
+        "src.api.internal.gateway._build_openai_cli_stream_plan",
+        AsyncMock(
+            return_value=GatewayExecutionPlanResponse(
+                action="executor_stream",
+                plan_kind="openai_cli_stream",
+                plan=fake_plan,
+                report_kind="openai_cli_stream_success",
+                report_context={"user_id": "user-123", "api_key_id": "key-123"},
+            )
+        ),
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/plan-stream",
+        json={
+            "trace_id": "trace-openai-cli-stream-plan",
+            "method": "POST",
+            "path": "/v1/responses",
+            "headers": {
+                "content-type": "application/json",
+                "authorization": "Bearer client-key",
+            },
+            "body_json": {"model": "gpt-5", "input": "hello", "stream": True},
+            "auth_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "access_allowed": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "executor_stream",
+        "plan_kind": "openai_cli_stream",
+        "plan": fake_plan,
+        "report_kind": "openai_cli_stream_success",
+        "report_context": {"user_id": "user-123", "api_key_id": "key-123"},
+    }
+
+
+def test_plan_stream_route_returns_executor_plan_for_claude_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+
+    fake_plan = {
+        "request_id": "plan-claude-cli-stream-123",
+        "provider_id": "provider-claude-cli-stream-123",
+        "endpoint_id": "endpoint-claude-cli-stream-123",
+        "key_id": "key-claude-cli-stream-123",
+        "provider_name": "claude",
+        "method": "POST",
+        "url": "https://api.anthropic.example/v1/messages",
+        "headers": {
+            "x-api-key": "upstream-key",
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+        },
+        "body": {
+            "json_body": {
+                "model": "claude-sonnet-4",
+                "messages": [],
+                "stream": True,
+            }
+        },
+        "stream": True,
+        "provider_api_format": "claude:cli",
+        "client_api_format": "claude:cli",
+        "model_name": "claude-sonnet-4",
+    }
+    monkeypatch.setattr(
+        "src.api.internal.gateway._build_claude_cli_stream_plan",
+        AsyncMock(
+            return_value=GatewayExecutionPlanResponse(
+                action="executor_stream",
+                plan_kind="claude_cli_stream",
+                plan=fake_plan,
+                report_kind="claude_cli_stream_success",
+                report_context={"user_id": "user-123", "api_key_id": "key-123"},
+            )
+        ),
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/plan-stream",
+        json={
+            "trace_id": "trace-claude-cli-stream-plan",
+            "method": "POST",
+            "path": "/v1/messages",
+            "headers": {
+                "content-type": "application/json",
+                "authorization": "Bearer client-key",
+                "anthropic-beta": "output-128k-2025-02-19",
+            },
+            "body_json": {
+                "model": "claude-sonnet-4",
+                "messages": [],
+                "stream": True,
+            },
+            "auth_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "access_allowed": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "executor_stream",
+        "plan_kind": "claude_cli_stream",
+        "plan": fake_plan,
+        "report_kind": "claude_cli_stream_success",
+        "report_context": {"user_id": "user-123", "api_key_id": "key-123"},
+    }
+
+
+def test_plan_stream_route_returns_executor_plan_for_gemini_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+
+    fake_plan = {
+        "request_id": "plan-gemini-cli-stream-123",
+        "provider_id": "provider-gemini-cli-stream-123",
+        "endpoint_id": "endpoint-gemini-cli-stream-123",
+        "key_id": "key-gemini-cli-stream-123",
+        "provider_name": "gemini",
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-cli:streamGenerateContent",
+        "headers": {
+            "x-goog-api-key": "upstream-key",
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+        },
+        "body": {"json_body": {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}},
+        "stream": True,
+        "provider_api_format": "gemini:cli",
+        "client_api_format": "gemini:cli",
+        "model_name": "gemini-cli",
+    }
+    monkeypatch.setattr(
+        "src.api.internal.gateway._build_gemini_cli_stream_plan",
+        AsyncMock(
+            return_value=GatewayExecutionPlanResponse(
+                action="executor_stream",
+                plan_kind="gemini_cli_stream",
+                plan=fake_plan,
+                report_kind="gemini_cli_stream_success",
+                report_context={"user_id": "user-123", "api_key_id": "key-123"},
+            )
+        ),
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/plan-stream",
+        json={
+            "trace_id": "trace-gemini-cli-stream-plan",
+            "method": "POST",
+            "path": "/v1beta/models/gemini-cli:streamGenerateContent",
+            "headers": {
+                "content-type": "application/json",
+                "user-agent": "GeminiCLI/1.0",
+                "x-goog-api-key": "client-key",
+            },
+            "body_json": {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
+            "auth_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "access_allowed": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "executor_stream",
+        "plan_kind": "gemini_cli_stream",
+        "plan": fake_plan,
+        "report_kind": "gemini_cli_stream_success",
+        "report_context": {"user_id": "user-123", "api_key_id": "key-123"},
+    }
+
+
 def test_plan_sync_route_returns_executor_plan_for_openai_cli(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1476,6 +2311,486 @@ def test_report_sync_route_records_openai_chat_sync_success(
                 "choices": [],
             },
             "telemetry": {"elapsed_ms": 123},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    record_mock.assert_awaited_once()
+
+
+def test_finalize_sync_route_finalizes_openai_video_create_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+    finalize_mock = AsyncMock(
+        return_value=JSONResponse(
+            content={
+                "id": "vid_local_123",
+                "object": "video",
+                "status": "submitted",
+            }
+        )
+    )
+    monkeypatch.setattr(
+        "src.api.internal.gateway._finalize_gateway_openai_video_create_sync",
+        finalize_mock,
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/finalize-sync",
+        json={
+            "trace_id": "trace-openai-video-finalize",
+            "report_kind": "openai_video_create_sync_finalize",
+            "report_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+            },
+            "status_code": 200,
+            "headers": {"content-type": "application/json"},
+            "body_json": {"id": "ext-video-task-123", "status": "submitted"},
+            "telemetry": {"elapsed_ms": 42},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers[CONTROL_EXECUTED_HEADER] == "true"
+    assert response.json() == {
+        "id": "vid_local_123",
+        "object": "video",
+        "status": "submitted",
+    }
+    finalize_mock.assert_awaited_once()
+
+
+def test_finalize_sync_route_finalizes_openai_video_remix_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+    finalize_mock = AsyncMock(
+        return_value=JSONResponse(
+            content={
+                "id": "vid_local_remix_123",
+                "object": "video",
+                "status": "submitted",
+            }
+        )
+    )
+    monkeypatch.setattr(
+        "src.api.internal.gateway._finalize_gateway_openai_video_remix_sync",
+        finalize_mock,
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/finalize-sync",
+        json={
+            "trace_id": "trace-openai-video-remix-finalize",
+            "report_kind": "openai_video_remix_sync_finalize",
+            "report_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "task_id": "task-123",
+            },
+            "status_code": 200,
+            "headers": {"content-type": "application/json"},
+            "body_json": {"id": "ext-remix-task-123", "status": "submitted"},
+            "telemetry": {"elapsed_ms": 55},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers[CONTROL_EXECUTED_HEADER] == "true"
+    assert response.json() == {
+        "id": "vid_local_remix_123",
+        "object": "video",
+        "status": "submitted",
+    }
+    finalize_mock.assert_awaited_once()
+
+
+def test_finalize_sync_route_finalizes_gemini_video_create_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+    finalize_mock = AsyncMock(
+        return_value=JSONResponse(
+            content={
+                "name": "models/veo-3/operations/aev_123",
+                "done": False,
+                "metadata": {},
+            }
+        )
+    )
+    monkeypatch.setattr(
+        "src.api.internal.gateway._finalize_gateway_gemini_video_create_sync",
+        finalize_mock,
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/finalize-sync",
+        json={
+            "trace_id": "trace-gemini-video-create-finalize",
+            "report_kind": "gemini_video_create_sync_finalize",
+            "report_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "model": "veo-3",
+            },
+            "status_code": 200,
+            "headers": {"content-type": "application/json"},
+            "body_json": {"name": "operations/ext-video-123"},
+            "telemetry": {"elapsed_ms": 48},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers[CONTROL_EXECUTED_HEADER] == "true"
+    assert response.json() == {
+        "name": "models/veo-3/operations/aev_123",
+        "done": False,
+        "metadata": {},
+    }
+    finalize_mock.assert_awaited_once()
+
+
+def test_finalize_sync_route_finalizes_openai_video_delete_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+    finalize_mock = AsyncMock(
+        return_value=JSONResponse(
+            content={
+                "id": "task-123",
+                "object": "video",
+                "deleted": True,
+            }
+        )
+    )
+    monkeypatch.setattr(
+        "src.api.internal.gateway._finalize_gateway_openai_video_delete_sync",
+        finalize_mock,
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/finalize-sync",
+        json={
+            "trace_id": "trace-openai-video-delete-finalize",
+            "report_kind": "openai_video_delete_sync_finalize",
+            "report_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "task_id": "task-123",
+            },
+            "status_code": 404,
+            "headers": {"content-type": "application/json"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers[CONTROL_EXECUTED_HEADER] == "true"
+    assert response.json() == {
+        "id": "task-123",
+        "object": "video",
+        "deleted": True,
+    }
+    finalize_mock.assert_awaited_once()
+
+
+def test_finalize_sync_route_finalizes_openai_video_cancel_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+    finalize_mock = AsyncMock(return_value=JSONResponse(content={}))
+    monkeypatch.setattr(
+        "src.api.internal.gateway._finalize_gateway_openai_video_cancel_sync",
+        finalize_mock,
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/finalize-sync",
+        json={
+            "trace_id": "trace-openai-video-cancel-finalize",
+            "report_kind": "openai_video_cancel_sync_finalize",
+            "report_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "task_id": "task-123",
+            },
+            "status_code": 204,
+            "headers": {},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers[CONTROL_EXECUTED_HEADER] == "true"
+    assert response.json() == {}
+    finalize_mock.assert_awaited_once()
+
+
+def test_finalize_sync_route_finalizes_gemini_video_cancel_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+    finalize_mock = AsyncMock(return_value=JSONResponse(content={}))
+    monkeypatch.setattr(
+        "src.api.internal.gateway._finalize_gateway_gemini_video_cancel_sync",
+        finalize_mock,
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/finalize-sync",
+        json={
+            "trace_id": "trace-gemini-video-cancel-finalize",
+            "report_kind": "gemini_video_cancel_sync_finalize",
+            "report_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "task_id": "models/veo-3/operations/ext-123",
+            },
+            "status_code": 200,
+            "headers": {"content-type": "application/json"},
+            "body_json": {},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers[CONTROL_EXECUTED_HEADER] == "true"
+    assert response.json() == {}
+    finalize_mock.assert_awaited_once()
+
+
+def test_report_stream_route_records_openai_chat_stream_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+    record_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "src.api.internal.gateway._record_gateway_openai_chat_stream_success",
+        record_mock,
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/report-stream",
+        json={
+            "trace_id": "trace-openai-chat-stream-report",
+            "report_kind": "openai_chat_stream_success",
+            "report_context": {"user_id": "user-123", "api_key_id": "key-123"},
+            "status_code": 200,
+            "headers": {"content-type": "text/event-stream"},
+            "body_base64": base64.b64encode(b"data: hello\\n\\ndata: [DONE]\\n\\n").decode("ascii"),
+            "telemetry": {"elapsed_ms": 123, "ttfb_ms": 22},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    record_mock.assert_awaited_once()
+
+
+def test_report_stream_route_records_claude_chat_stream_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+    record_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "src.api.internal.gateway._record_gateway_passthrough_chat_stream_success",
+        record_mock,
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/report-stream",
+        json={
+            "trace_id": "trace-claude-chat-stream-report",
+            "report_kind": "claude_chat_stream_success",
+            "report_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "client_api_format": "claude:chat",
+            },
+            "status_code": 200,
+            "headers": {"content-type": "text/event-stream"},
+            "body_base64": base64.b64encode(b"event: content_block_delta\n\n").decode("ascii"),
+            "telemetry": {"elapsed_ms": 66},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    record_mock.assert_awaited_once()
+
+
+def test_report_stream_route_records_gemini_chat_stream_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+    record_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "src.api.internal.gateway._record_gateway_passthrough_chat_stream_success",
+        record_mock,
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/report-stream",
+        json={
+            "trace_id": "trace-gemini-chat-stream-report",
+            "report_kind": "gemini_chat_stream_success",
+            "report_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "client_api_format": "gemini:chat",
+            },
+            "status_code": 200,
+            "headers": {"content-type": "text/event-stream"},
+            "body_base64": base64.b64encode(b'data: {"candidates":[]}\n\n').decode("ascii"),
+            "telemetry": {"elapsed_ms": 44},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    record_mock.assert_awaited_once()
+
+
+def test_report_stream_route_records_openai_cli_stream_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+    record_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "src.api.internal.gateway._record_gateway_passthrough_cli_stream_success",
+        record_mock,
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/report-stream",
+        json={
+            "trace_id": "trace-openai-cli-stream-report",
+            "report_kind": "openai_cli_stream_success",
+            "report_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "client_api_format": "openai:cli",
+            },
+            "status_code": 200,
+            "headers": {"content-type": "text/event-stream"},
+            "body_base64": base64.b64encode(
+                b'event: response.completed\ndata: {"type":"response.completed"}\n\n'
+            ).decode("ascii"),
+            "telemetry": {"elapsed_ms": 66},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    record_mock.assert_awaited_once()
+
+
+def test_report_stream_route_records_claude_cli_stream_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+    record_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "src.api.internal.gateway._record_gateway_passthrough_cli_stream_success",
+        record_mock,
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/report-stream",
+        json={
+            "trace_id": "trace-claude-cli-stream-report",
+            "report_kind": "claude_cli_stream_success",
+            "report_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "client_api_format": "claude:cli",
+            },
+            "status_code": 200,
+            "headers": {"content-type": "text/event-stream"},
+            "body_base64": base64.b64encode(
+                b'event: message_start\ndata: {"type":"message_start"}\n\n'
+            ).decode("ascii"),
+            "telemetry": {"elapsed_ms": 44},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    record_mock.assert_awaited_once()
+
+
+def test_report_stream_route_records_gemini_cli_stream_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: object()
+    monkeypatch.setattr("src.api.internal.gateway.ensure_loopback", lambda request: None)
+    record_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "src.api.internal.gateway._record_gateway_passthrough_cli_stream_success",
+        record_mock,
+    )
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.post(
+        "/api/internal/gateway/report-stream",
+        json={
+            "trace_id": "trace-gemini-cli-stream-report",
+            "report_kind": "gemini_cli_stream_success",
+            "report_context": {
+                "user_id": "user-123",
+                "api_key_id": "key-123",
+                "client_api_format": "gemini:cli",
+            },
+            "status_code": 200,
+            "headers": {"content-type": "text/event-stream"},
+            "body_base64": base64.b64encode(b'data: {"candidates":[]}\n\n').decode("ascii"),
+            "telemetry": {"elapsed_ms": 44},
         },
     )
 

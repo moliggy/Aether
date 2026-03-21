@@ -147,9 +147,11 @@ def test_claude_response_to_openai_cli() -> None:
 
     openai_cli_resp = reg.convert_response(claude_resp, "claude:chat", "openai:cli")
     assert openai_cli_resp["object"] == "response"
+    assert openai_cli_resp["id"] == "resp_1"
     assert isinstance(openai_cli_resp.get("output"), list)
     msg = cast(dict[str, Any], openai_cli_resp["output"][0])
     assert msg["type"] == "message"
+    assert msg["id"] == "msg_1"
     assert msg["role"] == "assistant"
     content = cast(list[dict[str, Any]], msg.get("content") or [])
     assert content and content[0]["type"] == "output_text"
@@ -174,9 +176,66 @@ def test_stream_openai_to_openai_cli_delta() -> None:
     assert isinstance(out_events, list) and out_events
     created = [e for e in out_events if e.get("type") == "response.created"]
     assert created
+    assert cast(dict[str, Any], created[0]["response"])["id"] == "resp_1"
     deltas = [e for e in out_events if e.get("type") == "response.output_text.delta"]
     assert deltas
     assert deltas[0].get("delta") == "hi"
+    assert deltas[0].get("item_id") == "msg_1"
+    assert deltas[0].get("output_index") == 0
+    assert deltas[0].get("content_index") == 0
+    assert deltas[0].get("logprobs") == []
+
+
+def test_stream_openai_to_openai_cli_usage_only_chunk_does_not_duplicate_completion() -> None:
+    reg = _make_registry_with_cli()
+    state = StreamState()
+
+    chunks = [
+        {
+            "id": "chatcmpl-dup-stop",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "gpt-4o-mini",
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}],
+        },
+        {
+            "id": "chatcmpl-dup-stop",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "gpt-4o-mini",
+            "choices": [{"index": 0, "delta": {"content": "Hi"}}],
+        },
+        {
+            "id": "chatcmpl-dup-stop",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "gpt-4o-mini",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        },
+        {
+            "id": "chatcmpl-dup-stop",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "gpt-4o-mini",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 11,
+                "completion_tokens": 11,
+                "total_tokens": 22,
+            },
+        },
+    ]
+
+    all_events: list[dict[str, Any]] = []
+    for chunk in chunks:
+        all_events.extend(reg.convert_stream_chunk(chunk, "openai:chat", "openai:cli", state=state))
+
+    assert sum(1 for e in all_events if e.get("type") == "response.output_text.done") == 1
+    assert sum(1 for e in all_events if e.get("type") == "response.content_part.done") == 1
+    assert sum(1 for e in all_events if e.get("type") == "response.output_item.done") == 1
+    assert sum(1 for e in all_events if e.get("type") == "response.completed") == 1
+    completed = next(e for e in all_events if e.get("type") == "response.completed")
+    assert cast(dict[str, Any], completed["response"])["id"] == "resp_dup-stop"
 
 
 def test_stream_openai_cli_to_openai_delta() -> None:
@@ -199,6 +258,94 @@ def test_stream_openai_cli_to_openai_delta() -> None:
     assert isinstance(choices, list) and choices
     delta = cast(dict[str, Any], choices[0]).get("delta") or {}
     assert cast(dict[str, Any], delta).get("content") == "hi"
+
+
+def test_stream_openai_cli_to_openai_accepts_msg_chatcmpl_item_ids() -> None:
+    reg = _make_registry_with_cli()
+    state = StreamState()
+
+    cli_chunks: list[dict[str, Any]] = [
+        {
+            "type": "response.created",
+            "response": {
+                "id": "chatcmpl-abc123",
+                "object": "response",
+                "model": "gpt-4o-mini",
+                "status": "in_progress",
+                "output": [],
+            },
+        },
+        {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {
+                "id": "msg_chatcmpl-abc123",
+                "type": "message",
+                "status": "in_progress",
+                "role": "assistant",
+                "content": [],
+            },
+        },
+        {
+            "type": "response.content_part.added",
+            "item_id": "msg_chatcmpl-abc123",
+            "output_index": 0,
+            "content_index": 0,
+            "part": {"type": "output_text", "text": "", "annotations": []},
+        },
+        {
+            "type": "response.output_text.delta",
+            "item_id": "msg_chatcmpl-abc123",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": "hi",
+            "logprobs": [],
+        },
+        {
+            "type": "response.output_text.done",
+            "item_id": "msg_chatcmpl-abc123",
+            "output_index": 0,
+            "content_index": 0,
+            "text": "hi",
+            "logprobs": [],
+        },
+        {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": {
+                "id": "msg_chatcmpl-abc123",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "hi", "annotations": []}],
+            },
+        },
+        {
+            "type": "response.completed",
+            "response": {
+                "id": "chatcmpl-abc123",
+                "object": "response",
+                "model": "gpt-4o-mini",
+                "status": "completed",
+                "output": [],
+                "usage": {"input_tokens": 5, "output_tokens": 2, "total_tokens": 7},
+            },
+        },
+    ]
+
+    all_events: list[dict[str, Any]] = []
+    for chunk in cli_chunks:
+        events = reg.convert_stream_chunk(chunk, "openai:cli", "openai:chat", state=state)
+        all_events.extend(events)
+
+    assert any(
+        cast(dict[str, Any], cast(list[Any], e.get("choices") or [])[0])
+        .get("delta", {})
+        .get("content")
+        == "hi"
+        for e in all_events
+        if isinstance(e, dict) and isinstance(e.get("choices"), list) and e.get("choices")
+    )
 
 
 def test_openai_cli_function_call_to_claude() -> None:

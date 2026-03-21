@@ -87,7 +87,8 @@ def _format_converted_events_to_sse(
         SSE 行列表（每个元素是完整的 SSE 事件，包含尾部空行）
     """
     result: list[str] = []
-    needs_event_line = str(client_format or "").strip().lower().startswith("claude:")
+    client_fmt = str(client_format or "").strip().lower()
+    needs_event_line = client_fmt.startswith("claude:") or client_fmt == "openai:cli"
 
     for evt in converted_events:
         payload = json.dumps(evt, ensure_ascii=False)
