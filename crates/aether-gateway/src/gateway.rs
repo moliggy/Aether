@@ -22,7 +22,7 @@ pub(crate) use control::{
     GatewayControlDecision,
 };
 pub(crate) use error::GatewayError;
-pub(crate) use executor::maybe_execute_via_executor_stream;
+pub(crate) use executor::{maybe_execute_via_executor_stream, maybe_execute_via_executor_sync};
 use handlers::{health, proxy_request};
 pub(crate) use response::{build_client_response, build_client_response_from_parts};
 

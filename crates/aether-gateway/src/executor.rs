@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 use std::io::Error as IoError;
 
-use aether_contracts::{ExecutionPlan, StreamFrame, StreamFramePayload};
+use aether_contracts::{
+    ExecutionPlan, ExecutionResult, ExecutionTelemetry, StreamFrame, StreamFramePayload,
+};
 use async_stream::stream;
 use axum::body::{Body, Bytes};
 use axum::http::Response;
@@ -14,14 +16,26 @@ use tokio_util::io::StreamReader;
 use tracing::warn;
 
 use crate::gateway::constants::*;
-use crate::gateway::headers::{collect_control_headers, header_equals};
+use crate::gateway::headers::{collect_control_headers, header_equals, is_json_request};
 use crate::gateway::{
     build_client_response, build_client_response_from_parts, AppState, GatewayControlAuthContext,
     GatewayControlDecision, GatewayError,
 };
 
+const GEMINI_FILES_GET_PLAN_KIND: &str = "gemini_files_get";
+const GEMINI_FILES_LIST_PLAN_KIND: &str = "gemini_files_list";
+const GEMINI_FILES_UPLOAD_PLAN_KIND: &str = "gemini_files_upload";
+const GEMINI_FILES_DELETE_PLAN_KIND: &str = "gemini_files_delete";
 const GEMINI_FILES_DOWNLOAD_PLAN_KIND: &str = "gemini_files_download";
 const OPENAI_VIDEO_CONTENT_PLAN_KIND: &str = "openai_video_content";
+const OPENAI_CHAT_SYNC_PLAN_KIND: &str = "openai_chat_sync";
+const OPENAI_CLI_SYNC_PLAN_KIND: &str = "openai_cli_sync";
+const OPENAI_COMPACT_SYNC_PLAN_KIND: &str = "openai_compact_sync";
+const CLAUDE_CHAT_SYNC_PLAN_KIND: &str = "claude_chat_sync";
+const GEMINI_CHAT_SYNC_PLAN_KIND: &str = "gemini_chat_sync";
+const CLAUDE_CLI_SYNC_PLAN_KIND: &str = "claude_cli_sync";
+const GEMINI_CLI_SYNC_PLAN_KIND: &str = "gemini_cli_sync";
+const EXECUTOR_SYNC_ACTION: &str = "executor_sync";
 const EXECUTOR_STREAM_ACTION: &str = "executor_stream";
 const MAX_ERROR_BODY_BYTES: usize = 16_384;
 
@@ -45,6 +59,147 @@ struct GatewayControlPlanResponse {
     plan_kind: Option<String>,
     #[serde(default)]
     plan: Option<ExecutionPlan>,
+    #[serde(default)]
+    report_kind: Option<String>,
+    #[serde(default)]
+    report_context: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct GatewaySyncReportRequest {
+    trace_id: String,
+    report_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    report_context: Option<serde_json::Value>,
+    status_code: u16,
+    headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    body_json: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    body_base64: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    telemetry: Option<ExecutionTelemetry>,
+}
+
+pub(crate) async fn maybe_execute_via_executor_sync(
+    state: &AppState,
+    parts: &http::request::Parts,
+    body_bytes: &Bytes,
+    trace_id: &str,
+    decision: Option<&GatewayControlDecision>,
+) -> Result<Option<Response<Body>>, GatewayError> {
+    let Some(control_base_url) = state.control_base_url.as_deref() else {
+        return Ok(None);
+    };
+    let Some(executor_base_url) = state.executor_base_url.as_deref() else {
+        return Ok(None);
+    };
+    let Some(decision) = decision else {
+        return Ok(None);
+    };
+
+    let Some(plan_kind) = resolve_direct_executor_sync_plan_kind(parts, decision) else {
+        return Ok(None);
+    };
+
+    let (body_json, body_base64) = if is_json_request(&parts.headers) {
+        if body_bytes.is_empty() {
+            (json!({}), None)
+        } else {
+            match serde_json::from_slice::<serde_json::Value>(body_bytes) {
+                Ok(value) => (value, None),
+                Err(_) => return Ok(None),
+            }
+        }
+    } else {
+        (
+            json!({}),
+            (!body_bytes.is_empty())
+                .then(|| base64::engine::general_purpose::STANDARD.encode(body_bytes)),
+        )
+    };
+
+    let request_payload = GatewayControlPlanRequest {
+        trace_id: trace_id.to_string(),
+        method: parts.method.to_string(),
+        path: parts.uri.path().to_string(),
+        query_string: parts.uri.query().map(ToOwned::to_owned),
+        headers: collect_control_headers(&parts.headers),
+        body_json,
+        body_base64,
+        auth_context: decision.auth_context.clone(),
+    };
+
+    let response = state
+        .client
+        .post(format!("{control_base_url}/api/internal/gateway/plan-sync"))
+        .header(TRACE_ID_HEADER, trace_id)
+        .json(&request_payload)
+        .send()
+        .await
+        .map_err(|err| GatewayError::ControlUnavailable {
+            trace_id: trace_id.to_string(),
+            message: err.to_string(),
+        })?;
+
+    if response.status() == http::StatusCode::CONFLICT
+        && header_equals(
+            response.headers(),
+            CONTROL_ACTION_HEADER,
+            CONTROL_ACTION_PROXY_PUBLIC,
+        )
+    {
+        return Ok(None);
+    }
+
+    if header_equals(response.headers(), CONTROL_EXECUTED_HEADER, "true")
+        && response.status() != http::StatusCode::OK
+    {
+        return Ok(Some(build_client_response(
+            response,
+            trace_id,
+            Some(decision),
+        )?));
+    }
+
+    let response = response
+        .error_for_status()
+        .map_err(|err| GatewayError::ControlUnavailable {
+            trace_id: trace_id.to_string(),
+            message: err.to_string(),
+        })?;
+
+    let payload: GatewayControlPlanResponse = response
+        .json()
+        .await
+        .map_err(|err| GatewayError::Internal(err.to_string()))?;
+
+    if payload.action != EXECUTOR_SYNC_ACTION {
+        return Ok(None);
+    }
+
+    if payload.plan_kind.as_deref() != Some(plan_kind) {
+        return Ok(None);
+    }
+
+    let Some(plan) = payload.plan else {
+        return Err(GatewayError::Internal(
+            "gateway sync plan response missing execution plan".to_string(),
+        ));
+    };
+
+    execute_executor_sync(
+        state,
+        control_base_url,
+        executor_base_url,
+        plan,
+        trace_id,
+        decision,
+        plan_kind,
+        payload.report_kind,
+        payload.report_context,
+    )
+    .await
 }
 
 pub(crate) async fn maybe_execute_via_executor_stream(
@@ -174,6 +329,96 @@ fn resolve_direct_executor_stream_plan_kind(
     None
 }
 
+fn resolve_direct_executor_sync_plan_kind(
+    parts: &http::request::Parts,
+    decision: &GatewayControlDecision,
+) -> Option<&'static str> {
+    if decision.route_class.as_deref() != Some("ai_public") {
+        return None;
+    }
+
+    if decision.route_family.as_deref() == Some("openai")
+        && decision.route_kind.as_deref() == Some("chat")
+        && parts.method == http::Method::POST
+        && parts.uri.path() == "/v1/chat/completions"
+    {
+        return Some(OPENAI_CHAT_SYNC_PLAN_KIND);
+    }
+
+    if decision.route_family.as_deref() == Some("openai")
+        && decision.route_kind.as_deref() == Some("cli")
+        && parts.method == http::Method::POST
+        && parts.uri.path() == "/v1/responses"
+    {
+        return Some(OPENAI_CLI_SYNC_PLAN_KIND);
+    }
+
+    if decision.route_family.as_deref() == Some("openai")
+        && decision.route_kind.as_deref() == Some("compact")
+        && parts.method == http::Method::POST
+        && parts.uri.path() == "/v1/responses/compact"
+    {
+        return Some(OPENAI_COMPACT_SYNC_PLAN_KIND);
+    }
+
+    if decision.route_family.as_deref() == Some("claude")
+        && decision.route_kind.as_deref() == Some("chat")
+        && parts.method == http::Method::POST
+        && parts.uri.path() == "/v1/messages"
+    {
+        return Some(CLAUDE_CHAT_SYNC_PLAN_KIND);
+    }
+
+    if decision.route_family.as_deref() == Some("claude")
+        && decision.route_kind.as_deref() == Some("cli")
+        && parts.method == http::Method::POST
+        && parts.uri.path() == "/v1/messages"
+    {
+        return Some(CLAUDE_CLI_SYNC_PLAN_KIND);
+    }
+
+    if decision.route_family.as_deref() == Some("gemini")
+        && decision.route_kind.as_deref() == Some("chat")
+        && parts.method == http::Method::POST
+        && parts.uri.path().ends_with(":generateContent")
+    {
+        return Some(GEMINI_CHAT_SYNC_PLAN_KIND);
+    }
+
+    if decision.route_family.as_deref() == Some("gemini")
+        && decision.route_kind.as_deref() == Some("cli")
+        && parts.method == http::Method::POST
+        && parts.uri.path().ends_with(":generateContent")
+    {
+        return Some(GEMINI_CLI_SYNC_PLAN_KIND);
+    }
+
+    if decision.route_family.as_deref() == Some("gemini")
+        && decision.route_kind.as_deref() == Some("files")
+    {
+        if parts.method == http::Method::POST && parts.uri.path() == "/upload/v1beta/files" {
+            return Some(GEMINI_FILES_UPLOAD_PLAN_KIND);
+        }
+        if parts.method == http::Method::GET && parts.uri.path() == "/v1beta/files" {
+            return Some(GEMINI_FILES_LIST_PLAN_KIND);
+        }
+        if parts.method == http::Method::GET
+            && parts.uri.path().starts_with("/v1beta/files/")
+            && !parts.uri.path().ends_with(":download")
+        {
+            return Some(GEMINI_FILES_GET_PLAN_KIND);
+        }
+        if parts.method == http::Method::DELETE
+            && parts.uri.path().starts_with("/v1beta/files/")
+            && !parts.uri.path().ends_with(":download")
+        {
+            return Some(GEMINI_FILES_DELETE_PLAN_KIND);
+        }
+    }
+
+    None
+}
+
 async fn execute_executor_stream(
     state: &AppState,
     executor_base_url: &str,
@@ -242,7 +487,7 @@ async fn execute_executor_stream(
             let next_frame = match read_next_frame(&mut lines).await {
                 Ok(frame) => frame,
                 Err(err) => {
-                    warn!(trace_id = %trace_id_owned, error = %format!("{err:?}"), "gateway failed to decode executor stream frame");
+                    warn!(trace_id = %trace_id_owned, error = ?err, "gateway failed to decode executor stream frame");
                     break;
                 }
             };
@@ -281,6 +526,165 @@ async fn execute_executor_stream(
         trace_id,
         Some(decision),
     )?))
+}
+
+#[allow(clippy::too_many_arguments)] // internal function, grouping would add unnecessary indirection
+async fn execute_executor_sync(
+    state: &AppState,
+    control_base_url: &str,
+    executor_base_url: &str,
+    plan: ExecutionPlan,
+    trace_id: &str,
+    decision: &GatewayControlDecision,
+    plan_kind: &str,
+    report_kind: Option<String>,
+    report_context: Option<serde_json::Value>,
+) -> Result<Option<Response<Body>>, GatewayError> {
+    let response = match state
+        .client
+        .post(format!("{executor_base_url}/v1/execute/sync"))
+        .header(TRACE_ID_HEADER, trace_id)
+        .json(&plan)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            warn!(trace_id = %trace_id, error = %err, "gateway direct executor sync unavailable");
+            return Ok(None);
+        }
+    };
+
+    if response.status() != http::StatusCode::OK {
+        return Ok(Some(build_client_response(
+            response,
+            trace_id,
+            Some(decision),
+        )?));
+    }
+
+    let result: ExecutionResult = response
+        .json()
+        .await
+        .map_err(|err| GatewayError::Internal(err.to_string()))?;
+    let mut headers = result.headers.clone();
+    let (body_bytes, body_json, body_base64) = decode_execution_result_body(&result, &mut headers)?;
+
+    if should_fallback_to_control_sync(plan_kind, &result, body_json.as_ref()) {
+        return Ok(None);
+    }
+
+    if let Some(report_kind) = report_kind {
+        let report = GatewaySyncReportRequest {
+            trace_id: trace_id.to_string(),
+            report_kind,
+            report_context,
+            status_code: result.status_code,
+            headers: headers.clone(),
+            body_json: body_json.clone(),
+            body_base64: body_base64.clone(),
+            telemetry: result.telemetry.clone(),
+        };
+        if let Err(err) = submit_sync_report(state, control_base_url, trace_id, report).await {
+            warn!(trace_id = %trace_id, error = ?err, "gateway failed to submit sync execution report");
+        }
+    }
+
+    Ok(Some(build_client_response_from_parts(
+        result.status_code,
+        &headers,
+        Body::from(body_bytes),
+        trace_id,
+        Some(decision),
+    )?))
+}
+
+fn should_fallback_to_control_sync(
+    plan_kind: &str,
+    result: &ExecutionResult,
+    body_json: Option<&serde_json::Value>,
+) -> bool {
+    if !matches!(
+        plan_kind,
+        OPENAI_CHAT_SYNC_PLAN_KIND
+            | OPENAI_CLI_SYNC_PLAN_KIND
+            | OPENAI_COMPACT_SYNC_PLAN_KIND
+            | CLAUDE_CHAT_SYNC_PLAN_KIND
+            | GEMINI_CHAT_SYNC_PLAN_KIND
+            | CLAUDE_CLI_SYNC_PLAN_KIND
+            | GEMINI_CLI_SYNC_PLAN_KIND
+    ) {
+        return false;
+    }
+
+    if result.status_code >= 400 {
+        return true;
+    }
+
+    let Some(body_json) = body_json else {
+        return true;
+    };
+
+    body_json.get("error").is_some()
+}
+
+type DecodedBody = (Vec<u8>, Option<serde_json::Value>, Option<String>);
+
+fn decode_execution_result_body(
+    result: &ExecutionResult,
+    headers: &mut BTreeMap<String, String>,
+) -> Result<DecodedBody, GatewayError> {
+    let Some(body) = result.body.as_ref() else {
+        return Ok((Vec::new(), None, None));
+    };
+
+    if let Some(json_body) = body.json_body.clone() {
+        headers
+            .entry("content-type".to_string())
+            .or_insert_with(|| "application/json".to_string());
+        let bytes = serde_json::to_vec(&json_body)
+            .map_err(|err| GatewayError::Internal(err.to_string()))?;
+        headers.insert("content-length".to_string(), bytes.len().to_string());
+        return Ok((bytes, Some(json_body), None));
+    }
+
+    if let Some(body_bytes_b64) = body.body_bytes_b64.clone() {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&body_bytes_b64)
+            .map_err(|err| GatewayError::Internal(err.to_string()))?;
+        return Ok((bytes, None, Some(body_bytes_b64)));
+    }
+
+    Ok((Vec::new(), None, None))
+}
+
+async fn submit_sync_report(
+    state: &AppState,
+    control_base_url: &str,
+    trace_id: &str,
+    payload: GatewaySyncReportRequest,
+) -> Result<(), GatewayError> {
+    let response = state
+        .client
+        .post(format!(
+            "{control_base_url}/api/internal/gateway/report-sync"
+        ))
+        .header(TRACE_ID_HEADER, trace_id)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|err| GatewayError::ControlUnavailable {
+            trace_id: trace_id.to_string(),
+            message: err.to_string(),
+        })?;
+
+    response
+        .error_for_status()
+        .map_err(|err| GatewayError::ControlUnavailable {
+            trace_id: trace_id.to_string(),
+            message: err.to_string(),
+        })?;
+    Ok(())
 }
 
 async fn collect_error_body<R>(

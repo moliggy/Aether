@@ -15,7 +15,7 @@ use crate::gateway::headers::{
 };
 use crate::gateway::{
     build_client_response, maybe_execute_via_control, maybe_execute_via_executor_stream,
-    resolve_control_route, AppState, GatewayError,
+    maybe_execute_via_executor_sync, resolve_control_route, AppState, GatewayError,
 };
 
 pub(crate) async fn health(State(state): State<AppState>) -> impl IntoResponse {
@@ -132,6 +132,17 @@ pub(crate) async fn proxy_request(
         let buffered_body = to_bytes(body, usize::MAX)
             .await
             .map_err(|err| GatewayError::Internal(err.to_string()))?;
+        if let Some(executor_response) = maybe_execute_via_executor_sync(
+            &state,
+            &parts,
+            &buffered_body,
+            &trace_id,
+            control_decision.as_ref(),
+        )
+        .await?
+        {
+            return Ok(executor_response);
+        }
         if let Some(executor_response) =
             maybe_execute_via_executor_stream(&state, &parts, &trace_id, control_decision.as_ref())
                 .await?

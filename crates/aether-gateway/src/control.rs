@@ -206,9 +206,7 @@ pub(crate) async fn maybe_execute_via_control(
             _ if !is_files_route && !is_video_route => return Ok(None),
             _ => json!({}),
         }
-    } else if is_video_route && body_bytes.is_empty() {
-        json!({})
-    } else if is_files_route {
+    } else if (is_video_route && body_bytes.is_empty()) || is_files_route {
         json!({})
     } else {
         return Ok(None);

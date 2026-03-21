@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ExecutionTimeouts {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -18,19 +18,6 @@ pub struct ExecutionTimeouts {
     pub pool_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_ms: Option<u64>,
-}
-
-impl Default for ExecutionTimeouts {
-    fn default() -> Self {
-        Self {
-            connect_ms: None,
-            read_ms: None,
-            first_byte_ms: None,
-            write_ms: None,
-            pool_ms: None,
-            total_ms: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
