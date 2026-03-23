@@ -4,8 +4,7 @@ use super::*;
 async fn gateway_consults_control_api_for_ai_routes_and_propagates_decision_headers() {
     #[derive(Debug, Clone)]
     struct SeenControlRequest {
-        method: String,
-        path: String,
+        auth_endpoint_signature: String,
         query_string: String,
         trace_id: String,
     }
@@ -31,7 +30,7 @@ async fn gateway_consults_control_api_for_ai_routes_and_propagates_decision_head
 
     let upstream = Router::new()
         .route(
-            "/api/internal/gateway/resolve",
+            "/api/internal/gateway/auth-context",
             any(move |request: Request| {
                 let seen_control_inner = Arc::clone(&seen_control_clone);
                 async move {
@@ -41,13 +40,8 @@ async fn gateway_consults_control_api_for_ai_routes_and_propagates_decision_head
                         serde_json::from_slice(&raw_body).expect("control payload should parse");
                     *seen_control_inner.lock().expect("mutex should lock") =
                         Some(SeenControlRequest {
-                            method: payload
-                                .get("method")
-                                .and_then(|value| value.as_str())
-                                .unwrap_or_default()
-                                .to_string(),
-                            path: payload
-                                .get("path")
+                            auth_endpoint_signature: payload
+                                .get("auth_endpoint_signature")
                                 .and_then(|value| value.as_str())
                                 .unwrap_or_default()
                                 .to_string(),
@@ -64,20 +58,12 @@ async fn gateway_consults_control_api_for_ai_routes_and_propagates_decision_head
                                 .to_string(),
                         });
                     Json(json!({
-                        "action": "proxy_public",
-                        "route_class": "ai_public",
-                        "route_family": "openai",
-                        "route_kind": "chat",
-                        "auth_endpoint_signature": "openai:chat",
-                        "executor_candidate": true,
                         "auth_context": {
                             "user_id": "user-123",
                             "api_key_id": "key-123",
                             "balance_remaining": 42.5,
                             "access_allowed": true
-                        },
-                        "public_path": "/v1/chat/completions",
-                        "public_query_string": "stream=true"
+                        }
                     }))
                 }
             }),
@@ -193,8 +179,7 @@ async fn gateway_consults_control_api_for_ai_routes_and_propagates_decision_head
         .expect("mutex should lock")
         .clone()
         .expect("control request should be captured");
-    assert_eq!(seen_control_request.method, "POST");
-    assert_eq!(seen_control_request.path, "/v1/chat/completions");
+    assert_eq!(seen_control_request.auth_endpoint_signature, "openai:chat");
     assert_eq!(seen_control_request.query_string, "stream=true");
     assert_eq!(seen_control_request.trace_id, "trace-control-123");
 

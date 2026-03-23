@@ -7,13 +7,17 @@
 """
 
 import asyncio
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 import httpx
 
+from src.config.settings import config
 from src.core.api_format import get_extra_headers_from_endpoint
+from src.core.api_format.capabilities import BROWSER_FINGERPRINT_HEADERS
+from src.core.api_format.headers import build_adapter_headers_for_endpoint
 from src.core.logger import logger
 
 # 并发请求限制
@@ -206,6 +210,243 @@ def build_all_format_configs(
     return configs
 
 
+async def _build_models_proxy_snapshot(
+    proxy_config: dict[str, Any] | None,
+) -> Any:
+    from src.services.request.executor_plan import build_proxy_snapshot
+
+    return await build_proxy_snapshot(proxy_config, label="upstream model fetch")
+
+
+def _build_model_fetch_url(
+    api_format: str,
+    base_url: str,
+    api_key: str,
+    after_id: str | None = None,
+) -> str:
+    normalized_api_format = str(api_format or "").strip().lower()
+    base_url = str(base_url or "").rstrip("/")
+
+    if normalized_api_format.startswith("gemini:"):
+        if base_url.endswith("/v1beta"):
+            return f"{base_url}/models?key={api_key}"
+        return f"{base_url}/v1beta/models?key={api_key}"
+
+    if base_url.endswith("/v1"):
+        url = f"{base_url}/models"
+    else:
+        url = f"{base_url}/v1/models"
+
+    if normalized_api_format.startswith("claude:"):
+        if after_id:
+            return f"{url}?limit=100&after_id={after_id}"
+        return f"{url}?limit=100"
+
+    return url
+
+
+def _build_model_fetch_headers(
+    api_format: str,
+    api_key: str,
+    extra_headers: dict[str, str] | None,
+) -> dict[str, str]:
+    normalized_api_format = str(api_format or "").strip().lower()
+
+    if normalized_api_format == "openai:cli":
+        headers = {"User-Agent": config.internal_user_agent_openai_cli}
+        if extra_headers:
+            headers.update(extra_headers)
+        return build_adapter_headers_for_endpoint("openai:chat", api_key, headers)
+
+    if normalized_api_format == "openai:compact":
+        headers = {"User-Agent": config.internal_user_agent_openai_cli}
+        if extra_headers:
+            headers.update(extra_headers)
+        return build_adapter_headers_for_endpoint("openai:chat", api_key, headers)
+
+    if normalized_api_format == "claude:cli":
+        headers = {"User-Agent": config.internal_user_agent_claude_cli}
+        if extra_headers:
+            headers.update(extra_headers)
+        return build_adapter_headers_for_endpoint(normalized_api_format, api_key, headers)
+
+    if normalized_api_format == "claude:chat":
+        headers = build_adapter_headers_for_endpoint(normalized_api_format, api_key, extra_headers)
+        if "authorization" not in {str(k).lower() for k in headers}:
+            headers["Authorization"] = f"Bearer {api_key}"
+        return headers
+
+    if normalized_api_format == "gemini:cli":
+        headers = {
+            **BROWSER_FINGERPRINT_HEADERS,
+            "User-Agent": config.internal_user_agent_gemini_cli,
+        }
+        if extra_headers:
+            headers.update(extra_headers)
+        return headers
+
+    if normalized_api_format == "gemini:chat":
+        headers = {**BROWSER_FINGERPRINT_HEADERS}
+        if extra_headers:
+            headers.update(extra_headers)
+        return headers
+
+    return build_adapter_headers_for_endpoint(normalized_api_format, api_key, extra_headers)
+
+
+def _parse_model_fetch_response(
+    api_format: str,
+    payload: Any,
+) -> tuple[list[dict[str, Any]], bool, str | None]:
+    normalized_api_format = str(api_format or "").strip().lower()
+
+    if normalized_api_format.startswith("gemini:"):
+        if isinstance(payload, dict) and isinstance(payload.get("models"), list):
+            out: list[dict[str, Any]] = []
+            for model in payload["models"]:
+                if not isinstance(model, dict):
+                    continue
+                out.append(
+                    {
+                        "id": str(model.get("name", "")).replace("models/", ""),
+                        "owned_by": "google",
+                        "display_name": model.get("displayName", ""),
+                        "api_format": normalized_api_format,
+                    }
+                )
+            return out, False, None
+        return [], False, None
+
+    page_models: list[dict[str, Any]] = []
+    has_more = False
+    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+        page_models = [m for m in payload["data"] if isinstance(m, dict)]
+        has_more = bool(payload.get("has_more"))
+    elif isinstance(payload, list):
+        page_models = [m for m in payload if isinstance(m, dict)]
+
+    for model in page_models:
+        model.setdefault("api_format", normalized_api_format)
+
+    next_cursor = None
+    if normalized_api_format.startswith("claude:") and isinstance(payload, dict):
+        raw_last_id = payload.get("last_id")
+        if has_more and isinstance(raw_last_id, str) and raw_last_id.strip():
+            next_cursor = raw_last_id.strip()
+
+    return page_models, has_more, next_cursor
+
+
+def _extract_rust_error_message(result: Any) -> str:
+    payload = getattr(result, "response_json", None)
+    if isinstance(payload, dict):
+        err = payload.get("error")
+        if isinstance(err, dict):
+            message = str(err.get("message") or "").strip()
+            if message:
+                return message[:500]
+        message = str(payload.get("message") or "").strip()
+        if message:
+            return message[:500]
+        try:
+            return json.dumps(payload, ensure_ascii=False)[:500]
+        except Exception:
+            pass
+
+    body_bytes = getattr(result, "response_body_bytes", None)
+    if body_bytes:
+        try:
+            return body_bytes.decode("utf-8", errors="replace")[:500]
+        except Exception:
+            return "(binary body)"
+    return "(empty)"
+
+
+async def _try_rust_fetch_models_for_api_format(
+    *,
+    api_format: str,
+    base_url: str,
+    api_key: str,
+    extra_headers: dict[str, str] | None,
+    timeout: float,
+    proxy_config: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], str | None, bool] | None:
+    from src.services.request.executor_plan import (
+        ExecutionPlan,
+        ExecutionPlanBody,
+        ExecutionPlanTimeouts,
+    )
+    from src.services.request.rust_executor_client import (
+        RustExecutorClient,
+        RustExecutorClientError,
+    )
+
+    if config.executor_backend != "rust":
+        return None
+
+    try:
+        proxy_snapshot = await _build_models_proxy_snapshot(proxy_config)
+        headers = _build_model_fetch_headers(api_format, api_key, extra_headers)
+        models: list[dict[str, Any]] = []
+        next_cursor: str | None = None
+        seen_ids: set[str] = set()
+
+        for _ in range(20):
+            url = _build_model_fetch_url(api_format, base_url, api_key, next_cursor)
+            result = await RustExecutorClient().execute_sync_json(
+                ExecutionPlan(
+                    request_id=f"model-fetch:{api_format}:{next_cursor or 'root'}",
+                    candidate_id=None,
+                    provider_name=str(api_format.split(":", 1)[0] or "unknown"),
+                    provider_id="",
+                    endpoint_id="",
+                    key_id="",
+                    method="GET",
+                    url=url,
+                    headers=dict(headers),
+                    body=ExecutionPlanBody(),
+                    stream=False,
+                    provider_api_format=api_format,
+                    client_api_format=api_format,
+                    model_name="models",
+                    proxy=proxy_snapshot,
+                    timeouts=ExecutionPlanTimeouts(
+                        connect_ms=min(int(timeout * 1000), 30_000),
+                        read_ms=int(timeout * 1000),
+                        write_ms=int(timeout * 1000),
+                        pool_ms=min(int(timeout * 1000), 30_000),
+                        total_ms=int(timeout * 1000),
+                    ),
+                )
+            )
+
+            if result.status_code != 200:
+                error_body = _extract_rust_error_message(result)
+                return [], f"HTTP {result.status_code}: {error_body}", False
+
+            payload = result.response_json
+            page_models, has_more, next_after_id = _parse_model_fetch_response(api_format, payload)
+            for model in page_models:
+                model_id = model.get("id")
+                if isinstance(model_id, str) and model_id and model_id in seen_ids:
+                    continue
+                if isinstance(model_id, str) and model_id:
+                    seen_ids.add(model_id)
+                models.append(model)
+
+            if not has_more or not next_after_id or next_after_id == next_cursor:
+                return models, None, True
+            next_cursor = next_after_id
+
+        return models, None, True
+    except (RustExecutorClientError, httpx.HTTPError, json.JSONDecodeError) as exc:
+        logger.warning("Rust model fetch fallback for {}: {}", api_format, exc)
+        return None
+    except Exception as exc:
+        logger.warning("Rust model fetch unexpected fallback for {}: {}", api_format, exc)
+        return None
+
+
 async def fetch_models_from_endpoints(
     endpoint_configs: list[dict],
     timeout: float = 30.0,
@@ -240,22 +481,33 @@ async def fetch_models_from_endpoints(
 
         try:
             async with semaphore:
-                from src.core.api_format.capabilities import fetch_models_for_api_format
-
-                models, error = await fetch_models_for_api_format(
-                    client,
+                rust_result = await _try_rust_fetch_models_for_api_format(
                     api_format=api_format,
                     base_url=base_url,
                     api_key=api_key_value,
                     extra_headers=extra_headers,
+                    timeout=timeout,
+                    proxy_config=proxy_config,
                 )
+                if rust_result is not None:
+                    models, error, success = rust_result
+                else:
+                    from src.core.api_format.capabilities import fetch_models_for_api_format
+
+                    models, error = await fetch_models_for_api_format(
+                        client,
+                        api_format=api_format,
+                        base_url=base_url,
+                        api_key=api_key_value,
+                        extra_headers=extra_headers,
+                    )
+                    success = error is None
 
             for m in models:
                 if "api_format" not in m:
                     m["api_format"] = api_format
 
             # 即使返回空列表，只要没有错误也算成功
-            success = error is None
             return models, error, success
         except httpx.TimeoutException:
             logger.warning("获取 {} 模型超时", api_format)

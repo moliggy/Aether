@@ -15,6 +15,7 @@ from src.clients.http_client import HTTPClientPool
 from src.core.logger import logger
 from src.services.provider.adapters.kiro.headers import build_kiro_ide_tag
 from src.services.provider.adapters.kiro.models.credentials import KiroAuthConfig
+from src.services.provider.adapters.kiro.rust_http import execute_kiro_rust_http_request
 
 IDC_AMZ_USER_AGENT = (
     "aws-sdk-js/3.738.0 ua/2.1 os/other lang/js md/browser#unknown_unknown "
@@ -141,13 +142,24 @@ async def refresh_social_token(
         "Accept-Encoding": "gzip, compress, deflate, br",
     }
 
-    client = await HTTPClientPool.get_proxy_client(proxy_config=proxy_config)
-    resp = await client.post(
-        url,
+    resp = await execute_kiro_rust_http_request(
+        method="POST",
+        url=url,
         headers=headers,
-        json=body,
-        timeout=httpx.Timeout(timeout_seconds),
+        body=body,
+        proxy_config=proxy_config,
+        request_id=f"kiro-social-refresh:{region}:{machine_id}",
+        provider_api_format="kiro:social_refresh",
+        content_type="application/json",
     )
+    if resp is None:
+        client = await HTTPClientPool.get_proxy_client(proxy_config=proxy_config)
+        resp = await client.post(
+            url,
+            headers=headers,
+            json=body,
+            timeout=httpx.Timeout(timeout_seconds),
+        )
 
     if resp.status_code < 200 or resp.status_code >= 300:
         body_text = (resp.text or "").strip()[:500]
@@ -234,13 +246,24 @@ async def refresh_idc_token(
         "Accept": "*/*",
     }
 
-    client = await HTTPClientPool.get_proxy_client(proxy_config=proxy_config)
-    resp = await client.post(
-        url,
+    resp = await execute_kiro_rust_http_request(
+        method="POST",
+        url=url,
         headers=headers,
-        json=body,
-        timeout=httpx.Timeout(timeout_seconds),
+        body=body,
+        proxy_config=proxy_config,
+        request_id=f"kiro-idc-refresh:{region}",
+        provider_api_format="kiro:idc_refresh",
+        content_type="application/json",
     )
+    if resp is None:
+        client = await HTTPClientPool.get_proxy_client(proxy_config=proxy_config)
+        resp = await client.post(
+            url,
+            headers=headers,
+            json=body,
+            timeout=httpx.Timeout(timeout_seconds),
+        )
 
     if resp.status_code < 200 or resp.status_code >= 300:
         body_text = (resp.text or "").strip()[:500]

@@ -11,6 +11,9 @@ from src.services.provider.adapters.gemini_cli.constants import (
     PROD_BASE_URL,
     get_v1internal_extra_headers,
 )
+from src.services.provider.adapters.gemini_cli.rust_http import (
+    execute_gemini_cli_rust_http_request,
+)
 
 _CODE_ASSIST_METADATA = {
     "ideType": "ANTIGRAVITY",
@@ -86,18 +89,32 @@ async def load_code_assist(
     if not access_token:
         raise ValueError("missing access_token")
 
-    client = await HTTPClientPool.get_proxy_client(proxy_config)
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
         **get_v1internal_extra_headers(),
     }
-    resp = await client.post(
-        f"{PROD_BASE_URL.rstrip('/')}/v1internal:loadCodeAssist",
-        json={"metadata": _CODE_ASSIST_METADATA},
+    url = f"{PROD_BASE_URL.rstrip('/')}/v1internal:loadCodeAssist"
+    body = {"metadata": _CODE_ASSIST_METADATA}
+    resp = await execute_gemini_cli_rust_http_request(
+        method="POST",
+        url=url,
         headers=headers,
-        timeout=timeout_seconds,
+        body=body,
+        proxy_config=proxy_config,
+        request_id="gemini-cli:load-code-assist",
+        provider_api_format="gemini_cli:load_code_assist",
+        timeout_seconds=timeout_seconds,
+        content_type="application/json",
     )
+    if resp is None:
+        client = await HTTPClientPool.get_proxy_client(proxy_config)
+        resp = await client.post(
+            url,
+            json=body,
+            headers=headers,
+            timeout=timeout_seconds,
+        )
     if 200 <= resp.status_code < 300:
         data = resp.json()
         return data if isinstance(data, dict) else {}
@@ -121,7 +138,6 @@ async def onboard_user(
     if not tier_id:
         raise ValueError("missing tier_id")
 
-    client = await HTTPClientPool.get_proxy_client(proxy_config)
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
@@ -134,7 +150,20 @@ async def onboard_user(
     url = f"{PROD_BASE_URL.rstrip('/')}/v1internal:onboardUser"
 
     for attempt in range(1, max_attempts + 1):
-        resp = await client.post(url, json=body, headers=headers, timeout=timeout_seconds)
+        resp = await execute_gemini_cli_rust_http_request(
+            method="POST",
+            url=url,
+            headers=headers,
+            body=body,
+            proxy_config=proxy_config,
+            request_id=f"gemini-cli:onboard-user:{tier_id}:{attempt}",
+            provider_api_format="gemini_cli:onboard_user",
+            timeout_seconds=timeout_seconds,
+            content_type="application/json",
+        )
+        if resp is None:
+            client = await HTTPClientPool.get_proxy_client(proxy_config)
+            resp = await client.post(url, json=body, headers=headers, timeout=timeout_seconds)
         if not (200 <= resp.status_code < 300):
             raise RuntimeError(
                 f"onboardUser failed: status={resp.status_code} body={resp.text[:200] if resp.text else ''}"

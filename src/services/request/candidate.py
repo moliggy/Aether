@@ -28,6 +28,7 @@ class RequestCandidateService:
         db: Session,
         request_id: str,
         candidate_index: int,
+        candidate_id: str | None = None,
         retry_index: int = 0,  # 新增：重试序号
         user_id: str | None = None,
         api_key_id: str | None = None,
@@ -64,7 +65,7 @@ class RequestCandidateService:
             required_capabilities: 请求需要的能力标签
         """
         candidate = RequestCandidate(
-            id=str(uuid.uuid4()),
+            id=str(candidate_id or uuid.uuid4()),
             request_id=request_id,
             candidate_index=candidate_index,
             retry_index=retry_index,  # 新增

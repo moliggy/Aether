@@ -45,6 +45,7 @@ QUIET_POLLING_PATHS: set[str] = {
 }
 
 TRUSTED_GATEWAY_HEADER = "x-aether-gateway"
+TRUSTED_GATEWAY_EXECUTION_PATH_HEADER = "x-aether-execution-path"
 TRUSTED_AUTH_USER_ID_HEADER = "x-aether-auth-user-id"
 TRUSTED_AUTH_API_KEY_ID_HEADER = "x-aether-auth-api-key-id"
 TRUSTED_AUTH_BALANCE_HEADER = "x-aether-auth-balance-remaining"
@@ -122,13 +123,15 @@ class ApiRequestPipeline:
 
         # 高频轮询端点抑制 debug 日志
         is_quiet = http_request.url.path in QUIET_POLLING_PATHS
+        gateway_execution_path = self._capture_trusted_gateway_execution_path(http_request)
         if not is_quiet:
             logger.debug(
-                "[Pipeline] {} {} | adapter={}, mode={}",
+                "[Pipeline] {} {} | adapter={}, mode={}, gateway_path={}",
                 http_request.method,
                 http_request.url.path,
                 adapter.__class__.__name__,
                 mode,
+                gateway_execution_path or "-",
             )
         auth_start = PerfRecorder.start(force=perf_sampled)
         try:
@@ -411,6 +414,7 @@ class ApiRequestPipeline:
     ) -> tuple[User, ApiKey] | None:
         if not self._is_trusted_gateway_request(request):
             return None
+        self._capture_trusted_gateway_execution_path(request)
 
         user_id = str(request.headers.get(TRUSTED_AUTH_USER_ID_HEADER) or "").strip()
         api_key_id = str(request.headers.get(TRUSTED_AUTH_API_KEY_ID_HEADER) or "").strip()
@@ -483,6 +487,19 @@ class ApiRequestPipeline:
         if raw in {"0", "false", "no", "off"}:
             return False
         return default
+
+    def _capture_trusted_gateway_execution_path(self, request: Request) -> str | None:
+        if not self._is_trusted_gateway_request(request):
+            return None
+
+        execution_path = str(
+            request.headers.get(TRUSTED_GATEWAY_EXECUTION_PATH_HEADER) or ""
+        ).strip()
+        if not execution_path:
+            return None
+
+        request.state.gateway_execution_path = execution_path
+        return execution_path
 
     async def _try_token_prefix_auth(
         self, token: str, request: Request, db: Session

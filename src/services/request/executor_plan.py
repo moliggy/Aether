@@ -16,11 +16,7 @@ from typing import Any
 def _drop_none(value: Any) -> Any:
     """递归移除 None 字段，便于序列化为紧凑 payload。"""
     if isinstance(value, dict):
-        return {
-            key: _drop_none(item)
-            for key, item in value.items()
-            if item is not None
-        }
+        return {key: _drop_none(item) for key, item in value.items() if item is not None}
     if isinstance(value, list):
         return [_drop_none(item) for item in value]
     return value
@@ -63,7 +59,11 @@ class ExecutionProxySnapshot:
     ) -> ExecutionProxySnapshot | None:
         if not proxy_info and not proxy_url:
             return None
-        mode = mode_override or str(proxy_info.get("type") or proxy_info.get("mode") or "").strip() or None
+        mode = (
+            mode_override
+            or str(proxy_info.get("type") or proxy_info.get("mode") or "").strip()
+            or None
+        )
         if not mode and proxy_url:
             mode = proxy_url.split("://", 1)[0].strip().lower() or None
         return cls(
@@ -106,12 +106,10 @@ class ExecutionPlan:
 
 def is_remote_proxy_supported(proxy: ExecutionProxySnapshot | None) -> bool:
     proxy_mode = str((proxy.mode if proxy else "") or "").strip().lower()
-    return proxy is None or (
-        str(proxy.url or "").strip() != ""
-        and proxy_mode not in {"tunnel"}
-    ) or (
-        proxy_mode == "tunnel"
-        and str(proxy.node_id or "").strip() != ""
+    return (
+        proxy is None
+        or (str(proxy.url or "").strip() != "" and proxy_mode not in {"tunnel"})
+        or (proxy_mode == "tunnel" and str(proxy.node_id or "").strip() != "")
     )
 
 
@@ -141,9 +139,7 @@ def build_execution_plan_body(
         return ExecutionPlanBody(json_body=payload)
 
     if isinstance(payload, (bytes, bytearray, memoryview)):
-        return ExecutionPlanBody(
-            body_bytes_b64=base64.b64encode(bytes(payload)).decode("ascii")
-        )
+        return ExecutionPlanBody(body_bytes_b64=base64.b64encode(bytes(payload)).decode("ascii"))
 
     if isinstance(payload, str):
         return ExecutionPlanBody(
@@ -181,3 +177,40 @@ class PreparedExecutionPlan:
     @property
     def remote_eligible(self) -> bool:
         return is_remote_contract_eligible(self.contract)
+
+
+async def build_proxy_snapshot(
+    proxy_config: dict[str, Any] | None,
+    *,
+    label: str = "adapter",
+) -> ExecutionProxySnapshot | None:
+    if not proxy_config:
+        return None
+
+    try:
+        from src.services.proxy_node.resolver import (
+            build_proxy_url_async,
+            resolve_delegate_config_async,
+            resolve_proxy_info_async,
+        )
+
+        delegate_cfg = await resolve_delegate_config_async(proxy_config)
+        proxy_url: str | None = None
+        if proxy_config and not (delegate_cfg and delegate_cfg.get("tunnel")):
+            proxy_url = await build_proxy_url_async(proxy_config)
+        proxy_info = await resolve_proxy_info_async(proxy_config)
+        return ExecutionProxySnapshot.from_proxy_info(
+            proxy_info,
+            proxy_url=proxy_url,
+            mode_override="tunnel" if delegate_cfg and delegate_cfg.get("tunnel") else None,
+            node_id_override=(
+                str(delegate_cfg.get("node_id") or "").strip() or None
+                if delegate_cfg and delegate_cfg.get("tunnel")
+                else None
+            ),
+        )
+    except Exception as exc:
+        from src.core.logger import logger
+
+        logger.warning("Build {} proxy snapshot failed: {}", label, exc)
+        return None

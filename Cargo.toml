@@ -30,6 +30,7 @@ tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync",
 tokio-util = { version = "0.7", features = ["codec", "io-util"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 webpki-roots = "0.26"
+url = "2"
 
 [profile.release]
 lto = true

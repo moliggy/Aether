@@ -16,6 +16,9 @@ from src.services.usage.telemetry import MessageTelemetry
 
 
 class TelemetryWriter(ABC):
+    def supports_background_submission(self) -> bool:
+        return False
+
     @abstractmethod
     async def record_success(self, **kwargs: Any) -> None:
         raise NotImplementedError
@@ -92,6 +95,9 @@ class QueueTelemetryWriter(TelemetryWriter):
     @property
     def include_bodies(self) -> bool:
         return self.log_level == "full"
+
+    def supports_background_submission(self) -> bool:
+        return True
 
     async def record_success(self, **kwargs: Any) -> None:
         await self._publish_event(UsageEventType.COMPLETED, **kwargs)

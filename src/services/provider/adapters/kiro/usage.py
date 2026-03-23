@@ -22,6 +22,7 @@ from src.services.provider.adapters.kiro.models.usage_limits import (
     calculate_total_usage_limit,
 )
 from src.services.provider.adapters.kiro.request import get_profile_arn_for_payload
+from src.services.provider.adapters.kiro.rust_http import execute_kiro_rust_http_request
 from src.services.provider.adapters.kiro.token_manager import (
     generate_machine_id,
     is_token_expired,
@@ -111,8 +112,18 @@ async def fetch_kiro_usage_limits(
         "Connection": "close",
     }
 
-    client = await HTTPClientPool.get_proxy_client(proxy_config=proxy_config)
-    response = await client.get(url, headers=headers, timeout=httpx.Timeout(30.0))
+    response = await execute_kiro_rust_http_request(
+        method="GET",
+        url=url,
+        headers=headers,
+        body=None,
+        proxy_config=proxy_config,
+        request_id=f"kiro-usage:{region}:{machine_id}",
+        provider_api_format="kiro:usage",
+    )
+    if response is None:
+        client = await HTTPClientPool.get_proxy_client(proxy_config=proxy_config)
+        response = await client.get(url, headers=headers, timeout=httpx.Timeout(30.0))
 
     if response.status_code != 200:
         response_text = (response.text or "").strip()

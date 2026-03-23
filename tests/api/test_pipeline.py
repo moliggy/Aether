@@ -536,6 +536,7 @@ class TestPipelineAuthentication:
         mock_request = MagicMock()
         mock_request.headers = {
             "x-aether-gateway": "rust-phase3b",
+            "x-aether-execution-path": "public_proxy_after_executor_miss",
             "x-aether-auth-user-id": "user-123",
             "x-aether-auth-api-key-id": "key-123",
             "x-aether-auth-balance-remaining": "42.5",
@@ -565,7 +566,9 @@ class TestPipelineAuthentication:
         mock_db.query.side_effect = [user_query, api_key_query]
 
         mock_adapter = MagicMock()
-        mock_adapter.extract_api_key.side_effect = AssertionError("trusted auth should short-circuit")
+        mock_adapter.extract_api_key.side_effect = AssertionError(
+            "trusted auth should short-circuit"
+        )
 
         with patch.object(
             pipeline.auth_service,
@@ -580,6 +583,7 @@ class TestPipelineAuthentication:
         assert mock_request.state.user_id == "user-123"
         assert mock_request.state.api_key_id == "key-123"
         assert mock_request.state.prefetched_balance_remaining == 42.5
+        assert mock_request.state.gateway_execution_path == "public_proxy_after_executor_miss"
 
     @pytest.mark.asyncio
     async def test_authenticate_client_trusted_gateway_balance_denied(
@@ -617,7 +621,9 @@ class TestPipelineAuthentication:
         mock_db.query.side_effect = [user_query, api_key_query]
 
         mock_adapter = MagicMock()
-        mock_adapter.extract_api_key.side_effect = AssertionError("trusted auth should short-circuit")
+        mock_adapter.extract_api_key.side_effect = AssertionError(
+            "trusted auth should short-circuit"
+        )
 
         from src.core.exceptions import BalanceInsufficientException
 

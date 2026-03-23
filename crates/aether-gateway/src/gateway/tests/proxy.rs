@@ -7,6 +7,7 @@ async fn gateway_proxies_method_path_body_and_generates_trace_id() {
         method: String,
         path: String,
         trace_id: String,
+        execution_path: String,
         host: String,
         forwarded_for: String,
         body: String,
@@ -34,6 +35,12 @@ async fn gateway_proxies_method_path_body_and_generates_trace_id() {
                         trace_id: parts
                             .headers
                             .get(TRACE_ID_HEADER)
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or_default()
+                            .to_string(),
+                        execution_path: parts
+                            .headers
+                            .get(EXECUTION_PATH_HEADER)
                             .and_then(|value| value.to_str().ok())
                             .unwrap_or_default()
                             .to_string(),
@@ -81,6 +88,13 @@ async fn gateway_proxies_method_path_body_and_generates_trace_id() {
             .and_then(|value| value.to_str().ok()),
         Some("python-upstream")
     );
+    assert_eq!(
+        response
+            .headers()
+            .get(EXECUTION_PATH_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some(EXECUTION_PATH_PUBLIC_PROXY_PASSTHROUGH)
+    );
 
     let response_trace_id = response
         .headers()
@@ -98,6 +112,10 @@ async fn gateway_proxies_method_path_body_and_generates_trace_id() {
     assert_eq!(seen_request.method, "POST");
     assert_eq!(seen_request.path, "/v1/chat/completions?stream=true");
     assert_eq!(seen_request.body, "{\"hello\":\"world\"}");
+    assert_eq!(
+        seen_request.execution_path,
+        EXECUTION_PATH_PUBLIC_PROXY_PASSTHROUGH
+    );
     assert_eq!(seen_request.host, "api.example.com");
     assert_eq!(seen_request.forwarded_for, "127.0.0.1");
     assert_eq!(seen_request.trace_id, response_trace_id);

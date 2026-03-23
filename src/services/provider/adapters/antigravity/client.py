@@ -19,6 +19,9 @@ from src.services.provider.adapters.antigravity.constants import (
     parse_version_string,
     update_user_agent_version,
 )
+from src.services.provider.adapters.antigravity.rust_http import (
+    execute_antigravity_rust_http_request,
+)
 from src.services.provider.adapters.antigravity.url_availability import url_availability
 
 # loadCodeAssist 请求体 metadata
@@ -238,8 +241,6 @@ async def load_code_assist(
     if not access_token:
         raise ValueError("missing access_token")
 
-    client = await HTTPClientPool.get_proxy_client(proxy_config)
-
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
@@ -255,12 +256,26 @@ async def load_code_assist(
 
     for base_url in urls:
         try:
-            resp = await client.post(
-                f"{base_url}/v1internal:loadCodeAssist",
-                json=body,
+            url = f"{base_url}/v1internal:loadCodeAssist"
+            resp = await execute_antigravity_rust_http_request(
+                method="POST",
+                url=url,
                 headers=headers,
-                timeout=timeout_seconds,
+                body=body,
+                proxy_config=proxy_config,
+                request_id=f"antigravity:load-code-assist:{base_url}",
+                provider_api_format="antigravity:load_code_assist",
+                timeout_seconds=timeout_seconds,
+                content_type="application/json",
             )
+            if resp is None:
+                client = await HTTPClientPool.get_proxy_client(proxy_config)
+                resp = await client.post(
+                    url,
+                    json=body,
+                    headers=headers,
+                    timeout=timeout_seconds,
+                )
             if 200 <= resp.status_code < 300:
                 url_availability.mark_success(base_url)
                 data = resp.json()
@@ -335,8 +350,6 @@ async def onboard_user(
     if not access_token:
         raise ValueError("missing access_token")
 
-    client = await HTTPClientPool.get_proxy_client(proxy_config)
-
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
@@ -357,12 +370,26 @@ async def onboard_user(
 
     for attempt in range(1, max_attempts + 1):
         try:
-            resp = await client.post(
-                f"{base_url}/v1internal:onboardUser",
-                json=body,
+            url = f"{base_url}/v1internal:onboardUser"
+            resp = await execute_antigravity_rust_http_request(
+                method="POST",
+                url=url,
                 headers=headers,
-                timeout=timeout_seconds,
+                body=body,
+                proxy_config=proxy_config,
+                request_id=f"antigravity:onboard-user:{tier_id}:{attempt}",
+                provider_api_format="antigravity:onboard_user",
+                timeout_seconds=timeout_seconds,
+                content_type="application/json",
             )
+            if resp is None:
+                client = await HTTPClientPool.get_proxy_client(proxy_config)
+                resp = await client.post(
+                    url,
+                    json=body,
+                    headers=headers,
+                    timeout=timeout_seconds,
+                )
             if resp.status_code < 200 or resp.status_code >= 300:
                 # 标记可用性
                 if _should_fallback_status(resp.status_code):
@@ -443,8 +470,6 @@ async def fetch_available_models(
     if not project_id:
         raise ValueError("missing project_id")
 
-    client = await HTTPClientPool.get_proxy_client(proxy_config)
-
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
@@ -461,12 +486,26 @@ async def fetch_available_models(
 
     for base_url in urls:
         try:
-            resp = await client.post(
-                f"{base_url}/v1internal:fetchAvailableModels",
-                json=body,
+            url = f"{base_url}/v1internal:fetchAvailableModels"
+            resp = await execute_antigravity_rust_http_request(
+                method="POST",
+                url=url,
                 headers=headers,
-                timeout=timeout_seconds,
+                body=body,
+                proxy_config=proxy_config,
+                request_id=f"antigravity:fetch-available-models:{base_url}",
+                provider_api_format="antigravity:fetch_available_models",
+                timeout_seconds=timeout_seconds,
+                content_type="application/json",
             )
+            if resp is None:
+                client = await HTTPClientPool.get_proxy_client(proxy_config)
+                resp = await client.post(
+                    url,
+                    json=body,
+                    headers=headers,
+                    timeout=timeout_seconds,
+                )
             if 200 <= resp.status_code < 300:
                 url_availability.mark_success(base_url)
                 data = resp.json()

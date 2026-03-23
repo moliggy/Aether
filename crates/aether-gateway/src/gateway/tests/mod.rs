@@ -16,7 +16,10 @@ mod proxy;
 mod video;
 
 pub(super) use super::constants::*;
-pub(super) use super::{build_router, build_router_with_control, build_router_with_endpoints};
+pub(super) use super::{
+    build_router, build_router_with_control, build_router_with_endpoints, build_router_with_state,
+    AppState, VideoTaskTruthSourceMode,
+};
 
 pub(super) async fn start_server(app: Router) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -32,4 +35,19 @@ pub(super) async fn start_server(app: Router) -> (String, tokio::task::JoinHandl
         .expect("server should run");
     });
     (format!("http://{addr}"), handle)
+}
+
+pub(super) async fn wait_until(timeout_ms: u64, mut predicate: impl FnMut() -> bool) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    loop {
+        if predicate() {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "condition not met within {}ms",
+            timeout_ms
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
 }

@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use axum::body::{to_bytes, Body};
 use axum::extract::{ConnectInfo, Request, State};
+use axum::http::header::{HeaderName, HeaderValue};
 use axum::http::Response;
 use axum::response::IntoResponse;
 use axum::Json;
@@ -15,7 +16,8 @@ use crate::gateway::headers::{
 };
 use crate::gateway::{
     build_client_response, maybe_execute_via_control, maybe_execute_via_executor_stream,
-    maybe_execute_via_executor_sync, resolve_control_route, AppState, GatewayError,
+    maybe_execute_via_executor_sync, resolve_control_route, AppState, GatewayControlDecision,
+    GatewayError,
 };
 
 pub(crate) async fn health(State(state): State<AppState>) -> impl IntoResponse {
@@ -128,6 +130,12 @@ pub(crate) async fn proxy_request(
 
     upstream_request = upstream_request.header(GATEWAY_HEADER, "rust-phase3b");
 
+    let allow_control_execute_fallback = should_try_control_execute
+        && (state.executor_base_url.is_none()
+            || header_value_str(&parts.headers, CONTROL_EXECUTE_FALLBACK_HEADER)
+                .map(|value| value.eq_ignore_ascii_case("true"))
+                .unwrap_or(false));
+
     let upstream_response = if should_try_control_execute {
         let buffered_body = to_bytes(body, usize::MAX)
             .await
@@ -143,7 +151,16 @@ pub(crate) async fn proxy_request(
             )
             .await?
             {
-                return Ok(executor_response);
+                return Ok(finalize_gateway_response(
+                    executor_response,
+                    &trace_id,
+                    &remote_addr,
+                    &method,
+                    path_and_query,
+                    control_decision.as_ref(),
+                    EXECUTION_PATH_EXECUTOR_STREAM,
+                    &started_at,
+                ));
             }
         }
         if let Some(executor_response) = maybe_execute_via_executor_sync(
@@ -155,7 +172,16 @@ pub(crate) async fn proxy_request(
         )
         .await?
         {
-            return Ok(executor_response);
+            return Ok(finalize_gateway_response(
+                executor_response,
+                &trace_id,
+                &remote_addr,
+                &method,
+                path_and_query,
+                control_decision.as_ref(),
+                EXECUTION_PATH_EXECUTOR_SYNC,
+                &started_at,
+            ));
         }
         if parts.method != http::Method::POST {
             if let Some(executor_response) = maybe_execute_via_executor_stream(
@@ -167,20 +193,48 @@ pub(crate) async fn proxy_request(
             )
             .await?
             {
-                return Ok(executor_response);
+                return Ok(finalize_gateway_response(
+                    executor_response,
+                    &trace_id,
+                    &remote_addr,
+                    &method,
+                    path_and_query,
+                    control_decision.as_ref(),
+                    EXECUTION_PATH_EXECUTOR_STREAM,
+                    &started_at,
+                ));
             }
         }
-        if let Some(control_response) = maybe_execute_via_control(
-            &state,
-            &parts,
-            buffered_body.clone(),
-            &trace_id,
-            control_decision.as_ref(),
-        )
-        .await?
-        {
-            return Ok(control_response);
+        if allow_control_execute_fallback {
+            if let Some(control_response) = maybe_execute_via_control(
+                &state,
+                &parts,
+                buffered_body.clone(),
+                &trace_id,
+                control_decision.as_ref(),
+            )
+            .await?
+            {
+                return Ok(finalize_gateway_response(
+                    control_response,
+                    &trace_id,
+                    &remote_addr,
+                    &method,
+                    path_and_query,
+                    control_decision.as_ref(),
+                    if stream_request {
+                        EXECUTION_PATH_CONTROL_EXECUTE_STREAM
+                    } else {
+                        EXECUTION_PATH_CONTROL_EXECUTE_SYNC
+                    },
+                    &started_at,
+                ));
+            }
         }
+        upstream_request = upstream_request.header(
+            EXECUTION_PATH_HEADER,
+            EXECUTION_PATH_PUBLIC_PROXY_AFTER_EXECUTOR_MISS,
+        );
         upstream_request
             .body(buffered_body)
             .send()
@@ -190,6 +244,10 @@ pub(crate) async fn proxy_request(
                 message: err.to_string(),
             })?
     } else {
+        upstream_request = upstream_request.header(
+            EXECUTION_PATH_HEADER,
+            EXECUTION_PATH_PUBLIC_PROXY_PASSTHROUGH,
+        );
         let request_body_stream = body
             .into_data_stream()
             .map_err(|err| std::io::Error::other(err.to_string()));
@@ -204,24 +262,20 @@ pub(crate) async fn proxy_request(
     };
 
     let response = build_client_response(upstream_response, &trace_id, control_decision.as_ref())?;
-    let response_status = response.status();
-
-    let elapsed_ms = started_at.elapsed().as_millis() as u64;
-    info!(
-        trace_id = %trace_id,
-        remote_addr = %remote_addr,
-        method = %method,
-        path = %path_and_query,
-        route_class = control_decision
-            .as_ref()
-            .and_then(|decision| decision.route_class.as_deref())
-            .unwrap_or("passthrough"),
-        status = response_status.as_u16(),
-        elapsed_ms,
-        "gateway proxied request"
-    );
-
-    Ok(response)
+    Ok(finalize_gateway_response(
+        response,
+        &trace_id,
+        &remote_addr,
+        &method,
+        path_and_query,
+        control_decision.as_ref(),
+        if should_try_control_execute {
+            EXECUTION_PATH_PUBLIC_PROXY_AFTER_EXECUTOR_MISS
+        } else {
+            EXECUTION_PATH_PUBLIC_PROXY_PASSTHROUGH
+        },
+        &started_at,
+    ))
 }
 
 fn request_wants_stream(parts: &http::request::Parts, body: &axum::body::Bytes) -> bool {
@@ -235,4 +289,37 @@ fn request_wants_stream(parts: &http::request::Parts, body: &axum::body::Bytes) 
         .ok()
         .and_then(|value| value.get("stream").and_then(|stream| stream.as_bool()))
         .unwrap_or(false)
+}
+
+fn finalize_gateway_response(
+    mut response: Response<Body>,
+    trace_id: &str,
+    remote_addr: &std::net::SocketAddr,
+    method: &http::Method,
+    path_and_query: &str,
+    control_decision: Option<&GatewayControlDecision>,
+    execution_path: &'static str,
+    started_at: &Instant,
+) -> Response<Body> {
+    response.headers_mut().insert(
+        HeaderName::from_static(EXECUTION_PATH_HEADER),
+        HeaderValue::from_static(execution_path),
+    );
+
+    let elapsed_ms = started_at.elapsed().as_millis() as u64;
+    info!(
+        trace_id = %trace_id,
+        remote_addr = %remote_addr,
+        method = %method,
+        path = %path_and_query,
+        route_class = control_decision
+            .and_then(|decision| decision.route_class.as_deref())
+            .unwrap_or("passthrough"),
+        execution_path,
+        status = response.status().as_u16(),
+        elapsed_ms,
+        "gateway completed request"
+    );
+
+    response
 }

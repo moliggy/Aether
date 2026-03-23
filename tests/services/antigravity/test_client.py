@@ -6,9 +6,12 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+import src.services.provider.adapters.antigravity.rust_http as antigravity_rust_http_mod
+import src.services.request.rust_executor_client as rust_client_mod
 from src.services.provider.adapters.antigravity.client import (
     fetch_available_models,
     load_code_assist,
+    onboard_user,
     parse_retry_delay,
 )
 from src.services.provider.adapters.antigravity.constants import (
@@ -16,6 +19,7 @@ from src.services.provider.adapters.antigravity.constants import (
     PROD_BASE_URL,
     SANDBOX_BASE_URL,
 )
+from src.services.request.rust_executor_client import RustExecutorSyncResult
 
 # ---------------------------------------------------------------------------
 # load_code_assist
@@ -78,6 +82,39 @@ async def test_load_code_assist_requires_token() -> None:
         await load_code_assist("", proxy_config=None)
 
 
+@pytest.mark.asyncio
+async def test_load_code_assist_uses_rust_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(antigravity_rust_http_mod.config, "executor_backend", "rust")
+    monkeypatch.setattr(
+        rust_client_mod.RustExecutorClient,
+        "execute_sync_json",
+        AsyncMock(
+            return_value=RustExecutorSyncResult(
+                status_code=200,
+                headers={"content-type": "application/json"},
+                response_json={"cloudaicompanionProject": "project-rust"},
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "src.clients.http_client.HTTPClientPool.get_proxy_client",
+        AsyncMock(side_effect=AssertionError("python fallback should not run")),
+    )
+    monkeypatch.setattr(
+        "src.services.provider.adapters.antigravity.client.url_availability.get_ordered_urls",
+        lambda prefer_daily=True: [SANDBOX_BASE_URL],
+    )
+
+    data = await load_code_assist("tok", proxy_config=None, timeout_seconds=1.0)
+
+    assert data["cloudaicompanionProject"] == "project-rust"
+    plan = rust_client_mod.RustExecutorClient.execute_sync_json.await_args.args[0]
+    assert plan.url == f"{SANDBOX_BASE_URL}/v1internal:loadCodeAssist"
+    assert plan.provider_api_format == "antigravity:load_code_assist"
+
+
 # ---------------------------------------------------------------------------
 # fetch_available_models
 # ---------------------------------------------------------------------------
@@ -131,6 +168,87 @@ async def test_fetch_available_models_falls_back_on_500() -> None:
 async def test_fetch_available_models_requires_project_id() -> None:
     with pytest.raises(ValueError):
         await fetch_available_models("tok", project_id="", proxy_config=None)
+
+
+@pytest.mark.asyncio
+async def test_fetch_available_models_uses_rust_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(antigravity_rust_http_mod.config, "executor_backend", "rust")
+    monkeypatch.setattr(
+        rust_client_mod.RustExecutorClient,
+        "execute_sync_json",
+        AsyncMock(
+            return_value=RustExecutorSyncResult(
+                status_code=200,
+                headers={"content-type": "application/json"},
+                response_json={"models": {"claude-sonnet-4": {"displayName": "Claude Sonnet 4"}}},
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "src.clients.http_client.HTTPClientPool.get_proxy_client",
+        AsyncMock(side_effect=AssertionError("python fallback should not run")),
+    )
+    monkeypatch.setattr(
+        "src.services.provider.adapters.antigravity.client.url_availability.get_ordered_urls",
+        lambda prefer_daily=True: [DAILY_BASE_URL],
+    )
+
+    data = await fetch_available_models(
+        "tok",
+        project_id="project-1",
+        proxy_config=None,
+        timeout_seconds=1.0,
+    )
+
+    assert "models" in data
+    plan = rust_client_mod.RustExecutorClient.execute_sync_json.await_args.args[0]
+    assert plan.url == f"{DAILY_BASE_URL}/v1internal:fetchAvailableModels"
+    assert plan.provider_api_format == "antigravity:fetch_available_models"
+    assert plan.body.json_body == {"project": "project-1"}
+
+
+@pytest.mark.asyncio
+async def test_onboard_user_uses_rust_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(antigravity_rust_http_mod.config, "executor_backend", "rust")
+    monkeypatch.setattr(
+        rust_client_mod.RustExecutorClient,
+        "execute_sync_json",
+        AsyncMock(
+            return_value=RustExecutorSyncResult(
+                status_code=200,
+                headers={"content-type": "application/json"},
+                response_json={
+                    "done": True,
+                    "response": {"cloudaicompanionProject": {"id": "project-onboard"}},
+                },
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "src.clients.http_client.HTTPClientPool.get_proxy_client",
+        AsyncMock(side_effect=AssertionError("python fallback should not run")),
+    )
+    monkeypatch.setattr(
+        "src.services.provider.adapters.antigravity.client.url_availability.get_ordered_urls",
+        lambda prefer_daily=True: [PROD_BASE_URL],
+    )
+
+    project_id = await onboard_user(
+        "tok",
+        tier_id="LEGACY",
+        proxy_config=None,
+        timeout_seconds=1.0,
+        max_attempts=1,
+    )
+
+    assert project_id == "project-onboard"
+    plan = rust_client_mod.RustExecutorClient.execute_sync_json.await_args.args[0]
+    assert plan.url == f"{PROD_BASE_URL}/v1internal:onboardUser"
+    assert plan.provider_api_format == "antigravity:onboard_user"
 
 
 # ---------------------------------------------------------------------------
