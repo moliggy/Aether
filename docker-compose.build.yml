@@ -26,11 +26,13 @@ services:
   redis:
     image: redis:7-alpine
     container_name: aether-redis
-    command: redis-server --appendonly no --save "" --requirepass ${REDIS_PASSWORD}
+    command: redis-server --appendonly yes --appendfsync everysec --save 60 1000 --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
     ports:
       - "${REDIS_PORT:-6379}:6379"
     healthcheck:
-      test: [ "CMD", "redis-cli", "--raw", "incr", "ping" ]
+      test: [ "CMD-SHELL", "redis-cli -a \"${REDIS_PASSWORD}\" ping | grep -q PONG" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -61,3 +63,4 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:

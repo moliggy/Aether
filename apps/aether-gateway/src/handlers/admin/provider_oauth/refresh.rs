@@ -5,12 +5,12 @@ use super::provider_oauth_quota::{
 use super::provider_oauth_state::{
     enrich_admin_provider_oauth_auth_config, json_non_empty_string, json_u64_value,
 };
-use crate::gateway::handlers::{
+use crate::handlers::{
     decrypt_catalog_secret_with_fallbacks, encrypt_catalog_secret_with_fallbacks,
     parse_catalog_auth_config_json, OAUTH_ACCOUNT_BLOCK_PREFIX, OAUTH_EXPIRED_PREFIX,
     OAUTH_REFRESH_FAILED_PREFIX, OAUTH_REQUEST_FAILED_PREFIX,
 };
-use crate::gateway::{AppState, GatewayError};
+use crate::{AppState, GatewayError};
 use aether_data::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };

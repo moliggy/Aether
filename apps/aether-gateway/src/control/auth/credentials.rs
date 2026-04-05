@@ -5,7 +5,7 @@ use axum::http::Uri;
 use sha2::{Digest, Sha256};
 use url::form_urlencoded;
 
-use crate::gateway::headers::{header_value_str, is_json_request};
+use crate::headers::{header_value_str, is_json_request};
 
 use super::super::GatewayControlDecision;
 use super::types::{
@@ -68,7 +68,7 @@ pub(super) fn extract_request_credentials(
 }
 
 fn has_trusted_gateway_marker(headers: &http::HeaderMap) -> bool {
-    header_value_str(headers, crate::gateway::constants::GATEWAY_HEADER)
+    header_value_str(headers, crate::constants::GATEWAY_HEADER)
         .unwrap_or_default()
         .trim()
         .to_ascii_lowercase()
@@ -128,23 +128,23 @@ fn extract_trusted_auth_headers(headers: &http::HeaderMap) -> Option<GatewayTrus
     }
     let user_id = header_value_str(
         headers,
-        crate::gateway::constants::TRUSTED_AUTH_USER_ID_HEADER,
+        crate::constants::TRUSTED_AUTH_USER_ID_HEADER,
     )
     .filter(|value| !value.is_empty())?;
     let api_key_id = header_value_str(
         headers,
-        crate::gateway::constants::TRUSTED_AUTH_API_KEY_ID_HEADER,
+        crate::constants::TRUSTED_AUTH_API_KEY_ID_HEADER,
     )
     .filter(|value| !value.is_empty())?;
     let balance_remaining = header_value_str(
         headers,
-        crate::gateway::constants::TRUSTED_AUTH_BALANCE_HEADER,
+        crate::constants::TRUSTED_AUTH_BALANCE_HEADER,
     )
     .as_deref()
     .and_then(parse_f64_header);
     let access_allowed = header_value_str(
         headers,
-        crate::gateway::constants::TRUSTED_AUTH_ACCESS_ALLOWED_HEADER,
+        crate::constants::TRUSTED_AUTH_ACCESS_ALLOWED_HEADER,
     )
     .as_deref()
     .and_then(parse_bool_header);
@@ -165,7 +165,7 @@ pub(super) fn extract_trusted_admin_headers(
     }
     let user_id = header_value_str(
         headers,
-        crate::gateway::constants::TRUSTED_ADMIN_USER_ID_HEADER,
+        crate::constants::TRUSTED_ADMIN_USER_ID_HEADER,
     )?
     .trim()
     .to_string();
@@ -174,7 +174,7 @@ pub(super) fn extract_trusted_admin_headers(
     }
     let user_role = header_value_str(
         headers,
-        crate::gateway::constants::TRUSTED_ADMIN_USER_ROLE_HEADER,
+        crate::constants::TRUSTED_ADMIN_USER_ROLE_HEADER,
     )?
     .trim()
     .to_string();
@@ -183,13 +183,13 @@ pub(super) fn extract_trusted_admin_headers(
     }
     let session_id = header_value_str(
         headers,
-        crate::gateway::constants::TRUSTED_ADMIN_SESSION_ID_HEADER,
+        crate::constants::TRUSTED_ADMIN_SESSION_ID_HEADER,
     )
     .map(|value| value.trim().to_string())
     .filter(|value| !value.is_empty());
     let management_token_id = header_value_str(
         headers,
-        crate::gateway::constants::TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER,
+        crate::constants::TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER,
     )
     .map(|value| value.trim().to_string())
     .filter(|value| !value.is_empty());
@@ -519,23 +519,23 @@ mod tests {
     fn extracts_trusted_auth_headers() {
         let mut headers = http::HeaderMap::new();
         headers.insert(
-            crate::gateway::constants::GATEWAY_HEADER,
+            crate::constants::GATEWAY_HEADER,
             "rust-phase3b".parse().unwrap(),
         );
         headers.insert(
-            crate::gateway::constants::TRUSTED_AUTH_USER_ID_HEADER,
+            crate::constants::TRUSTED_AUTH_USER_ID_HEADER,
             "user-1".parse().unwrap(),
         );
         headers.insert(
-            crate::gateway::constants::TRUSTED_AUTH_API_KEY_ID_HEADER,
+            crate::constants::TRUSTED_AUTH_API_KEY_ID_HEADER,
             "key-1".parse().unwrap(),
         );
         headers.insert(
-            crate::gateway::constants::TRUSTED_AUTH_BALANCE_HEADER,
+            crate::constants::TRUSTED_AUTH_BALANCE_HEADER,
             "1.5".parse().unwrap(),
         );
         headers.insert(
-            crate::gateway::constants::TRUSTED_AUTH_ACCESS_ALLOWED_HEADER,
+            crate::constants::TRUSTED_AUTH_ACCESS_ALLOWED_HEADER,
             "true".parse().unwrap(),
         );
 
@@ -557,11 +557,11 @@ mod tests {
     fn ignores_trusted_auth_headers_without_gateway_marker() {
         let mut headers = http::HeaderMap::new();
         headers.insert(
-            crate::gateway::constants::TRUSTED_AUTH_USER_ID_HEADER,
+            crate::constants::TRUSTED_AUTH_USER_ID_HEADER,
             "user-1".parse().unwrap(),
         );
         headers.insert(
-            crate::gateway::constants::TRUSTED_AUTH_API_KEY_ID_HEADER,
+            crate::constants::TRUSTED_AUTH_API_KEY_ID_HEADER,
             "key-1".parse().unwrap(),
         );
 
@@ -574,19 +574,19 @@ mod tests {
     fn extracts_trusted_admin_headers() {
         let mut headers = http::HeaderMap::new();
         headers.insert(
-            crate::gateway::constants::GATEWAY_HEADER,
+            crate::constants::GATEWAY_HEADER,
             "rust-phase3b".parse().unwrap(),
         );
         headers.insert(
-            crate::gateway::constants::TRUSTED_ADMIN_USER_ID_HEADER,
+            crate::constants::TRUSTED_ADMIN_USER_ID_HEADER,
             "admin-user-1".parse().unwrap(),
         );
         headers.insert(
-            crate::gateway::constants::TRUSTED_ADMIN_USER_ROLE_HEADER,
+            crate::constants::TRUSTED_ADMIN_USER_ROLE_HEADER,
             "admin".parse().unwrap(),
         );
         headers.insert(
-            crate::gateway::constants::TRUSTED_ADMIN_SESSION_ID_HEADER,
+            crate::constants::TRUSTED_ADMIN_SESSION_ID_HEADER,
             "sess-1".parse().unwrap(),
         );
 
@@ -610,15 +610,15 @@ mod tests {
     fn ignores_trusted_admin_headers_without_gateway_marker() {
         let mut headers = http::HeaderMap::new();
         headers.insert(
-            crate::gateway::constants::TRUSTED_ADMIN_USER_ID_HEADER,
+            crate::constants::TRUSTED_ADMIN_USER_ID_HEADER,
             "admin-user-1".parse().unwrap(),
         );
         headers.insert(
-            crate::gateway::constants::TRUSTED_ADMIN_USER_ROLE_HEADER,
+            crate::constants::TRUSTED_ADMIN_USER_ROLE_HEADER,
             "admin".parse().unwrap(),
         );
         headers.insert(
-            crate::gateway::constants::TRUSTED_ADMIN_SESSION_ID_HEADER,
+            crate::constants::TRUSTED_ADMIN_SESSION_ID_HEADER,
             "sess-1".parse().unwrap(),
         );
 

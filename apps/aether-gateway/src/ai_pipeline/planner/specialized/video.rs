@@ -5,29 +5,34 @@ use serde_json::{json, Value};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::gateway::ai_pipeline::planner::plan_builders::{
-    build_passthrough_sync_plan_from_decision, LocalSyncPlanAndReport,
-};
-use crate::gateway::ai_pipeline::planner::prefer_local_tunnel_owner_candidates;
-use crate::gateway::ai_pipeline::planner::{
+use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::ai_pipeline::planner::common::{
     EXECUTION_RUNTIME_SYNC_DECISION_ACTION, GEMINI_VIDEO_CREATE_SYNC_PLAN_KIND,
     OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND,
 };
-use crate::gateway::headers::collect_control_headers;
-use crate::gateway::provider_transport::{
-    apply_local_body_rules, apply_local_header_rules, build_gemini_video_predict_long_running_url,
-    build_passthrough_headers_with_auth, build_passthrough_path_url, resolve_local_gemini_auth,
-    resolve_local_openai_chat_auth, resolve_transport_execution_timeouts,
-    resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
+use crate::ai_pipeline::planner::plan_builders::{
+    build_passthrough_sync_plan_from_decision, LocalSyncPlanAndReport,
+};
+use crate::control::GatewayControlDecision;
+use crate::headers::collect_control_headers;
+use crate::provider_transport::auth::{
+    build_passthrough_headers_with_auth, resolve_local_gemini_auth, resolve_local_openai_chat_auth,
+};
+use crate::provider_transport::policy::{
     supports_local_gemini_transport_with_network, supports_local_standard_transport_with_network,
 };
-use crate::gateway::scheduler::{
+use crate::provider_transport::url::{
+    build_gemini_video_predict_long_running_url, build_passthrough_path_url,
+};
+use crate::provider_transport::{
+    apply_local_body_rules, apply_local_header_rules, resolve_transport_execution_timeouts,
+    resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
+};
+use crate::scheduler::{
     current_unix_secs, list_selectable_candidates, record_local_request_candidate_status,
     GatewayMinimalCandidateSelectionCandidate,
 };
-use crate::gateway::{
-    AppState, GatewayControlDecision, GatewayControlSyncDecisionResponse, GatewayError,
-};
+use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LocalVideoCreateFamily {
@@ -45,9 +50,9 @@ struct LocalVideoCreateSpec {
 
 #[derive(Debug, Clone)]
 struct LocalVideoCreateDecisionInput {
-    auth_context: crate::gateway::GatewayControlAuthContext,
+    auth_context: crate::control::GatewayControlAuthContext,
     requested_model: String,
-    auth_snapshot: crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot,
+    auth_snapshot: crate::data::auth::GatewayAuthApiKeySnapshot,
 }
 
 #[derive(Debug, Clone)]
@@ -457,11 +462,15 @@ async fn maybe_build_local_video_create_decision_payload_for_candidate(
         action: EXECUTION_RUNTIME_SYNC_DECISION_ACTION.to_string(),
         decision_kind: Some(spec.decision_kind.to_string()),
         execution_strategy: Some(
-            crate::gateway::ExecutionStrategy::LocalSameFormat
+            crate::execution_runtime::ExecutionStrategy::LocalSameFormat
                 .as_str()
                 .to_string(),
         ),
-        conversion_mode: Some(crate::gateway::ConversionMode::None.as_str().to_string()),
+        conversion_mode: Some(
+            crate::execution_runtime::ConversionMode::None
+                .as_str()
+                .to_string(),
+        ),
         request_id: Some(trace_id.to_string()),
         candidate_id: Some(candidate_id.clone()),
         provider_name: Some(transport.provider.name.clone()),
@@ -543,7 +552,7 @@ fn build_provider_request_body(
 
 fn build_video_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
     mapped_model: &str,
     family: LocalVideoCreateFamily,
 ) -> Option<String> {

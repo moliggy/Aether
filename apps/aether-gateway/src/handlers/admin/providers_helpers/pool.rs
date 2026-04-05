@@ -1,8 +1,9 @@
-use crate::gateway::handlers::{AdminProviderPoolConfig, AdminProviderPoolRuntimeState};
-use crate::gateway::{AppState, GatewayError};
+use crate::handlers::{AdminProviderPoolConfig, AdminProviderPoolRuntimeState};
+use crate::{AppState, GatewayError};
 use aether_data::redis::{RedisKeyspace, RedisKvRunner};
 use aether_data::repository::provider_catalog::StoredProviderCatalogProvider;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
@@ -138,6 +139,61 @@ async fn scan_redis_keys(
     Ok(keys)
 }
 
+fn pool_cooldown_keys(
+    keyspace: &RedisKeyspace,
+    provider_id: &str,
+    key_ids: &[String],
+) -> Vec<String> {
+    key_ids
+        .iter()
+        .map(|key_id| pool_cooldown_key(keyspace, provider_id, key_id))
+        .collect()
+}
+
+fn pool_cost_keys(keyspace: &RedisKeyspace, provider_id: &str, key_ids: &[String]) -> Vec<String> {
+    key_ids
+        .iter()
+        .map(|key_id| pool_cost_key(keyspace, provider_id, key_id))
+        .collect()
+}
+
+pub(crate) async fn read_admin_provider_pool_cooldown_counts(
+    runner: &RedisKvRunner,
+    provider_ids: &[String],
+) -> BTreeMap<String, usize> {
+    if provider_ids.is_empty() {
+        return BTreeMap::new();
+    }
+
+    let Ok(mut connection) = runner.client().get_multiplexed_async_connection().await else {
+        warn!("gateway admin provider pool: failed to connect redis for cooldown counts");
+        return BTreeMap::new();
+    };
+    let keyspace = runner.keyspace().clone();
+    let mut pipeline = redis::pipe();
+    for provider_id in provider_ids {
+        pipeline
+            .cmd("SCARD")
+            .arg(pool_cooldown_index_key(&keyspace, provider_id));
+    }
+
+    match pipeline.query_async::<Vec<u64>>(&mut connection).await {
+        Ok(counts) => provider_ids
+            .iter()
+            .cloned()
+            .zip(counts.into_iter())
+            .map(|(provider_id, count)| (provider_id, count as usize))
+            .collect(),
+        Err(err) => {
+            warn!(
+                "gateway admin provider pool: failed to batch read cooldown counts: {:?}",
+                err
+            );
+            BTreeMap::new()
+        }
+    }
+}
+
 pub(crate) async fn read_admin_provider_pool_runtime_state(
     runner: &RedisKvRunner,
     provider_id: &str,
@@ -150,6 +206,8 @@ pub(crate) async fn read_admin_provider_pool_runtime_state(
         return runtime;
     };
     let keyspace = runner.keyspace().clone();
+    let cooldown_keys = pool_cooldown_keys(&keyspace, provider_id, key_ids);
+    let cost_keys = pool_cost_keys(&keyspace, provider_id, key_ids);
 
     let sticky_keys = match scan_redis_keys(
         &mut connection,
@@ -186,48 +244,87 @@ pub(crate) async fn read_admin_provider_pool_runtime_state(
         }
     }
 
-    for key_id in key_ids {
-        let cooldown_key = pool_cooldown_key(&keyspace, provider_id, key_id);
-        let reason = redis::cmd("GET")
-            .arg(&cooldown_key)
-            .query_async::<Option<String>>(&mut connection)
-            .await;
-        if let Ok(Some(reason)) = reason {
-            runtime
-                .cooldown_reason_by_key
-                .insert(key_id.clone(), reason);
-            let ttl = redis::cmd("TTL")
-                .arg(&cooldown_key)
-                .query_async::<i64>(&mut connection)
-                .await
-                .ok()
-                .and_then(|value| u64::try_from(value).ok());
-            if let Some(ttl_seconds) = ttl.filter(|value| *value > 0) {
+    if !cooldown_keys.is_empty() {
+        let cooldown_reasons = redis::cmd("MGET")
+            .arg(&cooldown_keys)
+            .query_async::<Vec<Option<String>>>(&mut connection)
+            .await
+            .unwrap_or_else(|err| {
+                warn!(
+                    "gateway admin provider pool: failed to batch read cooldown reasons for provider {provider_id}: {:?}",
+                    err
+                );
+                vec![None; cooldown_keys.len()]
+            });
+        let mut ttl_pipeline = redis::pipe();
+        for cooldown_key in &cooldown_keys {
+            ttl_pipeline.cmd("TTL").arg(cooldown_key);
+        }
+        let cooldown_ttls = ttl_pipeline
+            .query_async::<Vec<i64>>(&mut connection)
+            .await
+            .unwrap_or_else(|err| {
+                warn!(
+                    "gateway admin provider pool: failed to batch read cooldown ttl for provider {provider_id}: {:?}",
+                    err
+                );
+                vec![-1; cooldown_keys.len()]
+            });
+
+        for (((key_id, _cooldown_key), reason), ttl) in key_ids
+            .iter()
+            .zip(cooldown_keys.iter())
+            .zip(cooldown_reasons.into_iter())
+            .zip(cooldown_ttls.into_iter())
+        {
+            if let Some(reason) = reason {
                 runtime
-                    .cooldown_ttl_by_key
-                    .insert(key_id.clone(), ttl_seconds);
+                    .cooldown_reason_by_key
+                    .insert(key_id.clone(), reason);
+                if let Ok(ttl_seconds) = u64::try_from(ttl) {
+                    if ttl_seconds > 0 {
+                        runtime
+                            .cooldown_ttl_by_key
+                            .insert(key_id.clone(), ttl_seconds);
+                    }
+                }
             }
         }
+    }
 
+    if !cost_keys.is_empty() {
         let window_start = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
             .saturating_sub(pool_config.cost_window_seconds);
-        let members = redis::cmd("ZRANGEBYSCORE")
-            .arg(pool_cost_key(&keyspace, provider_id, key_id))
-            .arg(window_start)
-            .arg("+inf")
-            .query_async::<Vec<String>>(&mut connection)
+        let mut cost_pipeline = redis::pipe();
+        for cost_key in &cost_keys {
+            cost_pipeline
+                .cmd("ZRANGEBYSCORE")
+                .arg(cost_key)
+                .arg(window_start)
+                .arg("+inf");
+        }
+        let members_by_key = cost_pipeline
+            .query_async::<Vec<Vec<String>>>(&mut connection)
             .await
-            .unwrap_or_default();
-        let total = members
-            .iter()
-            .map(|member| parse_pool_cost_member(member))
-            .sum::<u64>();
-        runtime
-            .cost_window_usage_by_key
-            .insert(key_id.clone(), total);
+            .unwrap_or_else(|err| {
+                warn!(
+                    "gateway admin provider pool: failed to batch read cost windows for provider {provider_id}: {:?}",
+                    err
+                );
+                vec![Vec::new(); cost_keys.len()]
+            });
+        for (key_id, members) in key_ids.iter().zip(members_by_key.into_iter()) {
+            let total = members
+                .iter()
+                .map(|member| parse_pool_cost_member(member))
+                .sum::<u64>();
+            runtime
+                .cost_window_usage_by_key
+                .insert(key_id.clone(), total);
+        }
     }
 
     if pool_config.lru_enabled && !key_ids.is_empty() {

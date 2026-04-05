@@ -73,7 +73,7 @@ fn validate_user_model_capability_settings(
 }
 
 fn build_users_me_preferences_payload(
-    preferences: &crate::gateway::gateway_data::StoredUserPreferenceRecord,
+    preferences: &crate::data::state::StoredUserPreferenceRecord,
 ) -> serde_json::Value {
     json!({
         "avatar_url": preferences.avatar_url,
@@ -177,9 +177,11 @@ pub(super) async fn handle_users_me_preferences_get(
 
     let preferences = match state.read_user_preferences(&auth.user.id).await {
         Ok(Some(value)) => value,
-        Ok(None) => crate::gateway::gateway_data::StoredUserPreferenceRecord::default_for_user(
-            &auth.user.id,
-        ),
+        Ok(None) => {
+            crate::data::state::StoredUserPreferenceRecord::default_for_user(
+                &auth.user.id,
+            )
+        }
         Err(err) => {
             return build_auth_error_response(
                 http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -217,9 +219,11 @@ pub(super) async fn handle_users_me_preferences_put(
 
     let mut preferences = match state.read_user_preferences(&auth.user.id).await {
         Ok(Some(value)) => value,
-        Ok(None) => crate::gateway::gateway_data::StoredUserPreferenceRecord::default_for_user(
-            &auth.user.id,
-        ),
+        Ok(None) => {
+            crate::data::state::StoredUserPreferenceRecord::default_for_user(
+                &auth.user.id,
+            )
+        }
         Err(err) => {
             return build_auth_error_response(
                 http::StatusCode::INTERNAL_SERVER_ERROR,

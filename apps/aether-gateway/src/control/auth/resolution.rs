@@ -5,8 +5,12 @@ use base64::Engine as _;
 use hmac::Mac;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::{debug, info};
 
-use crate::gateway::{AppState, GatewayError};
+use crate::wallet_runtime::{
+    local_rejection_from_wallet_access, resolve_wallet_auth_gate,
+};
+use crate::{AppState, GatewayError};
 
 use super::super::GatewayControlDecision;
 use super::credentials::{
@@ -16,8 +20,7 @@ use super::credentials::{
 use super::gate::GatewayLocalAuthRejection;
 use super::principal::derive_principal_candidate;
 use super::types::{GatewayPrincipalCandidate, GatewayTrustedAuthHeaders};
-use crate::gateway::headers::header_value_str;
-use crate::gateway::{local_rejection_from_wallet_access, resolve_wallet_auth_gate};
+use crate::headers::header_value_str;
 
 const AUTH_CONTEXT_CACHE_TTL: Duration = Duration::from_secs(60);
 const AUTH_CONTEXT_CACHE_MAX_ENTRIES: usize = 256;
@@ -56,11 +59,13 @@ pub(in super::super) async fn resolve_control_decision_auth(
     state: &AppState,
     headers: &http::HeaderMap,
     uri: &Uri,
+    trace_id: &str,
     mut decision: GatewayControlDecision,
 ) -> Result<ControlDecisionAuthResolution, GatewayError> {
     if let Some(admin_principal) =
         resolve_trusted_admin_principal(headers, decision.auth_endpoint_signature.as_deref())
     {
+        log_admin_principal_resolution(trace_id, &decision, "trusted_headers", &admin_principal);
         decision.admin_principal = Some(admin_principal);
     } else if let Some(admin_principal) = resolve_local_admin_principal(
         state,
@@ -70,6 +75,7 @@ pub(in super::super) async fn resolve_control_decision_auth(
     )
     .await?
     {
+        log_admin_principal_resolution(trace_id, &decision, "local_session", &admin_principal);
         decision.admin_principal = Some(admin_principal);
     }
 
@@ -81,6 +87,7 @@ pub(in super::super) async fn resolve_control_decision_auth(
     )
     .await?
     {
+        log_auth_context_resolution(trace_id, &decision, &auth_context);
         decision.local_auth_rejection = auth_context.local_rejection.clone();
         if !auth_context.user_id.is_empty() && !auth_context.api_key_id.is_empty() {
             if let Some(cache_key) = decision
@@ -95,6 +102,7 @@ pub(in super::super) async fn resolve_control_decision_auth(
     }
 
     if decision.local_auth_rejection.is_some() {
+        log_local_auth_rejection(trace_id, &decision);
         return Ok(ControlDecisionAuthResolution::Resolved(decision));
     }
 
@@ -111,6 +119,93 @@ pub(in super::super) async fn resolve_control_decision_auth(
     }
 
     Ok(ControlDecisionAuthResolution::Resolved(decision))
+}
+
+fn log_admin_principal_resolution(
+    trace_id: &str,
+    decision: &GatewayControlDecision,
+    resolution: &'static str,
+    admin_principal: &GatewayAdminPrincipalContext,
+) {
+    debug!(
+        event_name = "admin_principal_resolved",
+        log_type = "debug",
+        debug_context = "control_auth",
+        trace_id = %trace_id,
+        route_class = decision.route_class.as_deref().unwrap_or("unknown"),
+        route_family = decision.route_family.as_deref().unwrap_or("unknown"),
+        route_kind = decision.route_kind.as_deref().unwrap_or("unknown"),
+        resolution,
+        admin_user_id = admin_principal.user_id.as_str(),
+        admin_user_role = admin_principal.user_role.as_str(),
+        admin_session_id = admin_principal.session_id.as_deref().unwrap_or("-"),
+        admin_management_token_id = admin_principal.management_token_id.as_deref().unwrap_or("-"),
+        "resolved admin principal for control decision"
+    );
+}
+
+fn log_auth_context_resolution(
+    trace_id: &str,
+    decision: &GatewayControlDecision,
+    auth_context: &GatewayControlAuthContext,
+) {
+    info!(
+        event_name = "auth_context_resolved",
+        log_type = "event",
+        status = if auth_context.access_allowed {
+            "allowed"
+        } else {
+            "blocked"
+        },
+        trace_id = %trace_id,
+        route_class = decision.route_class.as_deref().unwrap_or("unknown"),
+        route_family = decision.route_family.as_deref().unwrap_or("unknown"),
+        route_kind = decision.route_kind.as_deref().unwrap_or("unknown"),
+        user_id = auth_context.user_id.as_str(),
+        api_key_id = auth_context.api_key_id.as_str(),
+        access_allowed = auth_context.access_allowed,
+        api_key_is_standalone = auth_context.api_key_is_standalone,
+        has_local_rejection = auth_context.local_rejection.is_some(),
+        "resolved data-backed auth context for control decision"
+    );
+}
+
+fn log_local_auth_rejection(trace_id: &str, decision: &GatewayControlDecision) {
+    let Some(rejection) = decision.local_auth_rejection.as_ref() else {
+        return;
+    };
+    let (rejection_kind, rejection_detail) = match rejection {
+        GatewayLocalAuthRejection::InvalidApiKey => ("invalid_api_key", "-".to_string()),
+        GatewayLocalAuthRejection::LockedApiKey => ("locked_api_key", "-".to_string()),
+        GatewayLocalAuthRejection::WalletUnavailable => ("wallet_unavailable", "-".to_string()),
+        GatewayLocalAuthRejection::BalanceDenied { remaining } => (
+            "balance_denied",
+            remaining
+                .map(|value| format!("remaining_usd={value:.4}"))
+                .unwrap_or_else(|| "remaining_usd=unknown".to_string()),
+        ),
+        GatewayLocalAuthRejection::ProviderNotAllowed { provider } => {
+            ("provider_not_allowed", provider.clone())
+        }
+        GatewayLocalAuthRejection::ApiFormatNotAllowed { api_format } => {
+            ("api_format_not_allowed", api_format.clone())
+        }
+        GatewayLocalAuthRejection::ModelNotAllowed { model } => {
+            ("model_not_allowed", model.clone())
+        }
+    };
+    info!(
+        event_name = "local_auth_rejected",
+        log_type = "event",
+        status = "rejected",
+        trace_id = %trace_id,
+        route_class = decision.route_class.as_deref().unwrap_or("unknown"),
+        route_family = decision.route_family.as_deref().unwrap_or("unknown"),
+        route_kind = decision.route_kind.as_deref().unwrap_or("unknown"),
+        rejection_kind,
+        rejection_detail = %rejection_detail,
+        "rejected local control request during auth gate resolution"
+    );
 }
 
 fn allows_missing_data_backed_auth_context(decision: &GatewayControlDecision) -> bool {
@@ -463,7 +558,7 @@ async fn resolve_trusted_auth_context(
 }
 
 fn build_data_backed_auth_context(
-    snapshot: crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot,
+    snapshot: crate::data::auth::GatewayAuthApiKeySnapshot,
     auth_endpoint_signature: &str,
     header_access_allowed: Option<bool>,
     balance_remaining: Option<f64>,
@@ -551,8 +646,9 @@ mod tests {
     use axum::http::{HeaderMap, Uri};
 
     use super::resolve_data_backed_auth_context;
-    use crate::gateway::control::auth::credentials::hash_api_key;
-    use crate::gateway::{AppState, GatewayDataState};
+    use crate::control::auth::credentials::hash_api_key;
+    use crate::data::GatewayDataState;
+    use crate::AppState;
 
     fn sample_snapshot(api_key_id: &str, user_id: &str) -> StoredAuthApiKeySnapshot {
         StoredAuthApiKeySnapshot::new(

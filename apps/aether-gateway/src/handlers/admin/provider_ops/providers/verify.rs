@@ -1,5 +1,5 @@
 use super::ADMIN_PROVIDER_OPS_VERIFY_RUST_ONLY_MESSAGE;
-use crate::gateway::AppState;
+use crate::AppState;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use regex::Regex;
 use serde_json::json;

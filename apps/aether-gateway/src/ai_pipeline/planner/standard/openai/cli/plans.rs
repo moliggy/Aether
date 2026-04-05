@@ -5,15 +5,16 @@ use super::decision::{
     maybe_build_local_openai_cli_decision_payload_for_candidate,
     resolve_local_openai_cli_decision_input, LocalOpenAiCliSpec,
 };
-use crate::gateway::ai_pipeline::planner::plan_builders::{
-    build_openai_cli_stream_plan_from_decision, build_openai_cli_sync_plan_from_decision,
-    LocalStreamPlanAndReport, LocalSyncPlanAndReport,
-};
-use crate::gateway::ai_pipeline::planner::{
+use crate::ai_pipeline::planner::common::{
     OPENAI_CLI_STREAM_PLAN_KIND, OPENAI_CLI_SYNC_PLAN_KIND, OPENAI_COMPACT_STREAM_PLAN_KIND,
     OPENAI_COMPACT_SYNC_PLAN_KIND,
 };
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError};
+use crate::ai_pipeline::planner::plan_builders::{
+    build_openai_cli_stream_plan_from_decision, build_openai_cli_sync_plan_from_decision,
+    LocalStreamPlanAndReport, LocalSyncPlanAndReport,
+};
+use crate::control::GatewayControlDecision;
+use crate::{AppState, GatewayError};
 
 pub(super) fn resolve_sync_spec(plan_kind: &str) -> Option<LocalOpenAiCliSpec> {
     match plan_kind {

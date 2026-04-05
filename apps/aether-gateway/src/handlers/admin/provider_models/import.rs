@@ -1,8 +1,10 @@
 use super::super::build_admin_import_provider_models_payload;
-use crate::gateway::handlers::{
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     admin_provider_import_models_path, AdminImportProviderModelsRequest,
 };
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,

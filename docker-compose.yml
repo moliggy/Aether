@@ -22,9 +22,11 @@ services:
   redis:
     image: redis:7-alpine
     container_name: aether-redis
-    command: redis-server --appendonly no --save "" --requirepass ${REDIS_PASSWORD}
+    command: redis-server --appendonly yes --appendfsync everysec --save 60 1000 --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
     healthcheck:
-      test: [ "CMD", "redis-cli", "--raw", "incr", "ping" ]
+      test: [ "CMD-SHELL", "redis-cli -a \"${REDIS_PASSWORD}\" ping | grep -q PONG" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -39,6 +41,12 @@ services:
       DATABASE_URL: postgresql://postgres:${DB_PASSWORD}@postgres:5432/aether
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       TZ: Asia/Shanghai
+      AETHER_LOG_DESTINATION: ${AETHER_LOG_DESTINATION:-both}
+      AETHER_LOG_FORMAT: ${AETHER_LOG_FORMAT:-json}
+      AETHER_LOG_DIR: ${AETHER_LOG_DIR:-/app/logs}
+      AETHER_LOG_ROTATION: ${AETHER_LOG_ROTATION:-daily}
+      AETHER_LOG_RETENTION_DAYS: ${AETHER_LOG_RETENTION_DAYS:-7}
+      AETHER_LOG_MAX_FILES: ${AETHER_LOG_MAX_FILES:-30}
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,5 +60,4 @@ services:
 
 volumes:
   postgres_data:
-
-
+  redis_data:

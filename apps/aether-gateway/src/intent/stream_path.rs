@@ -2,30 +2,27 @@ use axum::body::{Body, Bytes};
 use axum::http::Response;
 use std::collections::BTreeMap;
 
-use crate::gateway::ai_pipeline::planner::{
-    maybe_build_stream_decision_payload, EXECUTION_RUNTIME_STREAM_DECISION_ACTION,
-    OPENAI_VIDEO_CONTENT_PLAN_KIND,
+use crate::ai_pipeline::planner::common::{
+    EXECUTION_RUNTIME_STREAM_DECISION_ACTION, OPENAI_VIDEO_CONTENT_PLAN_KIND,
 };
-use crate::gateway::ai_pipeline::planner::{
-    maybe_build_stream_local_decision_payload,
-    maybe_build_stream_local_gemini_files_decision_payload,
-    maybe_build_stream_local_openai_cli_decision_payload,
-    maybe_build_stream_local_same_format_provider_decision_payload,
+use crate::ai_pipeline::planner::maybe_build_stream_decision_payload;
+use crate::api::response::build_client_response_from_parts;
+use crate::control::GatewayControlDecision;
+use crate::execution_runtime::{
+    execute_execution_runtime_stream, ConversionMode, ExecutionStrategy,
 };
-use crate::gateway::api::response::build_client_response_from_parts;
-use crate::gateway::executor::maybe_execute_stream_via_local_standard_decision;
-use crate::gateway::executor::{
+use crate::executor::maybe_execute_stream_via_local_standard_decision;
+use crate::executor::{
     maybe_execute_stream_via_local_decision, maybe_execute_stream_via_local_gemini_files_decision,
     maybe_execute_stream_via_local_openai_cli_decision,
     maybe_execute_stream_via_local_same_format_provider_decision, parse_local_request_body,
 };
-use crate::gateway::scheduler::{
+use crate::scheduler::{
     is_matching_stream_request, resolve_execution_runtime_stream_plan_kind,
     supports_stream_scheduler_decision_kind,
 };
-use crate::gateway::{
-    execute_execution_runtime_stream, AppState, GatewayControlDecision,
-    GatewayControlSyncDecisionResponse, GatewayError, GatewayFallbackReason,
+use crate::{
+    AppState, GatewayControlSyncDecisionResponse, GatewayError, GatewayFallbackReason,
 };
 
 pub(crate) async fn maybe_build_stream_decision_payload_via_local_path(
@@ -156,7 +153,7 @@ async fn maybe_execute_local_video_task_content_stream(
         .await?;
 
     if let Some(task_id) =
-        crate::gateway::video_tasks::extract_openai_task_id_from_content_path(parts.uri.path())
+        crate::video_tasks::extract_openai_task_id_from_content_path(parts.uri.path())
     {
         let refresh_path = format!("/v1/videos/{task_id}");
         if let Some(refresh_plan) = state.video_tasks.prepare_read_refresh_sync_plan(
@@ -177,7 +174,7 @@ async fn maybe_execute_local_video_task_content_stream(
     };
 
     match action {
-        crate::gateway::video_tasks::LocalVideoTaskContentAction::Immediate {
+        crate::video_tasks::LocalVideoTaskContentAction::Immediate {
             status_code,
             body_json,
         } => Ok(Some(build_json_response(
@@ -186,7 +183,7 @@ async fn maybe_execute_local_video_task_content_stream(
             status_code,
             &body_json,
         )?)),
-        crate::gateway::video_tasks::LocalVideoTaskContentAction::StreamPlan(plan) => {
+        crate::video_tasks::LocalVideoTaskContentAction::StreamPlan(plan) => {
             execute_execution_runtime_stream(state, plan, trace_id, decision, plan_kind, None, None)
                 .await
         }
@@ -238,20 +235,20 @@ async fn maybe_build_local_video_task_content_stream_decision_payload(
         return Ok(None);
     };
 
-    let crate::gateway::video_tasks::LocalVideoTaskContentAction::StreamPlan(plan) = action else {
+    let crate::video_tasks::LocalVideoTaskContentAction::StreamPlan(plan) = action else {
         return Ok(None);
     };
     let provider_contract = plan.provider_api_format.clone();
     let client_contract = plan.client_api_format.clone();
     let execution_strategy = if plan.provider_api_format == plan.client_api_format {
-        crate::gateway::ExecutionStrategy::LocalSameFormat
+        ExecutionStrategy::LocalSameFormat
     } else {
-        crate::gateway::ExecutionStrategy::LocalCrossFormat
+        ExecutionStrategy::LocalCrossFormat
     };
     let conversion_mode = if plan.provider_api_format == plan.client_api_format {
-        crate::gateway::ConversionMode::None
+        ConversionMode::None
     } else {
-        crate::gateway::ConversionMode::Bidirectional
+        ConversionMode::Bidirectional
     };
 
     Ok(Some(GatewayControlSyncDecisionResponse {

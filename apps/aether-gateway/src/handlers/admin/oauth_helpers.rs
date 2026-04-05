@@ -1,7 +1,7 @@
-use crate::gateway::handlers::{
+use crate::handlers::{
     encrypt_catalog_secret_with_fallbacks, AdminOAuthProviderUpsertRequest,
 };
-use crate::gateway::AppState;
+use crate::AppState;
 use aether_data::repository::oauth_providers::{
     EncryptedSecretUpdate, UpsertOAuthProviderConfigRecord,
 };

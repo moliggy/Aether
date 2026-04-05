@@ -92,6 +92,73 @@ export interface UsageFilters {
   page_size?: number
 }
 
+function normalizeActivityHeatmapResponse(payload: unknown): ActivityHeatmap {
+  const today = new Date()
+  const endDate = today.toISOString().slice(0, 10)
+  const start = new Date(today)
+  start.setUTCDate(start.getUTCDate() - 364)
+  const startDate = start.toISOString().slice(0, 10)
+
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const candidate = payload as Partial<ActivityHeatmap>
+    if (Array.isArray(candidate.days)) {
+      return {
+        start_date: typeof candidate.start_date === 'string' ? candidate.start_date : startDate,
+        end_date: typeof candidate.end_date === 'string' ? candidate.end_date : endDate,
+        total_days: typeof candidate.total_days === 'number' ? candidate.total_days : candidate.days.length,
+        max_requests: typeof candidate.max_requests === 'number' ? candidate.max_requests : 0,
+        days: candidate.days,
+      }
+    }
+  }
+
+  const grouped = new Map<string, { requests: number; total_tokens: number; total_cost: number; actual_total_cost?: number }>()
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      if (!item || typeof item !== 'object') continue
+      const raw = item as Record<string, unknown>
+      const date = typeof raw.date === 'string' ? raw.date : ''
+      if (!date) continue
+      grouped.set(date, {
+        requests: typeof raw.requests === 'number'
+          ? raw.requests
+          : typeof raw.request_count === 'number'
+            ? raw.request_count
+            : 0,
+        total_tokens: typeof raw.total_tokens === 'number' ? raw.total_tokens : 0,
+        total_cost: typeof raw.total_cost === 'number' ? raw.total_cost : 0,
+        actual_total_cost: typeof raw.actual_total_cost === 'number' ? raw.actual_total_cost : undefined,
+      })
+    }
+  }
+
+  const days: ActivityHeatmap['days'] = []
+  let maxRequests = 0
+  const cursor = new Date(start)
+  while (cursor <= today) {
+    const date = cursor.toISOString().slice(0, 10)
+    const existing = grouped.get(date)
+    const requests = existing?.requests ?? 0
+    maxRequests = Math.max(maxRequests, requests)
+    days.push({
+      date,
+      requests,
+      total_tokens: existing?.total_tokens ?? 0,
+      total_cost: existing?.total_cost ?? 0,
+      actual_total_cost: existing?.actual_total_cost,
+    })
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+
+  return {
+    start_date: startDate,
+    end_date: endDate,
+    total_days: days.length,
+    max_requests: maxRequests,
+    days,
+  }
+}
+
 export const usageApi = {
   async getUsageRecords(filters?: UsageFilters): Promise<{
     records: UsageRecord[]
@@ -219,6 +286,7 @@ export const usageApi = {
       first_byte_time_ms: number | null
       provider?: string | null
       api_key_name?: string | null
+      provider_key_name?: string | null
       api_format?: string | null
       endpoint_api_format?: string | null
       has_format_conversion?: boolean | null
@@ -238,8 +306,8 @@ export const usageApi = {
     return cachedRequest(
       'admin-usage-activity-heatmap',
       async () => {
-        const response = await apiClient.get<ActivityHeatmap>('/api/admin/usage/heatmap')
-        return response.data
+        const response = await apiClient.get<ActivityHeatmap | unknown[]>('/api/admin/usage/heatmap')
+        return normalizeActivityHeatmapResponse(response.data)
       },
       60000
     )

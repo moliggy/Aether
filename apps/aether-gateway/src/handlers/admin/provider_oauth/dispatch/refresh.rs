@@ -5,11 +5,12 @@ use super::super::provider_oauth_refresh::{
     refresh_provider_oauth_account_state_after_update,
 };
 use super::super::provider_oauth_state::is_fixed_provider_type_for_provider_oauth;
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     admin_provider_oauth_refresh_key_id, decrypt_catalog_secret_with_fallbacks,
     OAUTH_ACCOUNT_BLOCK_PREFIX, OAUTH_REFRESH_FAILED_PREFIX,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,
@@ -125,7 +126,7 @@ pub(super) async fn handle_admin_provider_oauth_refresh_key(
                 "缺少 refresh_token，需要重新授权",
             ));
         }
-        Err(crate::gateway::provider_transport::LocalOAuthRefreshError::HttpStatus {
+        Err(crate::provider_transport::LocalOAuthRefreshError::HttpStatus {
             status_code,
             body_excerpt,
             ..
@@ -164,7 +165,7 @@ pub(super) async fn handle_admin_provider_oauth_refresh_key(
                 format!("Token 刷新失败：{error_reason}"),
             ));
         }
-        Err(crate::gateway::provider_transport::LocalOAuthRefreshError::Transport {
+        Err(crate::provider_transport::LocalOAuthRefreshError::Transport {
             source,
             ..
         }) => {
@@ -173,7 +174,7 @@ pub(super) async fn handle_admin_provider_oauth_refresh_key(
                 format!("Token 刷新失败：{}", source),
             ));
         }
-        Err(crate::gateway::provider_transport::LocalOAuthRefreshError::InvalidResponse {
+        Err(crate::provider_transport::LocalOAuthRefreshError::InvalidResponse {
             message,
             ..
         }) => {

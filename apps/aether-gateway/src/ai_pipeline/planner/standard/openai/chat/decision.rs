@@ -5,43 +5,46 @@ use serde_json::json;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::gateway::ai_pipeline::conversion::{
+use crate::ai_pipeline::conversion::{
     request_conversion_direct_auth, request_conversion_kind, request_conversion_transport_supported,
 };
-use crate::gateway::ai_pipeline::planner::plan_builders::{
-    LocalStreamPlanAndReport, LocalSyncPlanAndReport,
-};
-use crate::gateway::ai_pipeline::planner::prefer_local_tunnel_owner_candidates;
-use crate::gateway::ai_pipeline::planner::{
+use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::ai_pipeline::planner::common::{
     EXECUTION_RUNTIME_STREAM_DECISION_ACTION, EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
     OPENAI_CHAT_STREAM_PLAN_KIND,
 };
-use crate::gateway::headers::collect_control_headers;
-use crate::gateway::provider_transport::{
-    apply_local_header_rules, build_openai_passthrough_headers, ensure_upstream_auth_header,
-    resolve_local_openai_chat_auth, resolve_transport_execution_timeouts,
-    resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
-    supports_local_openai_chat_transport, LocalResolvedOAuthRequestAuth,
+use crate::ai_pipeline::planner::plan_builders::{
+    LocalStreamPlanAndReport, LocalSyncPlanAndReport,
 };
-use crate::gateway::scheduler::{
+use crate::execution_runtime::{ConversionMode, ExecutionStrategy};
+use crate::headers::collect_control_headers;
+use crate::provider_transport::auth::{
+    build_openai_passthrough_headers, ensure_upstream_auth_header, resolve_local_openai_chat_auth,
+};
+use crate::provider_transport::policy::supports_local_openai_chat_transport;
+use crate::provider_transport::{
+    apply_local_header_rules, resolve_transport_execution_timeouts,
+    resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
+    LocalResolvedOAuthRequestAuth,
+};
+use crate::scheduler::{
     record_local_request_candidate_status, GatewayMinimalCandidateSelectionCandidate,
 };
-use crate::gateway::{
-    append_execution_contract_fields_to_value, AppState, ConversionMode, ExecutionStrategy,
-    GatewayControlSyncDecisionResponse,
+use crate::{
+    append_execution_contract_fields_to_value, AppState, GatewayControlSyncDecisionResponse,
 };
 
 use super::plans::current_unix_secs;
-use crate::gateway::ai_pipeline::planner::standard::{
+use crate::ai_pipeline::planner::standard::{
     build_cross_format_openai_chat_request_body, build_cross_format_openai_chat_upstream_url,
     build_local_openai_chat_request_body, build_local_openai_chat_upstream_url,
 };
 
 #[derive(Debug, Clone)]
 pub(super) struct LocalOpenAiChatDecisionInput {
-    pub(super) auth_context: crate::gateway::GatewayControlAuthContext,
+    pub(super) auth_context: crate::control::GatewayControlAuthContext,
     pub(super) requested_model: String,
-    pub(super) auth_snapshot: crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot,
+    pub(super) auth_snapshot: crate::data::auth::GatewayAuthApiKeySnapshot,
 }
 
 #[derive(Debug, Clone)]
@@ -174,7 +177,7 @@ async fn build_same_format_local_openai_chat_decision_payload_for_candidate(
     decision_kind: &str,
     report_kind: &str,
     upstream_is_stream: bool,
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
 ) -> Option<GatewayControlSyncDecisionResponse> {
     if !supports_local_openai_chat_transport(transport) {
         mark_skipped_local_openai_chat_candidate(
@@ -362,6 +365,7 @@ async fn build_same_format_local_openai_chat_decision_payload_for_candidate(
                 "provider_id": candidate.provider_id,
                 "endpoint_id": candidate.endpoint_id,
                 "key_id": candidate.key_id,
+                "key_name": candidate.key_name,
                 "provider_api_format": "openai:chat",
                 "client_api_format": "openai:chat",
                 "mapped_model": mapped_model,
@@ -395,7 +399,7 @@ async fn build_cross_format_local_openai_chat_decision_payload_for_candidate(
     candidate_id: &str,
     decision_kind: &str,
     upstream_is_stream: bool,
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
     provider_api_format: &str,
 ) -> Option<GatewayControlSyncDecisionResponse> {
     let provider_api_format = provider_api_format.trim().to_ascii_lowercase();
@@ -606,6 +610,7 @@ async fn build_cross_format_local_openai_chat_decision_payload_for_candidate(
                 "provider_id": candidate.provider_id,
                 "endpoint_id": candidate.endpoint_id,
                 "key_id": candidate.key_id,
+                "key_name": candidate.key_name,
                 "provider_api_format": provider_api_format,
                 "client_api_format": "openai:chat",
                 "mapped_model": mapped_model,

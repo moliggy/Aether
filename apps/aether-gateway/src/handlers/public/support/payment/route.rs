@@ -31,7 +31,7 @@ pub(super) async fn maybe_build_local_payment_callback_route_response(
         ));
     };
     let Some(provided_token) =
-        crate::gateway::headers::header_value_str(headers, PAYMENT_CALLBACK_TOKEN_HEADER)
+        crate::headers::header_value_str(headers, PAYMENT_CALLBACK_TOKEN_HEADER)
     else {
         return Some(build_auth_error_response(
             http::StatusCode::UNAUTHORIZED,
@@ -47,7 +47,7 @@ pub(super) async fn maybe_build_local_payment_callback_route_response(
         ));
     }
     let Some(signature) =
-        crate::gateway::headers::header_value_str(headers, PAYMENT_CALLBACK_SIGNATURE_HEADER)
+        crate::headers::header_value_str(headers, PAYMENT_CALLBACK_SIGNATURE_HEADER)
     else {
         return Some(build_auth_error_response(
             http::StatusCode::UNAUTHORIZED,

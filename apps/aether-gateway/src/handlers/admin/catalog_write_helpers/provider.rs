@@ -2,13 +2,13 @@ use super::{
     normalize_json_object, normalize_provider_billing_type, normalize_provider_type_input,
     parse_optional_rfc3339_unix_secs,
 };
-use crate::gateway::api::ai::{
+use crate::api::ai::{
     admin_default_body_rules_for_signature, admin_endpoint_signature_parts,
 };
-use crate::gateway::handlers::public::normalize_admin_base_url;
-use crate::gateway::handlers::{AdminProviderCreateRequest, AdminProviderUpdateRequest};
-use crate::gateway::provider_transport::provider_type_enables_format_conversion_by_default;
-use crate::gateway::AppState;
+use crate::handlers::public::normalize_admin_base_url;
+use crate::handlers::{AdminProviderCreateRequest, AdminProviderUpdateRequest};
+use crate::provider_transport::provider_types::provider_type_enables_format_conversion_by_default;
+use crate::AppState;
 use aether_data::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogProvider,
 };

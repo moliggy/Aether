@@ -2,8 +2,9 @@ use super::{
     admin_gemini_files_error_response, admin_gemini_files_key_capable,
     ADMIN_GEMINI_FILES_DATA_UNAVAILABLE_DETAIL,
 };
-use crate::gateway::handlers::{is_admin_gemini_files_upload_root, query_param_value};
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{is_admin_gemini_files_upload_root, query_param_value};
+use crate::{AppState, GatewayError};
 use aether_contracts::{ExecutionPlan, ExecutionResult, RequestBody};
 use aether_data::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
@@ -368,7 +369,7 @@ async fn admin_gemini_files_upload_single_key(
         .await
         .map_err(|err| format!("{err:?}"))?
         .ok_or_else(|| "无法读取 Key 传输配置".to_string())?;
-    if !crate::gateway::provider_transport::supports_local_gemini_transport_with_network(
+    if !crate::provider_transport::policy::supports_local_gemini_transport_with_network(
         &transport,
         "gemini:chat",
     ) {
@@ -378,11 +379,11 @@ async fn admin_gemini_files_upload_single_key(
         return Err("Gemini Files 二进制上传暂不支持 endpoint body_rules".to_string());
     }
     let (auth_header, auth_value) =
-        crate::gateway::provider_transport::resolve_local_gemini_auth(&transport)
+        crate::provider_transport::auth::resolve_local_gemini_auth(&transport)
             .ok_or_else(|| "Key 缺少可用的 Gemini 认证信息".to_string())?;
 
     let mut provider_request_headers =
-        crate::gateway::provider_transport::build_passthrough_headers_with_auth(
+        crate::provider_transport::auth::build_passthrough_headers_with_auth(
             &http::HeaderMap::new(),
             &auth_header,
             &auth_value,
@@ -392,7 +393,7 @@ async fn admin_gemini_files_upload_single_key(
     let original_request_body = json!({
         "body_bytes_b64": upload.body_bytes_b64,
     });
-    if !crate::gateway::provider_transport::apply_local_header_rules(
+    if !crate::provider_transport::apply_local_header_rules(
         &mut provider_request_headers,
         transport.endpoint.header_rules.as_ref(),
         &[auth_header.as_str(), "content-type"],
@@ -414,7 +415,7 @@ async fn admin_gemini_files_upload_single_key(
     } else {
         Some("uploadType=resumable")
     };
-    let upstream_url = crate::gateway::provider_transport::build_gemini_files_passthrough_url(
+    let upstream_url = crate::provider_transport::url::build_gemini_files_passthrough_url(
         &transport.endpoint.base_url,
         upload_path,
         upload_query,
@@ -442,9 +443,9 @@ async fn admin_gemini_files_upload_single_key(
         client_api_format: "gemini:files".to_string(),
         provider_api_format: "gemini:files".to_string(),
         model_name: Some("gemini-files".to_string()),
-        proxy: crate::gateway::provider_transport::resolve_transport_proxy_snapshot_with_tunnel_affinity(state, &transport).await,
-        tls_profile: crate::gateway::provider_transport::resolve_transport_tls_profile(&transport),
-        timeouts: crate::gateway::provider_transport::resolve_transport_execution_timeouts(
+        proxy: crate::provider_transport::resolve_transport_proxy_snapshot_with_tunnel_affinity(state, &transport).await,
+        tls_profile: crate::provider_transport::resolve_transport_tls_profile(&transport),
+        timeouts: crate::provider_transport::resolve_transport_execution_timeouts(
             &transport,
         ),
     };
@@ -459,7 +460,7 @@ async fn admin_gemini_files_upload_single_key(
         .ok_or_else(|| "上传成功但上游响应缺少 JSON body".to_string())?;
     let success = admin_gemini_files_upload_success_from_body(&body_json, upload)
         .ok_or_else(|| admin_gemini_files_execution_error_message(&result))?;
-    crate::gateway::usage::store_local_gemini_file_mapping(
+    crate::usage::reporting::store_local_gemini_file_mapping(
         state,
         success.file_name.as_str(),
         key.id.as_str(),
@@ -483,7 +484,12 @@ async fn admin_gemini_files_execute_upload_plan(
     trace_id: &str,
     plan: &ExecutionPlan,
 ) -> Result<ExecutionResult, GatewayError> {
-    crate::gateway::execute_execution_runtime_sync_plan(state, Some(trace_id), plan).await
+    crate::execution_runtime::execute_execution_runtime_sync_plan(
+        state,
+        Some(trace_id),
+        plan,
+    )
+    .await
 }
 
 fn admin_gemini_files_execution_json_body(result: &ExecutionResult) -> Option<serde_json::Value> {

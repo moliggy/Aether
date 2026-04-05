@@ -23,9 +23,13 @@ dependencies = [
 name = "aether-billing"
 version = "0.1.0"
 dependencies = [
+ "aether-data",
+ "aether-usage-runtime",
+ "async-trait",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -69,6 +73,7 @@ dependencies = [
  "redis",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
@@ -86,7 +91,12 @@ dependencies = [
  "aether-crypto",
  "aether-data",
  "aether-http",
+ "aether-model-fetch",
+ "aether-provider-transport",
  "aether-runtime",
+ "aether-scheduler-core",
+ "aether-usage-runtime",
+ "aether-video-tasks-core",
  "aether-wallet",
  "async-stream",
  "async-trait",
@@ -118,6 +128,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "url",
  "uuid",
  "webpki-roots 0.26.11",
@@ -129,6 +140,44 @@ version = "0.1.0"
 dependencies = [
  "reqwest",
  "serde",
+]
+
+[[package]]
+name = "aether-model-fetch"
+version = "0.1.0"
+dependencies = [
+ "aether-contracts",
+ "aether-data",
+ "aether-provider-transport",
+ "aether-scheduler-core",
+ "async-trait",
+ "regex",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "aether-provider-transport"
+version = "0.1.0"
+dependencies = [
+ "aether-contracts",
+ "aether-crypto",
+ "aether-data",
+ "aether-video-tasks-core",
+ "async-trait",
+ "axum",
+ "http",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -179,14 +228,30 @@ version = "0.1.0"
 dependencies = [
  "async-stream",
  "axum",
+ "chrono",
  "futures-util",
  "redis",
+ "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "aether-scheduler-core"
+version = "0.1.0"
+dependencies = [
+ "aether-contracts",
+ "aether-data",
+ "aether-wallet",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -209,6 +274,33 @@ dependencies = [
  "sqlx",
  "tokio",
  "tokio-tungstenite 0.28.0",
+]
+
+[[package]]
+name = "aether-usage-runtime"
+version = "0.1.0"
+dependencies = [
+ "aether-contracts",
+ "aether-data",
+ "async-trait",
+ "base64",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "aether-video-tasks-core"
+version = "0.1.0"
+dependencies = [
+ "aether-contracts",
+ "aether-data",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "url",
+ "uuid",
 ]
 
 [[package]]

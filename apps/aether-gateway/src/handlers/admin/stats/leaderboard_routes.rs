@@ -5,8 +5,9 @@ use super::{
     load_user_leaderboard_metadata, parse_bounded_u32, parse_nonnegative_usize, round_to,
     AdminStatsLeaderboardMetric, AdminStatsSortOrder, AdminStatsTimeRange, AdminStatsUsageFilter,
 };
-use crate::gateway::handlers::{query_param_bool, query_param_value};
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{query_param_bool, query_param_value};
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,

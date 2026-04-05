@@ -6,15 +6,16 @@ use super::{
     claude::normalize_claude_request_to_openai_chat_request,
     gemini::normalize_gemini_request_to_openai_chat_request,
 };
-use crate::gateway::ai_pipeline::conversion::request::{
+use crate::ai_pipeline::conversion::request::{
     convert_openai_chat_request_to_claude_request, convert_openai_chat_request_to_gemini_request,
     convert_openai_chat_request_to_openai_cli_request,
     normalize_openai_cli_request_to_openai_chat_request,
 };
-use crate::gateway::ai_pipeline::conversion::{request_conversion_kind, RequestConversionKind};
-use crate::gateway::provider_transport::{
-    apply_local_body_rules, build_claude_messages_url, build_gemini_content_url,
-    build_openai_chat_url, build_openai_cli_url, build_passthrough_path_url,
+use crate::ai_pipeline::conversion::{request_conversion_kind, RequestConversionKind};
+use crate::provider_transport::apply_local_body_rules;
+use crate::provider_transport::url::{
+    build_claude_messages_url, build_gemini_content_url, build_openai_chat_url,
+    build_openai_cli_url, build_passthrough_path_url,
 };
 
 pub(crate) fn build_standard_request_body(
@@ -72,7 +73,7 @@ pub(crate) fn build_standard_request_body(
 
 pub(crate) fn build_standard_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
     mapped_model: &str,
     provider_api_format: &str,
     upstream_is_stream: bool,

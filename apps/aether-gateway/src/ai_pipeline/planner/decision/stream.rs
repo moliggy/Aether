@@ -1,16 +1,16 @@
 use std::collections::BTreeMap;
 
-use crate::gateway::ai_pipeline::planner::common::{
+use crate::ai_pipeline::planner::common::{
     EXECUTION_RUNTIME_STREAM_DECISION_ACTION, OPENAI_VIDEO_CONTENT_PLAN_KIND,
 };
-use crate::gateway::scheduler::{
+use crate::control::GatewayControlDecision;
+use crate::execution_runtime::{ConversionMode, ExecutionStrategy};
+use crate::scheduler::{
     is_matching_stream_request, resolve_execution_runtime_stream_plan_kind,
 };
-use crate::gateway::{
-    AppState, GatewayControlDecision, GatewayControlSyncDecisionResponse, GatewayError,
-};
+use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};
 
-pub(crate) async fn maybe_build_stream_decision_payload_impl(
+pub(crate) async fn maybe_build_stream_decision_payload(
     state: &AppState,
     parts: &http::request::Parts,
     trace_id: &str,
@@ -101,20 +101,20 @@ async fn maybe_build_local_video_task_content_stream_decision_payload(
         return Ok(None);
     };
 
-    let crate::gateway::video_tasks::LocalVideoTaskContentAction::StreamPlan(plan) = action else {
+    let crate::video_tasks::LocalVideoTaskContentAction::StreamPlan(plan) = action else {
         return Ok(None);
     };
     let provider_contract = plan.provider_api_format.clone();
     let client_contract = plan.client_api_format.clone();
     let execution_strategy = if plan.provider_api_format == plan.client_api_format {
-        crate::gateway::ExecutionStrategy::LocalSameFormat
+        ExecutionStrategy::LocalSameFormat
     } else {
-        crate::gateway::ExecutionStrategy::LocalCrossFormat
+        ExecutionStrategy::LocalCrossFormat
     };
     let conversion_mode = if plan.provider_api_format == plan.client_api_format {
-        crate::gateway::ConversionMode::None
+        ConversionMode::None
     } else {
-        crate::gateway::ConversionMode::Bidirectional
+        ConversionMode::Bidirectional
     };
 
     Ok(Some(GatewayControlSyncDecisionResponse {

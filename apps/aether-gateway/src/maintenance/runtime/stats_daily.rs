@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use sqlx::Row;
 use uuid::Uuid;
 
-use crate::gateway::gateway_data::GatewayDataState;
+use crate::data::GatewayDataState;
 
 use super::{
     stats_aggregation_target_day, system_config_bool, PercentileSummary, StatsAggregationSummary,

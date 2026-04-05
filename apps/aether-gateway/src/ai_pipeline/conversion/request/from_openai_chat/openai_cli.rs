@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde_json::{json, Map, Value};
 
 use super::super::to_openai_chat::extract_openai_text_content;
-use crate::gateway::ai_pipeline::planner::standard::copy_request_number_field;
+use crate::ai_pipeline::planner::standard::copy_request_number_field;
 
 pub(crate) fn convert_openai_chat_request_to_openai_cli_request(
     body_json: &Value,

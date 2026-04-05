@@ -9,13 +9,15 @@ use super::{
     AdminProviderOpsExecuteActionRequest, AdminProviderOpsSaveConfigRequest,
     ADMIN_PROVIDER_OPS_CONNECT_RUST_ONLY_MESSAGE,
 };
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::{
     admin_provider_id_for_provider_ops_balance, admin_provider_id_for_provider_ops_checkin,
     admin_provider_id_for_provider_ops_config, admin_provider_id_for_provider_ops_connect,
     admin_provider_id_for_provider_ops_disconnect, admin_provider_id_for_provider_ops_status,
     admin_provider_id_for_provider_ops_verify, admin_provider_ops_action_route_parts,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,
@@ -383,7 +385,13 @@ pub(crate) async fn maybe_build_local_admin_provider_ops_providers_response(
             &credentials,
         )
         .await;
-        return Ok(Some(Json(payload).into_response()));
+        return Ok(Some(attach_admin_audit_response(
+            Json(payload).into_response(),
+            "admin_provider_ops_config_verified",
+            "verify_provider_ops_config",
+            "provider",
+            &provider_id,
+        )));
     }
 
     if route_kind == "connect_provider" {
@@ -664,5 +672,26 @@ pub(crate) async fn maybe_build_local_admin_provider_ops_providers_response(
         build_admin_provider_ops_config_payload(state, &provider_id, provider, &endpoints)
     };
 
-    Ok(Some(Json(payload).into_response()))
+    let response = Json(payload).into_response();
+    let response = if route_kind == "get_provider_config" {
+        attach_admin_audit_response(
+            response,
+            "admin_provider_ops_config_viewed",
+            "view_provider_ops_config",
+            "provider",
+            &provider_id,
+        )
+    } else if route_kind == "get_provider_status" {
+        attach_admin_audit_response(
+            response,
+            "admin_provider_ops_status_viewed",
+            "view_provider_ops_status",
+            "provider",
+            &provider_id,
+        )
+    } else {
+        response
+    };
+
+    Ok(Some(response))
 }

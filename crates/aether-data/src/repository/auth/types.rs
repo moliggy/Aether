@@ -124,6 +124,131 @@ impl StoredAuthApiKeySnapshot {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ResolvedAuthApiKeySnapshot {
+    pub user_id: String,
+    pub username: String,
+    pub email: Option<String>,
+    pub user_role: String,
+    pub user_auth_source: String,
+    pub user_is_active: bool,
+    pub user_is_deleted: bool,
+    pub user_rate_limit: Option<i32>,
+    pub user_allowed_providers: Option<Vec<String>>,
+    pub user_allowed_api_formats: Option<Vec<String>>,
+    pub user_allowed_models: Option<Vec<String>>,
+    pub api_key_id: String,
+    pub api_key_name: Option<String>,
+    pub api_key_is_active: bool,
+    pub api_key_is_locked: bool,
+    pub api_key_is_standalone: bool,
+    pub api_key_rate_limit: Option<i32>,
+    pub api_key_concurrent_limit: Option<i32>,
+    pub api_key_expires_at_unix_secs: Option<u64>,
+    pub api_key_allowed_providers: Option<Vec<String>>,
+    pub api_key_allowed_api_formats: Option<Vec<String>>,
+    pub api_key_allowed_models: Option<Vec<String>>,
+    pub currently_usable: bool,
+}
+
+impl ResolvedAuthApiKeySnapshot {
+    pub fn from_stored(snapshot: StoredAuthApiKeySnapshot, now_unix_secs: u64) -> Self {
+        let currently_usable = snapshot.is_currently_usable(now_unix_secs);
+        Self {
+            user_id: snapshot.user_id,
+            username: snapshot.username,
+            email: snapshot.email,
+            user_role: snapshot.user_role,
+            user_auth_source: snapshot.user_auth_source,
+            user_is_active: snapshot.user_is_active,
+            user_is_deleted: snapshot.user_is_deleted,
+            user_rate_limit: snapshot.user_rate_limit,
+            user_allowed_providers: snapshot.user_allowed_providers,
+            user_allowed_api_formats: snapshot.user_allowed_api_formats,
+            user_allowed_models: snapshot.user_allowed_models,
+            api_key_id: snapshot.api_key_id,
+            api_key_name: snapshot.api_key_name,
+            api_key_is_active: snapshot.api_key_is_active,
+            api_key_is_locked: snapshot.api_key_is_locked,
+            api_key_is_standalone: snapshot.api_key_is_standalone,
+            api_key_rate_limit: snapshot.api_key_rate_limit,
+            api_key_concurrent_limit: snapshot.api_key_concurrent_limit,
+            api_key_expires_at_unix_secs: snapshot.api_key_expires_at_unix_secs,
+            api_key_allowed_providers: snapshot.api_key_allowed_providers,
+            api_key_allowed_api_formats: snapshot.api_key_allowed_api_formats,
+            api_key_allowed_models: snapshot.api_key_allowed_models,
+            currently_usable,
+        }
+    }
+
+    pub fn effective_allowed_providers(&self) -> Option<&[String]> {
+        self.api_key_allowed_providers
+            .as_deref()
+            .or(self.user_allowed_providers.as_deref())
+    }
+
+    pub fn effective_allowed_api_formats(&self) -> Option<&[String]> {
+        self.api_key_allowed_api_formats
+            .as_deref()
+            .or(self.user_allowed_api_formats.as_deref())
+    }
+
+    pub fn effective_allowed_models(&self) -> Option<&[String]> {
+        self.api_key_allowed_models
+            .as_deref()
+            .or(self.user_allowed_models.as_deref())
+    }
+}
+
+#[async_trait]
+pub trait ResolvedAuthApiKeySnapshotReader: Send + Sync {
+    async fn find_stored_auth_api_key_snapshot(
+        &self,
+        key: AuthApiKeyLookupKey<'_>,
+    ) -> Result<Option<StoredAuthApiKeySnapshot>, crate::DataLayerError>;
+}
+
+pub async fn read_resolved_auth_api_key_snapshot(
+    reader: &impl ResolvedAuthApiKeySnapshotReader,
+    key: AuthApiKeyLookupKey<'_>,
+    now_unix_secs: u64,
+) -> Result<Option<ResolvedAuthApiKeySnapshot>, crate::DataLayerError> {
+    Ok(reader
+        .find_stored_auth_api_key_snapshot(key)
+        .await?
+        .map(|snapshot| ResolvedAuthApiKeySnapshot::from_stored(snapshot, now_unix_secs)))
+}
+
+pub async fn read_resolved_auth_api_key_snapshot_by_key_hash(
+    reader: &impl ResolvedAuthApiKeySnapshotReader,
+    key_hash: &str,
+    now_unix_secs: u64,
+) -> Result<Option<ResolvedAuthApiKeySnapshot>, crate::DataLayerError> {
+    read_resolved_auth_api_key_snapshot(
+        reader,
+        AuthApiKeyLookupKey::KeyHash(key_hash),
+        now_unix_secs,
+    )
+    .await
+}
+
+pub async fn read_resolved_auth_api_key_snapshot_by_user_api_key_ids(
+    reader: &impl ResolvedAuthApiKeySnapshotReader,
+    user_id: &str,
+    api_key_id: &str,
+    now_unix_secs: u64,
+) -> Result<Option<ResolvedAuthApiKeySnapshot>, crate::DataLayerError> {
+    read_resolved_auth_api_key_snapshot(
+        reader,
+        AuthApiKeyLookupKey::UserApiKeyIds {
+            user_id,
+            api_key_id,
+        },
+        now_unix_secs,
+    )
+    .await
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StoredAuthApiKeyExportRecord {
     pub user_id: String,
@@ -485,7 +610,14 @@ fn parse_u64_i64(value: i64, field_name: &str) -> Result<u64, crate::DataLayerEr
 
 #[cfg(test)]
 mod tests {
-    use super::{StoredAuthApiKeyExportRecord, StoredAuthApiKeySnapshot};
+    use async_trait::async_trait;
+
+    use super::{
+        read_resolved_auth_api_key_snapshot_by_key_hash,
+        read_resolved_auth_api_key_snapshot_by_user_api_key_ids, AuthApiKeyLookupKey,
+        ResolvedAuthApiKeySnapshot, ResolvedAuthApiKeySnapshotReader, StoredAuthApiKeyExportRecord,
+        StoredAuthApiKeySnapshot,
+    };
 
     #[test]
     fn rejects_non_array_allowed_providers() {
@@ -612,6 +744,50 @@ mod tests {
     }
 
     #[test]
+    fn resolved_snapshot_prefers_api_key_lists_over_user_lists() {
+        let snapshot = StoredAuthApiKeySnapshot::new(
+            "user-1".to_string(),
+            "alice".to_string(),
+            None,
+            "user".to_string(),
+            "local".to_string(),
+            true,
+            false,
+            Some(serde_json::json!(["openai"])),
+            Some(serde_json::json!(["openai:chat"])),
+            Some(serde_json::json!(["gpt-4.1"])),
+            "key-1".to_string(),
+            Some("default".to_string()),
+            true,
+            false,
+            false,
+            Some(60),
+            Some(5),
+            Some(200),
+            Some(serde_json::json!(["anthropic"])),
+            None,
+            None,
+        )
+        .expect("snapshot should build");
+
+        let resolved = ResolvedAuthApiKeySnapshot::from_stored(snapshot, 150);
+
+        assert!(resolved.currently_usable);
+        assert_eq!(
+            resolved.effective_allowed_providers(),
+            Some(&["anthropic".to_string()][..])
+        );
+        assert_eq!(
+            resolved.effective_allowed_api_formats(),
+            Some(&["openai:chat".to_string()][..])
+        );
+        assert_eq!(
+            resolved.effective_allowed_models(),
+            Some(&["gpt-4.1".to_string()][..])
+        );
+    }
+
+    #[test]
     fn export_record_rejects_negative_totals() {
         assert!(StoredAuthApiKeyExportRecord::new(
             "user-1".to_string(),
@@ -664,5 +840,90 @@ mod tests {
         );
         assert_eq!(record.total_requests, 12);
         assert_eq!(record.total_cost_usd, 1.25);
+    }
+
+    #[derive(Default)]
+    struct FakeResolvedAuthApiKeySnapshotReader {
+        stored: Option<StoredAuthApiKeySnapshot>,
+    }
+
+    #[async_trait]
+    impl ResolvedAuthApiKeySnapshotReader for FakeResolvedAuthApiKeySnapshotReader {
+        async fn find_stored_auth_api_key_snapshot(
+            &self,
+            _key: AuthApiKeyLookupKey<'_>,
+        ) -> Result<Option<StoredAuthApiKeySnapshot>, crate::DataLayerError> {
+            Ok(self.stored.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn reads_resolved_auth_snapshot_by_user_api_key_ids() {
+        let reader = FakeResolvedAuthApiKeySnapshotReader {
+            stored: Some(sample_auth_snapshot("key-1", "user-1")),
+        };
+
+        let snapshot = read_resolved_auth_api_key_snapshot_by_user_api_key_ids(
+            &reader, "user-1", "key-1", 150,
+        )
+        .await
+        .expect("snapshot should read")
+        .expect("snapshot should exist");
+
+        assert_eq!(snapshot.user_id, "user-1");
+        assert_eq!(snapshot.api_key_id, "key-1");
+        assert!(snapshot.currently_usable);
+    }
+
+    #[tokio::test]
+    async fn reads_resolved_auth_snapshot_by_key_hash() {
+        let reader = FakeResolvedAuthApiKeySnapshotReader {
+            stored: Some(sample_auth_snapshot("key-1", "user-1")),
+        };
+
+        let snapshot = read_resolved_auth_api_key_snapshot_by_key_hash(&reader, "hash-lookup", 150)
+            .await
+            .expect("snapshot should read")
+            .expect("snapshot should exist");
+
+        assert_eq!(
+            snapshot.effective_allowed_providers(),
+            Some(&["openai".to_string()][..])
+        );
+        assert_eq!(
+            snapshot.effective_allowed_api_formats(),
+            Some(&["openai:chat".to_string()][..])
+        );
+        assert_eq!(
+            snapshot.effective_allowed_models(),
+            Some(&["gpt-4.1".to_string()][..])
+        );
+    }
+
+    fn sample_auth_snapshot(api_key_id: &str, user_id: &str) -> StoredAuthApiKeySnapshot {
+        StoredAuthApiKeySnapshot::new(
+            user_id.to_string(),
+            "alice".to_string(),
+            Some("alice@example.com".to_string()),
+            "user".to_string(),
+            "local".to_string(),
+            true,
+            false,
+            Some(serde_json::json!(["openai"])),
+            Some(serde_json::json!(["openai:chat"])),
+            Some(serde_json::json!(["gpt-4.1"])),
+            api_key_id.to_string(),
+            Some("default".to_string()),
+            true,
+            false,
+            false,
+            Some(60),
+            Some(5),
+            Some(200),
+            Some(serde_json::json!(["openai"])),
+            Some(serde_json::json!(["openai:chat"])),
+            Some(serde_json::json!(["gpt-4.1"])),
+        )
+        .expect("snapshot should build")
     }
 }

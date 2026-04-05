@@ -1,6 +1,6 @@
-use crate::gateway::api::ai::admin_endpoint_signature_parts;
-use crate::gateway::handlers::{decrypt_catalog_secret_with_fallbacks, unix_secs_to_rfc3339};
-use crate::gateway::{AppState, GatewayError};
+use crate::api::ai::admin_endpoint_signature_parts;
+use crate::handlers::{decrypt_catalog_secret_with_fallbacks, unix_secs_to_rfc3339};
+use crate::{AppState, GatewayError};
 use aether_crypto::encrypt_python_fernet_plaintext;
 use aether_data::repository::global_models::{
     AdminGlobalModelListQuery, AdminProviderModelListQuery,
@@ -172,20 +172,19 @@ pub(crate) async fn build_admin_system_stats_payload(
         .iter()
         .filter(|provider| provider.is_active)
         .count() as u64;
-    let (total_users, active_users, total_api_keys, total_requests) =
-        state.read_admin_system_stats().await?;
+    let stats = state.read_admin_system_stats().await?;
 
     Ok(json!({
         "users": {
-            "total": total_users,
-            "active": active_users,
+            "total": stats.total_users,
+            "active": stats.active_users,
         },
         "providers": {
             "total": total_providers,
             "active": active_providers,
         },
-        "api_keys": total_api_keys,
-        "requests": total_requests,
+        "api_keys": stats.total_api_keys,
+        "requests": stats.total_requests,
     }))
 }
 
@@ -1504,7 +1503,7 @@ pub(crate) fn build_admin_system_config_list_item(
 }
 
 pub(crate) fn build_admin_system_configs_payload(
-    entries: &[crate::gateway::gateway_data::StoredSystemConfigEntry],
+    entries: &[aether_data::repository::system::StoredSystemConfigEntry],
 ) -> serde_json::Value {
     let has_request_record_level = entries
         .iter()

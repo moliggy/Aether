@@ -10,12 +10,13 @@ use super::provider_strategy_shared::{
     ADMIN_PROVIDER_STRATEGY_DATA_UNAVAILABLE_DETAIL,
     ADMIN_PROVIDER_STRATEGY_STATS_DATA_UNAVAILABLE_DETAIL,
 };
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     admin_provider_id_for_provider_strategy_billing, admin_provider_id_for_provider_strategy_quota,
     admin_provider_id_for_provider_strategy_stats, is_admin_provider_strategy_strategies_root,
     query_param_value,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,

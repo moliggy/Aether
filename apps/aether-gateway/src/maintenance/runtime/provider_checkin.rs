@@ -6,8 +6,8 @@ use aether_data::repository::provider_catalog::{
 use futures_util::stream::{self, StreamExt};
 use tracing::{debug, warn};
 
-use crate::gateway::handlers::admin::admin_provider_ops_local_action_response;
-use crate::gateway::{AppState, GatewayError};
+use crate::handlers::admin::provider_ops::admin_provider_ops_local_action_response;
+use crate::{AppState, GatewayError};
 
 use super::{system_config_bool, PROVIDER_CHECKIN_CONCURRENCY};
 

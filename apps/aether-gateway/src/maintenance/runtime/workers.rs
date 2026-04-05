@@ -3,8 +3,8 @@ use std::sync::Arc;
 use chrono::Utc;
 use tracing::warn;
 
-use crate::gateway::gateway_data::GatewayDataState;
-use crate::gateway::AppState;
+use crate::data::GatewayDataState;
+use crate::AppState;
 
 use super::{
     duration_until_next_daily_run, duration_until_next_db_maintenance_run,
@@ -20,6 +20,21 @@ use super::{
     WALLET_DAILY_USAGE_AGGREGATION_MINUTE,
 };
 
+fn log_maintenance_worker_failure(
+    worker: &'static str,
+    phase: &'static str,
+    error: &impl std::fmt::Debug,
+) {
+    warn!(
+        event_name = "maintenance_worker_failed",
+        log_type = "ops",
+        worker,
+        phase,
+        error = ?error,
+        "gateway maintenance worker failed"
+    );
+}
+
 pub(crate) fn spawn_audit_cleanup_worker(
     data: Arc<GatewayDataState>,
 ) -> Option<tokio::task::JoinHandle<()>> {
@@ -29,7 +44,7 @@ pub(crate) fn spawn_audit_cleanup_worker(
 
     Some(tokio::spawn(async move {
         if let Err(err) = run_audit_cleanup_once(&data).await {
-            warn!(error = %err, "gateway audit cleanup startup failed");
+            log_maintenance_worker_failure("audit_cleanup", "startup", &err);
         }
         let mut interval = tokio::time::interval(AUDIT_LOG_CLEANUP_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -37,7 +52,7 @@ pub(crate) fn spawn_audit_cleanup_worker(
         loop {
             interval.tick().await;
             if let Err(err) = run_audit_cleanup_once(&data).await {
-                warn!(error = %err, "gateway audit cleanup tick failed");
+                log_maintenance_worker_failure("audit_cleanup", "tick", &err);
             }
         }
     }))
@@ -55,7 +70,7 @@ pub(crate) fn spawn_db_maintenance_worker(
         loop {
             tokio::time::sleep(duration_until_next_db_maintenance_run(Utc::now(), timezone)).await;
             if let Err(err) = run_db_maintenance_once(&data).await {
-                warn!(error = %err, "gateway db maintenance tick failed");
+                log_maintenance_worker_failure("db_maintenance", "tick", &err);
             }
         }
     }))
@@ -79,7 +94,7 @@ pub(crate) fn spawn_wallet_daily_usage_aggregation_worker(
             ))
             .await;
             if let Err(err) = run_wallet_daily_usage_aggregation_once(&data).await {
-                warn!(error = %err, "gateway wallet daily usage aggregation tick failed");
+                log_maintenance_worker_failure("wallet_daily_usage_aggregation", "tick", &err);
             }
         }
     }))
@@ -96,7 +111,7 @@ pub(crate) fn spawn_stats_aggregation_worker(
         loop {
             tokio::time::sleep(duration_until_next_stats_aggregation_run(Utc::now())).await;
             if let Err(err) = run_stats_aggregation_once(&data).await {
-                warn!(error = %err, "gateway stats aggregation tick failed");
+                log_maintenance_worker_failure("stats_daily_aggregation", "tick", &err);
             }
         }
     }))
@@ -120,7 +135,7 @@ pub(crate) fn spawn_usage_cleanup_worker(
             ))
             .await;
             if let Err(err) = run_usage_cleanup_once(&data).await {
-                warn!(error = %err, "gateway usage cleanup tick failed");
+                log_maintenance_worker_failure("usage_cleanup", "tick", &err);
             }
         }
     }))
@@ -140,6 +155,10 @@ pub(crate) fn spawn_provider_checkin_worker(
                 Ok(schedule) => schedule,
                 Err(err) => {
                     warn!(
+                        event_name = "maintenance_schedule_lookup_failed",
+                        log_type = "ops",
+                        worker = "provider_checkin",
+                        phase = "schedule_lookup",
                         error = %err,
                         fallback = PROVIDER_CHECKIN_DEFAULT_TIME,
                         "gateway provider checkin schedule lookup failed; falling back"
@@ -156,7 +175,7 @@ pub(crate) fn spawn_provider_checkin_worker(
             ))
             .await;
             if let Err(err) = run_provider_checkin_once(&state).await {
-                warn!(error = ?err, "gateway provider checkin tick failed");
+                log_maintenance_worker_failure("provider_checkin", "tick", &err);
             }
         }
     }))
@@ -171,7 +190,7 @@ pub(crate) fn spawn_gemini_file_mapping_cleanup_worker(
 
     Some(tokio::spawn(async move {
         if let Err(err) = run_gemini_file_mapping_cleanup_once(&data).await {
-            warn!(error = %err, "gateway gemini file mapping cleanup startup failed");
+            log_maintenance_worker_failure("gemini_file_mapping_cleanup", "startup", &err);
         }
         let mut interval = tokio::time::interval(GEMINI_FILE_MAPPING_CLEANUP_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -179,7 +198,7 @@ pub(crate) fn spawn_gemini_file_mapping_cleanup_worker(
         loop {
             interval.tick().await;
             if let Err(err) = run_gemini_file_mapping_cleanup_once(&data).await {
-                warn!(error = %err, "gateway gemini file mapping cleanup tick failed");
+                log_maintenance_worker_failure("gemini_file_mapping_cleanup", "tick", &err);
             }
         }
     }))
@@ -194,7 +213,7 @@ pub(crate) fn spawn_pending_cleanup_worker(
 
     Some(tokio::spawn(async move {
         if let Err(err) = run_pending_cleanup_once(&data).await {
-            warn!(error = %err, "gateway pending cleanup startup failed");
+            log_maintenance_worker_failure("pending_cleanup", "startup", &err);
         }
         let mut interval = tokio::time::interval(PENDING_CLEANUP_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -202,7 +221,7 @@ pub(crate) fn spawn_pending_cleanup_worker(
         loop {
             interval.tick().await;
             if let Err(err) = run_pending_cleanup_once(&data).await {
-                warn!(error = %err, "gateway pending cleanup tick failed");
+                log_maintenance_worker_failure("pending_cleanup", "tick", &err);
             }
         }
     }))
@@ -237,7 +256,7 @@ pub(crate) fn spawn_stats_hourly_aggregation_worker(
         loop {
             tokio::time::sleep(duration_until_next_stats_hourly_aggregation_run(Utc::now())).await;
             if let Err(err) = run_stats_hourly_aggregation_once(&data).await {
-                warn!(error = %err, "gateway stats hourly aggregation tick failed");
+                log_maintenance_worker_failure("stats_hourly_aggregation", "tick", &err);
             }
         }
     }))
@@ -252,7 +271,7 @@ pub(crate) fn spawn_request_candidate_cleanup_worker(
 
     Some(tokio::spawn(async move {
         if let Err(err) = run_request_candidate_cleanup_once(&data).await {
-            warn!(error = %err, "gateway request candidate cleanup startup failed");
+            log_maintenance_worker_failure("request_candidate_cleanup", "startup", &err);
         }
         let mut interval = tokio::time::interval(REQUEST_CANDIDATE_CLEANUP_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -260,7 +279,7 @@ pub(crate) fn spawn_request_candidate_cleanup_worker(
         loop {
             interval.tick().await;
             if let Err(err) = run_request_candidate_cleanup_once(&data).await {
-                warn!(error = %err, "gateway request candidate cleanup tick failed");
+                log_maintenance_worker_failure("request_candidate_cleanup", "tick", &err);
             }
         }
     }))

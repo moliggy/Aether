@@ -429,7 +429,7 @@ async fn resolve_users_me_api_key_snapshot_by_id(
     state: &AppState,
     user_id: &str,
     api_key_id: &str,
-) -> Result<crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot, Response<Body>> {
+) -> Result<crate::data::auth::GatewayAuthApiKeySnapshot, Response<Body>> {
     let snapshot = match state
         .read_auth_api_key_snapshot(
             user_id,
@@ -465,7 +465,7 @@ async fn resolve_users_me_api_key_snapshot_by_id(
 }
 
 fn ensure_users_me_api_key_mutable(
-    snapshot: &crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot,
+    snapshot: &crate::data::auth::GatewayAuthApiKeySnapshot,
 ) -> Result<(), Response<Body>> {
     if snapshot.api_key_is_locked {
         return Err(build_auth_error_response(

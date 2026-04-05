@@ -13,8 +13,10 @@ use super::admin_wallets_shared::{
     ADMIN_WALLETS_API_KEY_GIFT_ADJUST_DETAIL, ADMIN_WALLETS_API_KEY_RECHARGE_DETAIL,
     ADMIN_WALLETS_API_KEY_REFUND_DETAIL,
 };
-use crate::gateway::handlers::unix_secs_to_rfc3339;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::unix_secs_to_rfc3339;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     response::{IntoResponse, Response},
@@ -105,11 +107,18 @@ pub(super) async fn build_admin_wallet_adjust_response(
         transaction.description.as_deref(),
         unix_secs_to_rfc3339(transaction.created_at_unix_secs),
     );
-    Ok(Json(json!({
+    let response = Json(json!({
         "wallet": wallet_payload,
         "transaction": transaction_payload,
     }))
-    .into_response())
+    .into_response();
+    Ok(attach_admin_audit_response(
+        response,
+        "admin_wallet_balance_adjusted",
+        "adjust_wallet_balance",
+        "wallet",
+        &wallet_id,
+    ))
 }
 
 pub(super) async fn build_admin_wallet_recharge_response(
@@ -175,7 +184,7 @@ pub(super) async fn build_admin_wallet_recharge_response(
         };
     };
     let owner = resolve_admin_wallet_owner_summary(state, &wallet).await?;
-    Ok(Json(json!({
+    let response = Json(json!({
         "wallet": build_admin_wallet_summary_payload(&wallet, &owner),
         "payment_order": build_admin_wallet_payment_order_payload(
             payment_order.id,
@@ -189,7 +198,14 @@ pub(super) async fn build_admin_wallet_recharge_response(
                 .and_then(unix_secs_to_rfc3339),
         ),
     }))
-    .into_response())
+    .into_response();
+    Ok(attach_admin_audit_response(
+        response,
+        "admin_wallet_manual_recharge_created",
+        "create_manual_wallet_recharge",
+        "wallet",
+        &wallet_id,
+    ))
 }
 
 pub(super) async fn build_admin_wallet_process_refund_response(
@@ -223,9 +239,9 @@ pub(super) async fn build_admin_wallet_process_refund_response(
         .admin_process_wallet_refund(&wallet_id, &refund_id, operator_id.as_deref())
         .await?
     {
-        crate::gateway::AdminWalletMutationOutcome::Applied((wallet, refund, transaction)) => {
+        crate::AdminWalletMutationOutcome::Applied((wallet, refund, transaction)) => {
             let owner = resolve_admin_wallet_owner_summary(state, &wallet).await?;
-            Ok(Json(json!({
+            let response = Json(json!({
                 "wallet": build_admin_wallet_summary_payload(&wallet, &owner),
                 "refund": build_admin_wallet_refund_payload(&wallet, &owner, &refund),
                 "transaction": build_admin_wallet_transaction_payload(
@@ -248,15 +264,22 @@ pub(super) async fn build_admin_wallet_process_refund_response(
                     unix_secs_to_rfc3339(transaction.created_at_unix_secs),
                 ),
             }))
-            .into_response())
+            .into_response();
+            Ok(attach_admin_audit_response(
+                response,
+                "admin_wallet_refund_processed",
+                "process_wallet_refund",
+                "wallet_refund",
+                &refund_id,
+            ))
         }
-        crate::gateway::AdminWalletMutationOutcome::NotFound => {
+        crate::AdminWalletMutationOutcome::NotFound => {
             Ok(build_admin_wallet_refund_not_found_response())
         }
-        crate::gateway::AdminWalletMutationOutcome::Invalid(detail) => {
+        crate::AdminWalletMutationOutcome::Invalid(detail) => {
             Ok(build_admin_wallets_bad_request_response(detail))
         }
-        crate::gateway::AdminWalletMutationOutcome::Unavailable => {
+        crate::AdminWalletMutationOutcome::Unavailable => {
             Ok(build_admin_wallets_data_unavailable_response())
         }
     }
@@ -332,14 +355,23 @@ pub(super) async fn build_admin_wallet_complete_refund_response(
         )
         .await?
     {
-        crate::gateway::AdminWalletMutationOutcome::Applied(refund) => Ok(Json(json!({
-            "refund": build_admin_wallet_refund_payload(&wallet, &owner, &refund),
-        }))
-        .into_response()),
-        crate::gateway::AdminWalletMutationOutcome::NotFound => {
+        crate::AdminWalletMutationOutcome::Applied(refund) => {
+            let response = Json(json!({
+                "refund": build_admin_wallet_refund_payload(&wallet, &owner, &refund),
+            }))
+            .into_response();
+            Ok(attach_admin_audit_response(
+                response,
+                "admin_wallet_refund_completed",
+                "complete_wallet_refund",
+                "wallet_refund",
+                &refund_id,
+            ))
+        }
+        crate::AdminWalletMutationOutcome::NotFound => {
             Ok(build_admin_wallet_refund_not_found_response())
         }
-        crate::gateway::AdminWalletMutationOutcome::Invalid(detail) => {
+        crate::AdminWalletMutationOutcome::Invalid(detail) => {
             let detail = if detail == "refund status must be processing before completion" {
                 "只有 processing 状态的退款可以标记完成".to_string()
             } else {
@@ -347,7 +379,7 @@ pub(super) async fn build_admin_wallet_complete_refund_response(
             };
             Ok(build_admin_wallets_bad_request_response(detail))
         }
-        crate::gateway::AdminWalletMutationOutcome::Unavailable => {
+        crate::AdminWalletMutationOutcome::Unavailable => {
             Ok(build_admin_wallets_data_unavailable_response())
         }
     }
@@ -396,9 +428,9 @@ pub(super) async fn build_admin_wallet_fail_refund_response(
         .admin_fail_wallet_refund(&wallet_id, &refund_id, &reason, operator_id.as_deref())
         .await?
     {
-        crate::gateway::AdminWalletMutationOutcome::Applied((wallet, refund, transaction)) => {
+        crate::AdminWalletMutationOutcome::Applied((wallet, refund, transaction)) => {
             let owner = resolve_admin_wallet_owner_summary(state, &wallet).await?;
-            Ok(Json(json!({
+            let response = Json(json!({
                 "wallet": build_admin_wallet_summary_payload(&wallet, &owner),
                 "refund": build_admin_wallet_refund_payload(&wallet, &owner, &refund),
                 "transaction": transaction.map(|transaction| build_admin_wallet_transaction_payload(
@@ -421,15 +453,22 @@ pub(super) async fn build_admin_wallet_fail_refund_response(
                     unix_secs_to_rfc3339(transaction.created_at_unix_secs),
                 )).unwrap_or(serde_json::Value::Null),
             }))
-            .into_response())
+            .into_response();
+            Ok(attach_admin_audit_response(
+                response,
+                "admin_wallet_refund_failed",
+                "fail_wallet_refund",
+                "wallet_refund",
+                &refund_id,
+            ))
         }
-        crate::gateway::AdminWalletMutationOutcome::NotFound => {
+        crate::AdminWalletMutationOutcome::NotFound => {
             Ok(build_admin_wallet_refund_not_found_response())
         }
-        crate::gateway::AdminWalletMutationOutcome::Invalid(detail) => {
+        crate::AdminWalletMutationOutcome::Invalid(detail) => {
             Ok(build_admin_wallets_bad_request_response(detail))
         }
-        crate::gateway::AdminWalletMutationOutcome::Unavailable => {
+        crate::AdminWalletMutationOutcome::Unavailable => {
             Ok(build_admin_wallets_data_unavailable_response())
         }
     }

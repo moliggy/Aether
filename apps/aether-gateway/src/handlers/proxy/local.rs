@@ -1,5 +1,6 @@
 use super::super::{admin, internal, public};
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::{AppState, GatewayError};
 use axum::body::{Body, Bytes};
 use axum::http::Response;
 

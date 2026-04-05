@@ -1,4 +1,4 @@
-use crate::gateway::ai_pipeline::runtime::adapters::{
+use crate::ai_pipeline::runtime::adapters::{
     antigravity::ANTIGRAVITY_PROVIDER_TYPE,
     kiro::{KIRO_ENVELOPE_NAME, PROVIDER_TYPE as KIRO_PROVIDER_TYPE},
 };
@@ -140,12 +140,10 @@ pub(crate) fn provider_adaptation_should_unwrap_stream_envelope(
 #[cfg(test)]
 mod tests {
     use super::{
-        provider_adaptation_allows_sync_finalize_envelope,
-        provider_adaptation_anchor_api_format,
+        provider_adaptation_allows_sync_finalize_envelope, provider_adaptation_anchor_api_format,
         provider_adaptation_requires_eventstream_accept,
-        provider_adaptation_should_unwrap_stream_envelope,
-        ANTIGRAVITY_V1INTERNAL_ENVELOPE_NAME, GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME,
-        KIRO_ENVELOPE_NAME,
+        provider_adaptation_should_unwrap_stream_envelope, ANTIGRAVITY_V1INTERNAL_ENVELOPE_NAME,
+        GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME, KIRO_ENVELOPE_NAME,
     };
 
     #[test]

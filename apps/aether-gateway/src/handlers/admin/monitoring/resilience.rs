@@ -1,8 +1,12 @@
-use super::{admin_monitoring_bad_request_response, admin_monitoring_usage_is_error};
-use crate::gateway::handlers::{
+use super::{
+    admin_monitoring_bad_request_response, admin_monitoring_usage_is_error,
+    AdminMonitoringResilienceSnapshot,
+};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     provider_key_health_summary, query_param_value, unix_secs_to_rfc3339,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     response::{IntoResponse, Response},
@@ -10,16 +14,6 @@ use axum::{
 };
 use serde_json::json;
 use std::collections::BTreeMap;
-
-struct AdminMonitoringResilienceSnapshot {
-    timestamp: chrono::DateTime<chrono::Utc>,
-    health_score: i64,
-    status: &'static str,
-    error_statistics: serde_json::Value,
-    recent_errors: Vec<serde_json::Value>,
-    recommendations: Vec<String>,
-    previous_stats: serde_json::Value,
-}
 
 fn build_admin_monitoring_resilience_recommendations(
     total_errors: usize,

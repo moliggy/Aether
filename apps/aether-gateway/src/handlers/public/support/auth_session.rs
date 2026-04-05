@@ -342,7 +342,7 @@ pub(super) async fn handle_auth_refresh(
     request_context: &GatewayPublicRequestContext,
     headers: &http::HeaderMap,
 ) -> Response<Body> {
-    if crate::gateway::headers::header_value_str(headers, http::header::CONTENT_LENGTH.as_str())
+    if crate::headers::header_value_str(headers, http::header::CONTENT_LENGTH.as_str())
         .as_deref()
         .is_some_and(|value| value.trim() != "0")
     {
@@ -495,7 +495,7 @@ pub(super) async fn handle_auth_refresh(
                 user_id,
                 session_id,
                 &session.refresh_token_hash,
-                &crate::gateway::gateway_data::StoredUserSessionRecord::hash_refresh_token(
+                &crate::data::state::StoredUserSessionRecord::hash_refresh_token(
                     &new_refresh_token,
                 ),
                 now,
@@ -583,12 +583,14 @@ pub(super) async fn build_auth_login_success_response(
             )
         }
     };
-    let session = match crate::gateway::gateway_data::StoredUserSessionRecord::new(
+    let session = match crate::data::state::StoredUserSessionRecord::new(
         session_id,
         user.id.clone(),
         client_device_id,
         None,
-        crate::gateway::gateway_data::StoredUserSessionRecord::hash_refresh_token(&refresh_token),
+        crate::data::state::StoredUserSessionRecord::hash_refresh_token(
+            &refresh_token,
+        ),
         None,
         None,
         Some(now),

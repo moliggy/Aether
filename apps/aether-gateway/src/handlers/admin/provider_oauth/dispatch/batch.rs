@@ -9,12 +9,13 @@ use super::super::provider_oauth_state::{
     current_unix_secs, decode_jwt_claims, exchange_admin_provider_oauth_refresh_token,
     is_fixed_provider_type_for_provider_oauth, save_provider_oauth_batch_task_payload,
 };
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     admin_provider_oauth_batch_import_provider_id,
     admin_provider_oauth_batch_import_task_provider_id,
     ADMIN_PROVIDER_OAUTH_DATA_UNAVAILABLE_DETAIL,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{to_bytes, Body, Bytes},
     http,
@@ -420,7 +421,7 @@ async fn execute_admin_provider_oauth_kiro_batch_import(
         .await?;
     let api_formats = provider_oauth_active_api_formats(&endpoints);
     let key_proxy = provider_oauth_key_proxy_value(proxy_node_id);
-    let adapter = crate::gateway::provider_transport::KiroOAuthRefreshAdapter::default()
+    let adapter = crate::provider_transport::kiro::KiroOAuthRefreshAdapter::default()
         .with_refresh_base_urls(
             admin_provider_oauth_kiro_refresh_base_url_override(state, "kiro_social_refresh"),
             admin_provider_oauth_kiro_refresh_base_url_override(state, "kiro_idc_refresh"),
@@ -431,7 +432,7 @@ async fn execute_admin_provider_oauth_kiro_batch_import(
 
     for (index, entry) in entries.iter().enumerate() {
         let Some(mut refreshed_auth_config) =
-            crate::gateway::provider_transport::KiroAuthConfig::from_json_value(entry)
+            crate::provider_transport::kiro::KiroAuthConfig::from_json_value(entry)
         else {
             failed += 1;
             results.push(json!({

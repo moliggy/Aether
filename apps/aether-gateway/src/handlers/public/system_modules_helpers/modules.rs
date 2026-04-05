@@ -1,5 +1,5 @@
 use super::{module_available_from_env, system_config_bool};
-use crate::gateway::{AppState, GatewayError};
+use crate::{AppState, GatewayError};
 use serde_json::json;
 
 #[derive(Clone, Copy)]

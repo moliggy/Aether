@@ -1,18 +1,16 @@
 use std::time::Duration;
 
+use aether_billing::enrich_usage_event_with_billing;
 use aether_contracts::{ExecutionErrorKind, ExecutionResult};
 use aether_data::repository::video_tasks::{StoredVideoTask, UpsertVideoTask, VideoTaskStatus};
+use aether_usage_runtime::{build_upsert_usage_record_from_event, settle_usage_if_needed};
 use serde_json::{Map, Value};
 use tokio::task::JoinHandle;
-use tracing::warn;
+use tracing::{info, warn};
 
-use super::video::{LocalVideoTaskReadRefreshPlan, LocalVideoTaskSnapshot};
-use crate::gateway::billing_runtime::enrich_usage_event_with_billing;
-use crate::gateway::usage::{
-    build_upsert_usage_record_from_event, UsageEvent, UsageEventData, UsageEventType,
-};
-use crate::gateway::wallet_runtime::settle_usage_if_needed;
-use crate::gateway::{AppState, GatewayError};
+use crate::usage::event::{UsageEvent, UsageEventData, UsageEventType};
+use crate::video_tasks::{LocalVideoTaskReadRefreshPlan, LocalVideoTaskSnapshot};
+use crate::{AppState, GatewayError};
 
 const MAX_VIDEO_TASK_POLL_BACKOFF_SECONDS: u64 = 300;
 const VIDEO_TASK_POLL_CLAIM_SECONDS: u64 = 30;
@@ -51,7 +49,13 @@ pub(crate) async fn execute_video_task_refresh_plan(
             Ok(projected)
         }
         VideoTaskRefreshAttempt::Error(err) => {
-            warn!(error = %err.message, permanent = err.permanent, "gateway video task refresh failed");
+            warn!(
+                event_name = "video_task_refresh_failed",
+                log_type = "event",
+                error = %err.message,
+                permanent = err.permanent,
+                "gateway video task refresh failed"
+            );
             Ok(false)
         }
     }
@@ -91,6 +95,14 @@ async fn poll_video_tasks_once(state: &AppState, batch_size: usize) -> Result<us
                         if let Some(snapshot) = LocalVideoTaskSnapshot::from_stored_task(&stored) {
                             state.video_tasks.record_snapshot(snapshot);
                         }
+                        info!(
+                            event_name = "video_task_status_updated",
+                            log_type = "event",
+                            request_id = %stored.request_id,
+                            task_id = %stored.id,
+                            status = ?stored.status,
+                            "gateway updated video task status from poll refresh"
+                        );
                         finalize_video_task_if_terminal(state, &stored).await;
                         refreshed += 1;
                     }
@@ -104,6 +116,14 @@ async fn poll_video_tasks_once(state: &AppState, batch_size: usize) -> Result<us
                         if let Some(snapshot) = LocalVideoTaskSnapshot::from_stored_task(&stored) {
                             state.video_tasks.record_snapshot(snapshot);
                         }
+                        info!(
+                            event_name = "video_task_status_updated",
+                            log_type = "event",
+                            request_id = %stored.request_id,
+                            task_id = %stored.id,
+                            status = ?stored.status,
+                            "gateway updated video task status from poll refresh"
+                        );
                         finalize_video_task_if_terminal(state, &stored).await;
                         refreshed += 1;
                     }
@@ -128,7 +148,12 @@ pub(crate) fn spawn_video_task_poller(state: AppState) -> Option<JoinHandle<()>>
         loop {
             interval.tick().await;
             if let Err(err) = poll_video_tasks_once(&state, config.batch_size).await {
-                warn!(error = ?err, "gateway video task poller tick failed");
+                warn!(
+                    event_name = "video_task_poller_tick_failed",
+                    log_type = "event",
+                    error = ?err,
+                    "gateway video task poller tick failed"
+                );
             }
         }
     }))
@@ -138,18 +163,21 @@ async fn fetch_video_task_refresh_attempt(
     state: &AppState,
     refresh_plan: &LocalVideoTaskReadRefreshPlan,
 ) -> Result<VideoTaskRefreshAttempt, GatewayError> {
-    let result =
-        match crate::gateway::execute_execution_runtime_sync_plan(state, None, &refresh_plan.plan)
-            .await
-        {
-            Ok(result) => result,
-            Err(err) => {
-                return Ok(VideoTaskRefreshAttempt::Error(VideoTaskRefreshError {
-                    message: format!("{err:?}"),
-                    permanent: false,
-                }));
-            }
-        };
+    let result = match crate::execution_runtime::execute_execution_runtime_sync_plan(
+        state,
+        None,
+        &refresh_plan.plan,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(err) => {
+            return Ok(VideoTaskRefreshAttempt::Error(VideoTaskRefreshError {
+                message: format!("{err:?}"),
+                permanent: false,
+            }));
+        }
+    };
     if result.status_code >= 400 {
         return Ok(VideoTaskRefreshAttempt::Error(
             classify_refresh_result_error(&result),
@@ -410,23 +438,47 @@ pub(crate) async fn finalize_video_task_if_terminal(state: &AppState, task: &Sto
         return;
     };
     let mut event = event;
-    if let Err(err) = enrich_usage_event_with_billing(&state.data, &mut event).await {
-        warn!(error = %err, request_id = %task.request_id, "gateway video task finalize failed to enrich billing");
+    if let Err(err) = enrich_usage_event_with_billing(state.data.as_ref(), &mut event).await {
+        warn!(
+            event_name = "video_task_finalize_billing_enrichment_failed",
+            log_type = "event",
+            request_id = %task.request_id,
+            error = %err,
+            "gateway video task finalize failed to enrich billing"
+        );
     }
     match build_upsert_usage_record_from_event(&event) {
         Ok(record) => match state.data.upsert_usage(record).await {
             Ok(Some(stored)) => {
-                if let Err(err) = settle_usage_if_needed(&state.data, &stored).await {
-                    warn!(error = %err, request_id = %task.request_id, "gateway video task finalize failed to settle usage");
+                if let Err(err) = settle_usage_if_needed(state.data.as_ref(), &stored).await {
+                    warn!(
+                        event_name = "video_task_finalize_settlement_failed",
+                        log_type = "event",
+                        request_id = %task.request_id,
+                        error = %err,
+                        "gateway video task finalize failed to settle usage"
+                    );
                 }
             }
             Ok(None) => {}
             Err(err) => {
-                warn!(error = %err, request_id = %task.request_id, "gateway video task finalize failed to upsert usage");
+                warn!(
+                    event_name = "video_task_finalize_usage_upsert_failed",
+                    log_type = "event",
+                    request_id = %task.request_id,
+                    error = %err,
+                    "gateway video task finalize failed to upsert usage"
+                );
             }
         },
         Err(err) => {
-            warn!(error = %err, request_id = %task.request_id, "gateway video task finalize failed to build usage record");
+            warn!(
+                event_name = "video_task_finalize_usage_build_failed",
+                log_type = "event",
+                request_id = %task.request_id,
+                error = %err,
+                "gateway video task finalize failed to build usage record"
+            );
         }
     }
 }

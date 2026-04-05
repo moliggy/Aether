@@ -1,4 +1,4 @@
-use crate::gateway::handlers::{
+use crate::handlers::{
     unix_secs_to_rfc3339, AdminProviderPoolConfig, AdminProviderPoolRuntimeState,
 };
 use aether_data::repository::provider_catalog::StoredProviderCatalogKey;

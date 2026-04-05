@@ -1,7 +1,7 @@
 use super::super::{normalize_provider_billing_type, parse_optional_rfc3339_unix_secs};
 use super::provider_strategy_shared::admin_provider_strategy_provider_not_found_response;
-use crate::gateway::handlers::unix_secs_to_rfc3339;
-use crate::gateway::{AppState, GatewayError};
+use crate::handlers::unix_secs_to_rfc3339;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,

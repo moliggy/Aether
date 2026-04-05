@@ -1,4 +1,4 @@
-use super::super::round_to;
+use super::super::{attach_admin_audit_response, round_to};
 use super::replay::{
     admin_usage_build_curl_command, admin_usage_curl_headers, admin_usage_curl_url,
     admin_usage_headers_from_value, admin_usage_id_from_action_path,
@@ -7,10 +7,12 @@ use super::replay::{
 };
 use super::{
     admin_usage_bad_request_response, admin_usage_data_unavailable_response,
-    admin_usage_record_json, ADMIN_USAGE_DATA_UNAVAILABLE_DETAIL,
+    admin_usage_provider_key_name, admin_usage_provider_key_names, admin_usage_record_json,
+    ADMIN_USAGE_DATA_UNAVAILABLE_DETAIL,
 };
-use crate::gateway::handlers::query_param_bool;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::query_param_bool;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,
@@ -88,7 +90,7 @@ pub(super) async fn maybe_build_local_admin_usage_detail_response(
                 .unwrap_or_else(|| admin_usage_resolve_request_preview_body(&item, None));
             let curl = admin_usage_build_curl_command(url.as_deref(), &headers, Some(&body));
 
-            return Ok(Some(
+            return Ok(Some(attach_admin_audit_response(
                 Json(json!({
                     "url": url,
                     "method": "POST",
@@ -98,12 +100,29 @@ pub(super) async fn maybe_build_local_admin_usage_detail_response(
                     "original_request_body_available": item.request_body.is_some() || item.provider_request_body.is_some(),
                 }))
                 .into_response(),
-            ));
+                "admin_usage_curl_viewed",
+                "view_usage_curl_replay",
+                "usage_record",
+                &item.id,
+            )));
         }
         Some("replay") => {
-            return Ok(Some(
-                build_admin_usage_replay_response(state, request_context, request_body).await?,
-            ));
+            let mut response =
+                build_admin_usage_replay_response(state, request_context, request_body).await?;
+            if response.status().is_success() {
+                if let Some(usage_id) =
+                    admin_usage_id_from_action_path(&request_context.request_path, "/replay")
+                {
+                    response = attach_admin_audit_response(
+                        response,
+                        "admin_usage_replay_preview_generated",
+                        "preview_usage_replay",
+                        "usage_record",
+                        &usage_id,
+                    );
+                }
+            }
+            return Ok(Some(response));
         }
         Some("detail")
             if request_context.request_method == http::Method::GET
@@ -152,8 +171,12 @@ pub(super) async fn maybe_build_local_admin_usage_detail_response(
                 } else {
                     BTreeMap::new()
                 };
+            let provider_key_names =
+                admin_usage_provider_key_names(state, std::slice::from_ref(&item)).await?;
+            let provider_key_name = admin_usage_provider_key_name(&item, &provider_key_names);
 
-            let mut payload = admin_usage_record_json(&item, &users_by_id);
+            let mut payload =
+                admin_usage_record_json(&item, &users_by_id, provider_key_name.as_deref());
             let request_body = item
                 .request_body
                 .clone()
@@ -231,7 +254,13 @@ pub(super) async fn maybe_build_local_admin_usage_detail_response(
                 payload["client_response_body"] = serde_json::Value::Null;
             }
 
-            return Ok(Some(Json(payload).into_response()));
+            return Ok(Some(attach_admin_audit_response(
+                Json(payload).into_response(),
+                "admin_usage_detail_viewed",
+                "view_usage_detail",
+                "usage_record",
+                &item.id,
+            )));
         }
         _ => {}
     }

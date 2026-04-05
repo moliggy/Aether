@@ -1,14 +1,14 @@
 use super::{
-    admin_billing_optional_bool_filter, admin_billing_optional_epoch_value,
-    admin_billing_optional_filter, admin_billing_pages, admin_billing_parse_page,
-    admin_billing_parse_page_size, admin_billing_validate_safe_expression,
-    build_admin_billing_bad_request_response, build_admin_billing_not_found_response,
-    build_admin_billing_read_only_response, default_admin_billing_json_object,
-    default_admin_billing_true, normalize_admin_billing_optional_text,
-    normalize_admin_billing_required_text,
+    admin_billing_optional_bool_filter, admin_billing_optional_filter, admin_billing_pages,
+    admin_billing_parse_page, admin_billing_parse_page_size,
+    admin_billing_validate_safe_expression, build_admin_billing_bad_request_response,
+    build_admin_billing_not_found_response, build_admin_billing_read_only_response,
+    default_admin_billing_json_object, default_admin_billing_true,
+    normalize_admin_billing_optional_text, normalize_admin_billing_required_text,
 };
-use crate::gateway::handlers::unix_secs_to_rfc3339;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::unix_secs_to_rfc3339;
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,
@@ -17,7 +17,6 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use sqlx::Row;
 
 fn default_admin_billing_rule_task_type() -> String {
     "chat".to_string()
@@ -42,7 +41,7 @@ struct AdminBillingRuleUpsertRequest {
 }
 
 fn build_admin_billing_rule_payload_from_record(
-    record: &crate::gateway::AdminBillingRuleRecord,
+    record: &crate::AdminBillingRuleRecord,
 ) -> serde_json::Value {
     json!({
         "id": record.id,
@@ -74,7 +73,7 @@ fn admin_billing_rule_id_from_path(request_path: &str) -> Option<String> {
 
 fn parse_admin_billing_rule_request(
     request_body: Option<&Bytes>,
-) -> Result<crate::gateway::AdminBillingRuleWriteInput, Response<Body>> {
+) -> Result<crate::AdminBillingRuleWriteInput, Response<Body>> {
     let Some(request_body) = request_body else {
         return Err(build_admin_billing_bad_request_response("请求体不能为空"));
     };
@@ -158,7 +157,7 @@ fn parse_admin_billing_rule_request(
         }
     }
 
-    Ok(crate::gateway::AdminBillingRuleWriteInput {
+    Ok(crate::AdminBillingRuleWriteInput {
         name,
         task_type,
         global_model_id,
@@ -168,24 +167,6 @@ fn parse_admin_billing_rule_request(
         dimension_mappings: serde_json::Value::Object(dimension_mappings.clone()),
         is_enabled: request.is_enabled,
     })
-}
-
-fn admin_billing_rule_payload(
-    row: &sqlx::postgres::PgRow,
-) -> Result<serde_json::Value, GatewayError> {
-    Ok(json!({
-        "id": row.try_get::<String, _>("id").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "name": row.try_get::<String, _>("name").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "task_type": row.try_get::<String, _>("task_type").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "global_model_id": row.try_get::<Option<String>, _>("global_model_id").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "model_id": row.try_get::<Option<String>, _>("model_id").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "expression": row.try_get::<String, _>("expression").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "variables": row.try_get::<Option<serde_json::Value>, _>("variables").map_err(|err| GatewayError::Internal(err.to_string()))?.unwrap_or_else(|| json!({})),
-        "dimension_mappings": row.try_get::<Option<serde_json::Value>, _>("dimension_mappings").map_err(|err| GatewayError::Internal(err.to_string()))?.unwrap_or_else(|| json!({})),
-        "is_enabled": row.try_get::<bool, _>("is_enabled").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "created_at": admin_billing_optional_epoch_value(row, "created_at_unix_secs")?,
-        "updated_at": admin_billing_optional_epoch_value(row, "updated_at_unix_secs")?,
-    }))
 }
 
 async fn build_admin_list_billing_rules_response(
@@ -207,72 +188,20 @@ async fn build_admin_list_billing_rules_response(
         Err(detail) => return Ok(build_admin_billing_bad_request_response(detail)),
     };
 
-    let mut total = 0_u64;
-    let mut items = Vec::new();
-    if let Some((records, record_total)) = state
+    let (items, total) = if let Some((records, record_total)) = state
         .list_admin_billing_rules(task_type.as_deref(), is_enabled, page, page_size)
         .await?
     {
-        total = record_total;
-        items = records
-            .iter()
-            .map(build_admin_billing_rule_payload_from_record)
-            .collect::<Vec<_>>();
-    } else if let Some(pool) = state.postgres_pool() {
-        let count_row = sqlx::query(
-            r#"
-SELECT COUNT(*) AS total
-FROM billing_rules
-WHERE ($1::TEXT IS NULL OR task_type = $1)
-  AND ($2::BOOL IS NULL OR is_enabled = $2)
-            "#,
+        (
+            records
+                .iter()
+                .map(build_admin_billing_rule_payload_from_record)
+                .collect::<Vec<_>>(),
+            record_total,
         )
-        .bind(task_type.as_deref())
-        .bind(is_enabled)
-        .fetch_one(&pool)
-        .await
-        .map_err(|err| GatewayError::Internal(err.to_string()))?;
-        total = count_row
-            .try_get::<i64, _>("total")
-            .map_err(|err| GatewayError::Internal(err.to_string()))?
-            .max(0) as u64;
-
-        let offset = u64::from(page.saturating_sub(1) * page_size);
-        let rows = sqlx::query(
-            r#"
-SELECT
-  id,
-  name,
-  task_type,
-  global_model_id,
-  model_id,
-  expression,
-  variables,
-  dimension_mappings,
-  is_enabled,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
-FROM billing_rules
-WHERE ($1::TEXT IS NULL OR task_type = $1)
-  AND ($2::BOOL IS NULL OR is_enabled = $2)
-ORDER BY updated_at DESC
-OFFSET $3
-LIMIT $4
-            "#,
-        )
-        .bind(task_type.as_deref())
-        .bind(is_enabled)
-        .bind(i64::try_from(offset).map_err(|err| GatewayError::Internal(err.to_string()))?)
-        .bind(i64::from(page_size))
-        .fetch_all(&pool)
-        .await
-        .map_err(|err| GatewayError::Internal(err.to_string()))?;
-
-        items = rows
-            .iter()
-            .map(admin_billing_rule_payload)
-            .collect::<Result<Vec<_>, GatewayError>>()?;
-    }
+    } else {
+        (Vec::new(), 0)
+    };
 
     Ok(Json(json!({
         "items": items,
@@ -291,40 +220,10 @@ async fn build_admin_get_billing_rule_response(
     let Some(rule_id) = admin_billing_rule_id_from_path(&request_context.request_path) else {
         return Ok(build_admin_billing_bad_request_response("缺少 rule_id"));
     };
-    if let Some(record) = state.read_admin_billing_rule(&rule_id).await? {
-        return Ok(Json(build_admin_billing_rule_payload_from_record(&record)).into_response());
-    }
-    let Some(pool) = state.postgres_pool() else {
-        return Ok(build_admin_billing_not_found_response(
-            "Billing rule not found",
-        ));
-    };
-
-    let row = sqlx::query(
-        r#"
-SELECT
-  id,
-  name,
-  task_type,
-  global_model_id,
-  model_id,
-  expression,
-  variables,
-  dimension_mappings,
-  is_enabled,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
-FROM billing_rules
-WHERE id = $1
-        "#,
-    )
-    .bind(&rule_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|err| GatewayError::Internal(err.to_string()))?;
-
-    match row {
-        Some(row) => Ok(Json(admin_billing_rule_payload(&row)?).into_response()),
+    match state.read_admin_billing_rule(&rule_id).await? {
+        Some(record) => {
+            Ok(Json(build_admin_billing_rule_payload_from_record(&record)).into_response())
+        }
         None => Ok(build_admin_billing_not_found_response(
             "Billing rule not found",
         )),
@@ -340,16 +239,16 @@ async fn build_admin_create_billing_rule_response(
         Err(response) => return Ok(response),
     };
     match state.create_admin_billing_rule(&input).await? {
-        crate::gateway::LocalMutationOutcome::Applied(record) => {
+        crate::LocalMutationOutcome::Applied(record) => {
             Ok(Json(build_admin_billing_rule_payload_from_record(&record)).into_response())
         }
-        crate::gateway::LocalMutationOutcome::Invalid(detail) => {
+        crate::LocalMutationOutcome::Invalid(detail) => {
             Ok(build_admin_billing_bad_request_response(detail))
         }
-        crate::gateway::LocalMutationOutcome::NotFound => Ok(
+        crate::LocalMutationOutcome::NotFound => Ok(
             build_admin_billing_not_found_response("Billing rule not found"),
         ),
-        crate::gateway::LocalMutationOutcome::Unavailable => Ok(
+        crate::LocalMutationOutcome::Unavailable => Ok(
             build_admin_billing_read_only_response("当前为只读模式，无法创建计费规则"),
         ),
     }
@@ -368,16 +267,16 @@ async fn build_admin_update_billing_rule_response(
         Err(response) => return Ok(response),
     };
     match state.update_admin_billing_rule(&rule_id, &input).await? {
-        crate::gateway::LocalMutationOutcome::Applied(record) => {
+        crate::LocalMutationOutcome::Applied(record) => {
             Ok(Json(build_admin_billing_rule_payload_from_record(&record)).into_response())
         }
-        crate::gateway::LocalMutationOutcome::NotFound => Ok(
+        crate::LocalMutationOutcome::NotFound => Ok(
             build_admin_billing_not_found_response("Billing rule not found"),
         ),
-        crate::gateway::LocalMutationOutcome::Invalid(detail) => {
+        crate::LocalMutationOutcome::Invalid(detail) => {
             Ok(build_admin_billing_bad_request_response(detail))
         }
-        crate::gateway::LocalMutationOutcome::Unavailable => Ok(
+        crate::LocalMutationOutcome::Unavailable => Ok(
             build_admin_billing_read_only_response("当前为只读模式，无法更新计费规则"),
         ),
     }

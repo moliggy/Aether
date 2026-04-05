@@ -1,5 +1,5 @@
-use crate::gateway::provider_transport::snapshot::GatewayProviderTransportSnapshot;
-use crate::gateway::provider_transport::{
+use crate::provider_transport::snapshot::GatewayProviderTransportSnapshot;
+use crate::provider_transport::{
     body_rules_are_locally_supported, header_rules_are_locally_supported,
     resolve_transport_tls_profile, supports_local_oauth_request_auth_resolution,
     transport_proxy_is_locally_supported,

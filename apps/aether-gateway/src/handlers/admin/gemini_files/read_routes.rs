@@ -4,12 +4,13 @@ use super::{
     ADMIN_GEMINI_FILES_DEFAULT_PAGE, ADMIN_GEMINI_FILES_DEFAULT_PAGE_SIZE,
     ADMIN_GEMINI_FILES_MAX_PAGE_SIZE,
 };
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     admin_gemini_file_mapping_id_from_path, is_admin_gemini_files_capable_keys_root,
     is_admin_gemini_files_mappings_root, is_admin_gemini_files_stats_root,
     query_param_optional_bool, query_param_value, unix_secs_to_rfc3339,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::body::Body;
 use axum::http::{self, Response};
 use axum::response::IntoResponse;

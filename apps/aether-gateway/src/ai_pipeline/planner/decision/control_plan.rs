@@ -1,4 +1,4 @@
-use crate::gateway::ai_pipeline::planner::common::{
+use crate::ai_pipeline::planner::common::{
     CLAUDE_CHAT_STREAM_PLAN_KIND, CLAUDE_CHAT_SYNC_PLAN_KIND, CLAUDE_CLI_STREAM_PLAN_KIND,
     CLAUDE_CLI_SYNC_PLAN_KIND, EXECUTION_RUNTIME_STREAM_ACTION, EXECUTION_RUNTIME_SYNC_ACTION,
     GEMINI_CHAT_STREAM_PLAN_KIND, GEMINI_CHAT_SYNC_PLAN_KIND, GEMINI_CLI_STREAM_PLAN_KIND,
@@ -10,7 +10,7 @@ use crate::gateway::ai_pipeline::planner::common::{
     OPENAI_VIDEO_CONTENT_PLAN_KIND, OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND,
     OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND, OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
 };
-use crate::gateway::ai_pipeline::planner::plan_builders::{
+use crate::ai_pipeline::planner::plan_builders::{
     build_gemini_stream_plan_from_decision, build_gemini_sync_plan_from_decision,
     build_openai_chat_stream_plan_from_decision, build_openai_chat_sync_plan_from_decision,
     build_openai_cli_stream_plan_from_decision, build_openai_cli_sync_plan_from_decision,
@@ -18,9 +18,10 @@ use crate::gateway::ai_pipeline::planner::plan_builders::{
     build_standard_stream_plan_from_decision, build_standard_sync_plan_from_decision,
     LocalStreamPlanAndReport, LocalSyncPlanAndReport,
 };
-use crate::gateway::{
-    AppState, GatewayControlAuthContext, GatewayControlDecision, GatewayControlPlanResponse,
-    GatewayControlSyncDecisionResponse, GatewayError,
+use crate::control::GatewayControlAuthContext;
+use crate::control::GatewayControlDecision;
+use crate::{
+    AppState, GatewayControlPlanResponse, GatewayControlSyncDecisionResponse, GatewayError,
 };
 
 pub(crate) async fn maybe_build_sync_plan_payload_impl(

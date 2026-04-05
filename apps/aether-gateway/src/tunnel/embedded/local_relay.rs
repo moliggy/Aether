@@ -13,6 +13,8 @@ use bytes::BytesMut;
 use futures_util::StreamExt;
 use tracing::warn;
 
+use crate::api::response::apply_streaming_response_headers;
+
 use super::hub::{LocalBodyEvent, LocalStream};
 use super::protocol;
 use super::AppState;
@@ -261,6 +263,7 @@ pub async fn relay_request(
     let mut builder = Response::builder().status(response_head.status);
     if let Some(headers) = builder.headers_mut() {
         append_headers(headers, &response_head.headers);
+        apply_streaming_response_headers(headers);
     }
     match builder.body(Body::from_stream(body_stream)) {
         Ok(response) => maybe_hold_axum_response_permit(response, request_permit),

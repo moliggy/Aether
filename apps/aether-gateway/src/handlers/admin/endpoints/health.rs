@@ -3,11 +3,12 @@ use super::super::{
     build_admin_health_summary_payload, build_admin_key_health_payload, recover_admin_key_health,
     recover_all_admin_key_health,
 };
-use crate::gateway::handlers::public::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::public::{
     build_api_format_health_monitor_payload, ApiFormatHealthMonitorOptions,
 };
-use crate::gateway::handlers::query_param_value;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::handlers::query_param_value;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,

@@ -3,7 +3,8 @@ use super::{
     payments_callbacks::maybe_build_local_admin_payment_callbacks_response,
     payments_orders::maybe_build_local_admin_payment_orders_response,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::{AppState, GatewayError};
 use axum::{body::Body, http, response::Response};
 
 pub(super) async fn maybe_build_local_admin_payments_response(

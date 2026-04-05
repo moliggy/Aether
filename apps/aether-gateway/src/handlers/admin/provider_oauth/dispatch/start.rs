@@ -4,10 +4,11 @@ use super::super::provider_oauth_state::{
     generate_provider_oauth_pkce_verifier, is_fixed_provider_type_for_provider_oauth,
     provider_oauth_pkce_s256, save_provider_oauth_state,
 };
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     admin_provider_oauth_start_key_id, admin_provider_oauth_start_provider_id,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,

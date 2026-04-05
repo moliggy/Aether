@@ -23,9 +23,8 @@ pub(crate) use self::remote::{
 };
 pub(crate) use self::stream_path::maybe_build_stream_decision_payload_via_local_path;
 pub(crate) use self::sync_path::maybe_build_sync_decision_payload_via_local_path;
-use crate::gateway::{
-    AppState, GatewayControlDecision, GatewayControlSyncDecisionResponse, GatewayError,
-};
+use crate::control::GatewayControlDecision;
+use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};
 
 pub(crate) fn build_intent_plan_bypass_cache_key(
     plan_kind: &str,

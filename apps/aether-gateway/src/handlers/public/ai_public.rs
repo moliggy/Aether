@@ -1,5 +1,7 @@
-use crate::gateway::async_task::CancelVideoTaskError;
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError, GatewayPublicRequestContext};
+use crate::async_task::CancelVideoTaskError;
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayPublicRequestContext;
+use crate::{AppState, GatewayError};
 use aether_data::repository::video_tasks::{
     StoredVideoTask, VideoTaskQueryFilter, VideoTaskStatus,
 };
@@ -243,7 +245,7 @@ async fn build_local_gemini_video_operation_cancel_response(
             }
         };
 
-    match crate::gateway::async_task::cancel_video_task_record(state, &task.id).await {
+    match crate::async_task::cancel_video_task_record(state, &task.id).await {
         Ok(_) => Json(json!({})).into_response(),
         Err(CancelVideoTaskError::NotFound) => build_ai_public_error_response(
             http::StatusCode::NOT_FOUND,

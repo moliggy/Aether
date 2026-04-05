@@ -1,54 +1,54 @@
+use std::ops::Deref;
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use super::store::{FileVideoTaskStore, InMemoryVideoTaskStore, VideoTaskStore};
-use super::VideoTaskTruthSourceMode;
+use crate::control::GatewayControlAuthContext;
 
-mod follow_up;
-mod lifecycle;
-mod read;
-mod refresh;
+use super::{LocalVideoTaskFollowUpPlan, VideoTaskTruthSourceMode};
 
 #[derive(Debug)]
-pub(crate) struct VideoTaskService {
-    truth_source_mode: VideoTaskTruthSourceMode,
-    store: Arc<dyn VideoTaskStore>,
-}
+pub(crate) struct VideoTaskService(aether_video_tasks_core::VideoTaskService);
 
 impl VideoTaskService {
     pub(crate) fn new(mode: VideoTaskTruthSourceMode) -> Self {
-        Self::with_store(mode, Arc::new(InMemoryVideoTaskStore::default()))
+        Self(aether_video_tasks_core::VideoTaskService::new(mode))
     }
 
     pub(crate) fn with_file_store(
         mode: VideoTaskTruthSourceMode,
         path: impl Into<PathBuf>,
     ) -> std::io::Result<Self> {
-        Ok(Self::with_store(
-            mode,
-            Arc::new(FileVideoTaskStore::new(path)?),
+        Ok(Self(
+            aether_video_tasks_core::VideoTaskService::with_file_store(mode, path)?,
         ))
     }
 
-    fn with_store(mode: VideoTaskTruthSourceMode, store: Arc<dyn VideoTaskStore>) -> Self {
-        Self {
-            truth_source_mode: mode,
-            store,
-        }
-    }
-
     pub(crate) fn with_truth_source_mode(&self, mode: VideoTaskTruthSourceMode) -> Self {
-        Self {
-            truth_source_mode: mode,
-            store: self.store.clone(),
-        }
+        Self(self.0.with_truth_source_mode(mode))
     }
 
-    pub(crate) fn is_rust_authoritative(&self) -> bool {
-        self.truth_source_mode == VideoTaskTruthSourceMode::RustAuthoritative
+    pub(crate) fn prepare_follow_up_sync_plan(
+        &self,
+        plan_kind: &str,
+        request_path: &str,
+        body_json: Option<&serde_json::Value>,
+        auth_context: Option<&GatewayControlAuthContext>,
+        trace_id: &str,
+    ) -> Option<LocalVideoTaskFollowUpPlan> {
+        self.0.prepare_follow_up_sync_plan(
+            plan_kind,
+            request_path,
+            body_json,
+            auth_context.map(|value| value.user_id.as_str()),
+            auth_context.map(|value| value.api_key_id.as_str()),
+            trace_id,
+        )
     }
+}
 
-    pub(crate) fn truth_source_mode(&self) -> VideoTaskTruthSourceMode {
-        self.truth_source_mode
+impl Deref for VideoTaskService {
+    type Target = aether_video_tasks_core::VideoTaskService;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }

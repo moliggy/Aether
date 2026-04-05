@@ -35,6 +35,16 @@ pub(super) struct AdminMonitoringCacheAffinityRecord {
     pub(super) request_count: u64,
 }
 
+pub(super) struct AdminMonitoringResilienceSnapshot {
+    pub(super) timestamp: chrono::DateTime<chrono::Utc>,
+    pub(super) health_score: i64,
+    pub(super) status: &'static str,
+    pub(super) error_statistics: serde_json::Value,
+    pub(super) recent_errors: Vec<serde_json::Value>,
+    pub(super) recommendations: Vec<String>,
+    pub(super) previous_stats: serde_json::Value,
+}
+
 pub(super) fn admin_monitoring_data_unavailable_response() -> Response<Body> {
     (
         http::StatusCode::SERVICE_UNAVAILABLE,

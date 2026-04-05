@@ -1,5 +1,6 @@
-use crate::gateway::handlers::{json_string_list, unix_secs_to_rfc3339};
-use crate::gateway::GatewayPublicRequestContext;
+use crate::audit::attach_admin_audit_event;
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{json_string_list, unix_secs_to_rfc3339};
 use aether_data::repository::provider_catalog::StoredProviderCatalogKey;
 use axum::{
     body::Body,
@@ -40,6 +41,17 @@ pub(crate) fn build_admin_proxy_auth_required_response(
         })),
     )
         .into_response()
+}
+
+pub(crate) fn attach_admin_audit_response(
+    mut response: Response<Body>,
+    event_name: &'static str,
+    action: &'static str,
+    target_type: &'static str,
+    target_id: &str,
+) -> Response<Body> {
+    attach_admin_audit_event(&mut response, event_name, action, target_type, target_id);
+    response
 }
 
 pub(crate) fn provider_catalog_key_supports_format(

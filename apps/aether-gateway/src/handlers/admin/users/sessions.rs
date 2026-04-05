@@ -1,5 +1,7 @@
 use super::{build_admin_users_bad_request_response, format_optional_datetime_iso8601};
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,
@@ -33,7 +35,7 @@ fn admin_user_session_parts(request_path: &str) -> Option<(String, String)> {
 }
 
 fn format_required_session_datetime_iso8601(
-    session: &crate::gateway::gateway_data::StoredUserSessionRecord,
+    session: &crate::data::state::StoredUserSessionRecord,
 ) -> String {
     session
         .created_at
@@ -128,7 +130,13 @@ pub(super) async fn build_admin_delete_user_session_response(
         )
         .await?;
 
-    Ok(Json(json!({ "message": "用户设备已强制下线" })).into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({ "message": "用户设备已强制下线" })).into_response(),
+        "admin_user_session_deleted",
+        "delete_user_session",
+        "user_session",
+        &session_id,
+    ))
 }
 
 pub(super) async fn build_admin_delete_user_sessions_response(
@@ -151,9 +159,15 @@ pub(super) async fn build_admin_delete_user_sessions_response(
         .revoke_all_user_sessions(&user_id, chrono::Utc::now(), "admin_revoke_all_sessions")
         .await?;
 
-    Ok(Json(json!({
-        "message": "已强制下线该用户所有设备",
-        "revoked_count": revoked_count,
-    }))
-    .into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({
+            "message": "已强制下线该用户所有设备",
+            "revoked_count": revoked_count,
+        }))
+        .into_response(),
+        "admin_user_sessions_deleted",
+        "delete_user_sessions",
+        "user",
+        &user_id,
+    ))
 }

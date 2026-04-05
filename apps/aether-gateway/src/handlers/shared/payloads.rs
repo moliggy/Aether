@@ -190,7 +190,7 @@ pub(crate) struct InternalGatewayExecuteRequest {
     #[serde(default)]
     pub(crate) body_base64: Option<String>,
     #[serde(default)]
-    pub(crate) auth_context: Option<crate::gateway::GatewayControlAuthContext>,
+    pub(crate) auth_context: Option<crate::control::GatewayControlAuthContext>,
 }
 
 #[derive(Debug, Deserialize)]

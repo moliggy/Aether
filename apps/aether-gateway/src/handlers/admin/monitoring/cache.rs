@@ -29,7 +29,8 @@ use super::{
     ADMIN_MONITORING_DYNAMIC_RESERVATION_STABLE_MIN_RESERVATION,
     ADMIN_MONITORING_REDIS_CACHE_CATEGORIES,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,

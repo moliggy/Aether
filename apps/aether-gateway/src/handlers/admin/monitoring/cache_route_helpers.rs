@@ -1,7 +1,7 @@
 use super::{
     ADMIN_MONITORING_CACHE_AFFINITY_REDIS_REQUIRED_DETAIL, ADMIN_MONITORING_REDIS_REQUIRED_DETAIL,
 };
-use crate::gateway::handlers::query_param_value;
+use crate::handlers::query_param_value;
 use axum::{
     body::Body,
     http,

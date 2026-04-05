@@ -216,7 +216,7 @@
 
         <!-- 移动端卡片列表 -->
         <div
-          v-if="!loading && filteredGlobalModels.length > 0"
+          v-if="!loading && paginatedGlobalModels.length > 0"
           class="xl:hidden divide-y divide-border/40"
         >
           <div
@@ -294,9 +294,9 @@
 
         <!-- 分页 -->
         <Pagination
-          v-if="!loading && filteredGlobalModels.length > 0"
+          v-if="!loading && totalGlobalModels > 0"
           :current="catalogCurrentPage"
-          :total="filteredGlobalModels.length"
+          :total="totalGlobalModels"
           :page-size="catalogPageSize"
           cache-key="model-management-page-size"
           @update:current="catalogCurrentPage = $event"
@@ -508,7 +508,14 @@
           <!-- 模型列表 -->
           <div class="border rounded-lg overflow-hidden">
             <div class="max-h-96 overflow-y-auto">
-              <template v-if="filteredBatchManageModels.length > 0">
+              <div
+                v-if="batchManageLoading"
+                class="flex items-center justify-center py-12"
+              >
+                <Loader2 class="w-6 h-6 animate-spin text-primary" />
+              </div>
+
+              <template v-else-if="filteredBatchManageModels.length > 0">
                 <div
                   class="flex items-center justify-between px-3 py-2 bg-muted sticky top-0 z-10"
                 >
@@ -569,7 +576,7 @@
 
               <!-- 空状态 -->
               <div
-                v-if="filteredBatchManageModels.length === 0"
+                v-else
                 class="flex flex-col items-center justify-center py-12 text-muted-foreground"
               >
                 <p class="text-sm">
@@ -611,7 +618,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onBeforeUnmount, watch } from 'vue'
 import {
   Plus,
   Edit,
@@ -701,12 +708,14 @@ const editingModel = ref<GlobalModelResponse | null>(null)
 
 // 数据
 const globalModels = ref<GlobalModelResponse[]>([])
-const providers = ref<ProviderWithEndpointsSummary[]>([])
-const GLOBAL_MODELS_FETCH_PAGE_SIZE = 1000
+const totalGlobalModels = ref(0)
+const batchManageModels = ref<GlobalModelResponse[]>([])
+const batchManageLoading = ref(false)
+const GLOBAL_MODELS_BATCH_FETCH_PAGE_SIZE = 1000
 let globalModelsRequestId = 0
 let modelSelectionRequestId = 0
 let modelProvidersRequestId = 0
-let providersRequestId = 0
+let batchManageModelsRequestId = 0
 let providerOptionsRequest: Promise<void> | null = null
 
 // 模型目录分页
@@ -988,15 +997,6 @@ async function saveBatchProviderChanges() {
 const filteredGlobalModels = computed(() => {
   let result = globalModels.value
 
-  // 搜索（支持空格分隔的多关键词 AND 搜索）
-  if (searchQuery.value) {
-    const keywords = searchQuery.value.toLowerCase().split(/\s+/).filter(k => k.length > 0)
-    result = result.filter(m => {
-      const searchableText = `${m.name} ${m.display_name || ''}`.toLowerCase()
-      return keywords.every(keyword => searchableText.includes(keyword))
-    })
-  }
-
   // 能力筛选
   if (capabilityFilters.value.streaming) {
     result = result.filter(m => m.config?.streaming !== false)
@@ -1018,20 +1018,55 @@ const filteredGlobalModels = computed(() => {
 })
 
 // 模型目录分页计算
-const paginatedGlobalModels = computed(() => {
-  const start = (catalogCurrentPage.value - 1) * catalogPageSize.value
-  const end = start + catalogPageSize.value
-  return filteredGlobalModels.value.slice(start, end)
+const paginatedGlobalModels = computed(() => filteredGlobalModels.value)
+
+watch(searchQuery, () => {
+  catalogCurrentPage.value = 1
 })
 
-// 搜索或筛选变化时重置到第一页
-watch([searchQuery, capabilityFilters], () => {
+watch(catalogPageSize, () => {
   catalogCurrentPage.value = 1
-}, { deep: true })
+})
+
+const globalModelsQueryParams = computed(() => ({
+  skip: Math.max(0, (catalogCurrentPage.value - 1) * catalogPageSize.value),
+  limit: catalogPageSize.value,
+  search: searchQuery.value.trim() || undefined,
+}))
+
+let modelSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
 async function loadGlobalModels() {
   const requestId = ++globalModelsRequestId
   loading.value = true
+  try {
+    const response = await listGlobalModels(globalModelsQueryParams.value)
+    if (requestId !== globalModelsRequestId) return
+
+    const pageModels = response.models || []
+    const total = typeof response.total === 'number' ? response.total : pageModels.length
+    const totalPages = Math.max(1, Math.ceil(total / Math.max(catalogPageSize.value, 1)))
+    if (total > 0 && catalogCurrentPage.value > totalPages) {
+      catalogCurrentPage.value = totalPages
+      return
+    }
+
+    globalModels.value = pageModels
+    totalGlobalModels.value = total
+  } catch (err: unknown) {
+    if (requestId !== globalModelsRequestId) return
+    log.error('加载模型失败:', err)
+    showError(parseApiError(err, '加载模型失败'), '加载模型失败')
+  } finally {
+    if (requestId === globalModelsRequestId) {
+      loading.value = false
+    }
+  }
+}
+
+async function loadBatchManageModels() {
+  const requestId = ++batchManageModelsRequestId
+  batchManageLoading.value = true
   try {
     const allModels: GlobalModelResponse[] = []
     let skip = 0
@@ -1040,7 +1075,7 @@ async function loadGlobalModels() {
     while (true) {
       const response = await listGlobalModels({
         skip,
-        limit: GLOBAL_MODELS_FETCH_PAGE_SIZE,
+        limit: GLOBAL_MODELS_BATCH_FETCH_PAGE_SIZE,
       })
       if (expectedTotal === null && typeof response.total === 'number') {
         expectedTotal = response.total
@@ -1051,22 +1086,22 @@ async function loadGlobalModels() {
       if (expectedTotal !== null && allModels.length >= expectedTotal) {
         break
       }
-      if (pageModels.length < GLOBAL_MODELS_FETCH_PAGE_SIZE) {
+      if (pageModels.length < GLOBAL_MODELS_BATCH_FETCH_PAGE_SIZE) {
         break
       }
 
       skip += pageModels.length
     }
 
-    if (requestId !== globalModelsRequestId) return
-    globalModels.value = allModels
+    if (requestId !== batchManageModelsRequestId) return
+    batchManageModels.value = allModels
   } catch (err: unknown) {
-    if (requestId !== globalModelsRequestId) return
-    log.error('加载模型失败:', err)
+    if (requestId !== batchManageModelsRequestId) return
+    log.error('加载批量管理模型失败:', err)
     showError(parseApiError(err, '加载模型失败'), '加载模型失败')
   } finally {
-    if (requestId === globalModelsRequestId) {
-      loading.value = false
+    if (requestId === batchManageModelsRequestId) {
+      batchManageLoading.value = false
     }
   }
 }
@@ -1246,8 +1281,8 @@ function closeBatchAddProvidersDialog() {
 // 批量管理全局模型 - 过滤
 const filteredBatchManageModels = computed(() => {
   const query = batchManageSearchQuery.value.toLowerCase().trim()
-  if (!query) return globalModels.value
-  return globalModels.value.filter(m => {
+  if (!query) return batchManageModels.value
+  return batchManageModels.value.filter(m => {
     const searchableText = `${m.name} ${m.display_name || ''}`.toLowerCase()
     return searchableText.includes(query)
   })
@@ -1260,7 +1295,7 @@ function hasNoPrice(m: GlobalModelResponse): boolean {
 }
 
 const batchManageShortcuts = computed(() => {
-  const models = globalModels.value
+  const models = batchManageModels.value
   const defs: { label: string; description: string; filter: (m: GlobalModelResponse) => boolean }[] = [
     { label: '无提供商', description: '没有关联任何提供商的模型', filter: m => (m.provider_count || 0) === 0 },
     { label: '无活跃提供商', description: '有提供商但没有活跃提供商的模型', filter: m => (m.active_provider_count || 0) === 0 && (m.provider_count || 0) > 0 },
@@ -1273,7 +1308,7 @@ const batchManageShortcuts = computed(() => {
 
 // 批量管理 - 应用快捷选中
 function applyBatchManageShortcut(filter: (m: GlobalModelResponse) => boolean) {
-  const matchedIds = globalModels.value.filter(filter).map(m => m.id)
+  const matchedIds = batchManageModels.value.filter(filter).map(m => m.id)
   selectedBatchManageModelIds.value = new Set(matchedIds)
 }
 
@@ -1313,6 +1348,7 @@ function openBatchManageDialog() {
   batchManageSearchQuery.value = ''
   selectedBatchManageModelIds.value = new Set()
   batchManageDialogOpen.value = true
+  loadBatchManageModels()
 }
 
 // 确认批量删除模型
@@ -1344,7 +1380,7 @@ async function confirmBatchDeleteModels() {
     }
 
     selectedBatchManageModelIds.value = new Set()
-    await loadGlobalModels()
+    await Promise.all([loadGlobalModels(), loadBatchManageModels()])
   } catch (err: unknown) {
     showError(parseApiError(err, '批量删除失败'), '错误')
   } finally {
@@ -1491,30 +1527,24 @@ async function refreshData() {
   await loadGlobalModels()
 }
 
-async function loadProviders() {
-  const requestId = ++providersRequestId
-  try {
-    const nextProviders = (await getProvidersSummary({ page_size: 9999 })).items
-    if (requestId !== providersRequestId) return
-    providers.value = nextProviders
-  } catch (err: unknown) {
-    if (requestId !== providersRequestId) return
-    showError(parseApiError(err, '加载 Provider 列表失败'), '加载 Provider 列表失败')
+watch(globalModelsQueryParams, (newParams, oldParams) => {
+  if (modelSearchDebounceTimer) clearTimeout(modelSearchDebounceTimer)
+  const isSearchOnly = newParams.search !== oldParams?.search
+    && newParams.skip === oldParams?.skip
+    && newParams.limit === oldParams?.limit
+  if (isSearchOnly) {
+    modelSearchDebounceTimer = setTimeout(loadGlobalModels, 300)
+  } else {
+    loadGlobalModels()
   }
-}
-
-onMounted(async () => {
-  await Promise.all([
-    refreshData(),
-    loadProviders(),
-  ])
-})
+}, { immediate: true })
 
 onBeforeUnmount(() => {
+  if (modelSearchDebounceTimer) clearTimeout(modelSearchDebounceTimer)
   globalModelsRequestId += 1
+  batchManageModelsRequestId += 1
   modelSelectionRequestId += 1
   modelProvidersRequestId += 1
-  providersRequestId += 1
 })
 </script>
 

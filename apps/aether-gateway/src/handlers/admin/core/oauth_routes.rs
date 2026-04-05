@@ -2,11 +2,13 @@ use super::super::{
     build_admin_oauth_provider_payload, build_admin_oauth_supported_types_payload,
     build_admin_oauth_upsert_record, build_proxy_error_response,
 };
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::{
     admin_oauth_provider_type_from_path, admin_oauth_test_provider_type_from_path,
     AdminOAuthProviderUpsertRequest,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,
@@ -44,7 +46,7 @@ pub(super) async fn maybe_build_local_admin_core_oauth_response(
         )
     {
         let providers = state.list_oauth_provider_configs().await?;
-        return Ok(Some(
+        return Ok(Some(attach_admin_audit_response(
             Json(
                 providers
                     .iter()
@@ -52,7 +54,11 @@ pub(super) async fn maybe_build_local_admin_core_oauth_response(
                     .collect::<Vec<_>>(),
             )
             .into_response(),
-        ));
+            "admin_oauth_provider_configs_viewed",
+            "list_oauth_provider_configs",
+            "oauth_provider",
+            "all",
+        )));
     }
 
     if decision.route_kind.as_deref() == Some("get_provider")
@@ -71,9 +77,13 @@ pub(super) async fn maybe_build_local_admin_core_oauth_response(
         };
         return Ok(Some(
             match state.get_oauth_provider_config(&provider_type).await? {
-                Some(provider) => {
-                    Json(build_admin_oauth_provider_payload(&provider)).into_response()
-                }
+                Some(provider) => attach_admin_audit_response(
+                    Json(build_admin_oauth_provider_payload(&provider)).into_response(),
+                    "admin_oauth_provider_config_viewed",
+                    "view_oauth_provider_config",
+                    "oauth_provider",
+                    &provider_type,
+                ),
                 None => (
                     http::StatusCode::NOT_FOUND,
                     Json(json!({ "detail": "Provider 配置不存在" })),
@@ -299,7 +309,7 @@ pub(super) async fn maybe_build_local_admin_core_oauth_response(
         } else {
             "provider 未安装/不可用"
         };
-        return Ok(Some(
+        return Ok(Some(attach_admin_audit_response(
             Json(json!({
                 "authorization_url_reachable": false,
                 "token_url_reachable": false,
@@ -307,7 +317,11 @@ pub(super) async fn maybe_build_local_admin_core_oauth_response(
                 "details": details,
             }))
             .into_response(),
-        ));
+            "admin_oauth_provider_tested",
+            "test_oauth_provider_config",
+            "oauth_provider",
+            &provider_type,
+        )));
     }
 
     Ok(None)

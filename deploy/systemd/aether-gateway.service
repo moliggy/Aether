@@ -1,0 +1,27 @@
+[Unit]
+Description=Aether Gateway
+Documentation=https://github.com/fawney19/Aether
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+Group=__SERVICE_GROUP__
+WorkingDirectory=__INSTALL_ROOT__/current
+EnvironmentFile=__ENV_TARGET__
+ExecStart=__INSTALL_ROOT__/current/bin/aether-gateway
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+UMask=0027
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+StateDirectory=aether
+StateDirectoryMode=0750
+LogsDirectory=aether
+LogsDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target

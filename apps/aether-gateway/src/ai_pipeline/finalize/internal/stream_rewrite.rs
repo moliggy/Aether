@@ -1,30 +1,14 @@
 use serde_json::Value;
 
-use crate::gateway::ai_pipeline::adaptation::private_envelope::transform_provider_private_stream_line as transform_envelope_line;
-use crate::gateway::ai_pipeline::finalize::sse::{encode_done_sse, encode_json_sse};
-use crate::gateway::ai_pipeline::finalize::standard::{
-    BufferedCliConversionStreamState, BufferedStandardConversionStreamState,
-    ClaudeToOpenAIChatStreamState, GeminiToOpenAIChatStreamState, OpenAICliToOpenAIChatStreamState,
-};
-use crate::gateway::ai_pipeline::runtime::KiroToClaudeCliStreamState;
-use crate::gateway::GatewayError;
+use crate::ai_pipeline::adaptation::private_envelope::transform_provider_private_stream_line as transform_envelope_line;
+use crate::ai_pipeline::finalize::standard::StreamingStandardConversionState;
+use crate::ai_pipeline::runtime::adapters::kiro::KiroToClaudeCliStreamState;
+use crate::GatewayError;
 
-use super::sync::{
-    aggregate_claude_stream_sync_response, aggregate_gemini_stream_sync_response,
-    convert_claude_cli_response_to_openai_cli, convert_gemini_cli_response_to_openai_cli,
-};
 enum RewriteMode {
     EnvelopeUnwrap,
-    ClaudeToOpenAIChat(ClaudeToOpenAIChatStreamState),
-    GeminiToOpenAIChat(GeminiToOpenAIChatStreamState),
-    OpenAICliToOpenAIChat(OpenAICliToOpenAIChatStreamState),
-    ClaudeToOpenAICli(BufferedCliConversionStreamState),
-    GeminiToOpenAICli(BufferedCliConversionStreamState),
-    AntigravityGeminiToOpenAIChat(GeminiToOpenAIChatStreamState),
-    AntigravityGeminiToOpenAICli(BufferedCliConversionStreamState),
+    Standard(StreamingStandardConversionState),
     KiroToClaudeCli(KiroToClaudeCliStreamState),
-    StandardChat(BufferedStandardConversionStreamState),
-    StandardCli(BufferedStandardConversionStreamState),
 }
 
 pub(crate) struct LocalStreamRewriter {
@@ -67,48 +51,44 @@ pub(crate) fn maybe_build_local_stream_rewriter(
             client_api_format.as_str(),
         ) {
             ("", "claude:chat", "openai:chat") => {
-                RewriteMode::ClaudeToOpenAIChat(ClaudeToOpenAIChatStreamState::default())
+                RewriteMode::Standard(StreamingStandardConversionState::default())
             }
             ("", "gemini:chat", "openai:chat") => {
-                RewriteMode::GeminiToOpenAIChat(GeminiToOpenAIChatStreamState::default())
+                RewriteMode::Standard(StreamingStandardConversionState::default())
             }
             ("", "openai:cli", "openai:chat") | ("", "openai:compact", "openai:chat") => {
-                RewriteMode::OpenAICliToOpenAIChat(OpenAICliToOpenAIChatStreamState::default())
+                RewriteMode::Standard(StreamingStandardConversionState::default())
             }
             ("", "claude:cli", "openai:cli") => {
-                RewriteMode::ClaudeToOpenAICli(BufferedCliConversionStreamState::default())
+                RewriteMode::Standard(StreamingStandardConversionState::default())
             }
             ("", "claude:cli", "openai:compact") => {
-                RewriteMode::ClaudeToOpenAICli(BufferedCliConversionStreamState::default())
+                RewriteMode::Standard(StreamingStandardConversionState::default())
             }
             ("", "gemini:cli", "openai:cli") => {
-                RewriteMode::GeminiToOpenAICli(BufferedCliConversionStreamState::default())
+                RewriteMode::Standard(StreamingStandardConversionState::default())
             }
             ("", "gemini:cli", "openai:compact") => {
-                RewriteMode::GeminiToOpenAICli(BufferedCliConversionStreamState::default())
+                RewriteMode::Standard(StreamingStandardConversionState::default())
             }
             ("antigravity:v1internal", "gemini:chat", "openai:chat") => {
-                RewriteMode::AntigravityGeminiToOpenAIChat(GeminiToOpenAIChatStreamState::default())
+                RewriteMode::Standard(StreamingStandardConversionState::default())
             }
             ("antigravity:v1internal", "gemini:cli", "openai:cli") => {
-                RewriteMode::AntigravityGeminiToOpenAICli(
-                    BufferedCliConversionStreamState::default(),
-                )
+                RewriteMode::Standard(StreamingStandardConversionState::default())
             }
             ("antigravity:v1internal", "gemini:cli", "openai:compact") => {
-                RewriteMode::AntigravityGeminiToOpenAICli(
-                    BufferedCliConversionStreamState::default(),
-                )
+                RewriteMode::Standard(StreamingStandardConversionState::default())
             }
             _ if is_standard_chat_client_api_format(client_api_format.as_str())
                 && is_standard_provider_api_format(provider_api_format.as_str()) =>
             {
-                RewriteMode::StandardChat(BufferedStandardConversionStreamState::default())
+                RewriteMode::Standard(StreamingStandardConversionState::default())
             }
             _ if is_standard_cli_client_api_format(client_api_format.as_str())
                 && is_standard_provider_api_format(provider_api_format.as_str()) =>
             {
-                RewriteMode::StandardCli(BufferedStandardConversionStreamState::default())
+                RewriteMode::Standard(StreamingStandardConversionState::default())
             }
             _ => return None,
         }
@@ -168,44 +148,8 @@ impl LocalStreamRewriter {
         }
         if self.buffered.is_empty() {
             match &mut self.mode {
-                RewriteMode::ClaudeToOpenAIChat(state) => return Ok(state.finish()),
-                RewriteMode::GeminiToOpenAIChat(state) => {
-                    return state.finish(&self.report_context);
-                }
-                RewriteMode::OpenAICliToOpenAIChat(state) => {
-                    return state.finish(&self.report_context);
-                }
-                RewriteMode::ClaudeToOpenAICli(state) => {
-                    return state.finish(
-                        &self.report_context,
-                        aggregate_claude_stream_sync_response,
-                        convert_claude_cli_response_to_openai_cli,
-                    );
-                }
-                RewriteMode::GeminiToOpenAICli(state) => {
-                    return state.finish(
-                        &self.report_context,
-                        aggregate_gemini_stream_sync_response,
-                        convert_gemini_cli_response_to_openai_cli,
-                    );
-                }
-                RewriteMode::AntigravityGeminiToOpenAIChat(state) => {
-                    return state.finish(&self.report_context);
-                }
-                RewriteMode::AntigravityGeminiToOpenAICli(state) => {
-                    return state.finish(
-                        &self.report_context,
-                        aggregate_gemini_stream_sync_response,
-                        convert_gemini_cli_response_to_openai_cli,
-                    );
-                }
+                RewriteMode::Standard(state) => return state.finish(&self.report_context),
                 RewriteMode::KiroToClaudeCli(_) => {}
-                RewriteMode::StandardChat(state) => {
-                    return state.finish_as_chat(&self.report_context)
-                }
-                RewriteMode::StandardCli(state) => {
-                    return state.finish_as_cli(&self.report_context)
-                }
                 RewriteMode::EnvelopeUnwrap => {}
             }
             return Ok(Vec::new());
@@ -213,46 +157,10 @@ impl LocalStreamRewriter {
         let line = std::mem::take(&mut self.buffered);
         let mut output = self.transform_line(line)?;
         match &mut self.mode {
-            RewriteMode::ClaudeToOpenAIChat(state) => {
-                output.extend(state.finish());
-            }
-            RewriteMode::GeminiToOpenAIChat(state) => {
+            RewriteMode::Standard(state) => {
                 output.extend(state.finish(&self.report_context)?);
-            }
-            RewriteMode::OpenAICliToOpenAIChat(state) => {
-                output.extend(state.finish(&self.report_context)?);
-            }
-            RewriteMode::ClaudeToOpenAICli(state) => {
-                output.extend(state.finish(
-                    &self.report_context,
-                    aggregate_claude_stream_sync_response,
-                    convert_claude_cli_response_to_openai_cli,
-                )?);
-            }
-            RewriteMode::GeminiToOpenAICli(state) => {
-                output.extend(state.finish(
-                    &self.report_context,
-                    aggregate_gemini_stream_sync_response,
-                    convert_gemini_cli_response_to_openai_cli,
-                )?);
-            }
-            RewriteMode::AntigravityGeminiToOpenAIChat(state) => {
-                output.extend(state.finish(&self.report_context)?);
-            }
-            RewriteMode::AntigravityGeminiToOpenAICli(state) => {
-                output.extend(state.finish(
-                    &self.report_context,
-                    aggregate_gemini_stream_sync_response,
-                    convert_gemini_cli_response_to_openai_cli,
-                )?);
             }
             RewriteMode::KiroToClaudeCli(_) => {}
-            RewriteMode::StandardChat(state) => {
-                output.extend(state.finish_as_chat(&self.report_context)?);
-            }
-            RewriteMode::StandardCli(state) => {
-                output.extend(state.finish_as_cli(&self.report_context)?);
-            }
             RewriteMode::EnvelopeUnwrap => {}
         }
         Ok(output)
@@ -261,37 +169,7 @@ impl LocalStreamRewriter {
     fn transform_line(&mut self, line: Vec<u8>) -> Result<Vec<u8>, GatewayError> {
         match &mut self.mode {
             RewriteMode::EnvelopeUnwrap => transform_envelope_line(&self.report_context, line),
-            RewriteMode::ClaudeToOpenAIChat(state) => {
-                state.transform_line(&self.report_context, line)
-            }
-            RewriteMode::GeminiToOpenAIChat(state) => {
-                state.transform_line(&self.report_context, line)
-            }
-            RewriteMode::OpenAICliToOpenAIChat(state) => {
-                state.transform_line(&self.report_context, line)
-            }
-            RewriteMode::ClaudeToOpenAICli(state) | RewriteMode::GeminiToOpenAICli(state) => {
-                state.transform_line(line)
-            }
-            RewriteMode::AntigravityGeminiToOpenAIChat(state) => {
-                let unwrapped = transform_envelope_line(&self.report_context, line)?;
-                if unwrapped.is_empty() {
-                    Ok(Vec::new())
-                } else {
-                    state.transform_line(&self.report_context, unwrapped)
-                }
-            }
-            RewriteMode::AntigravityGeminiToOpenAICli(state) => {
-                let unwrapped = transform_envelope_line(&self.report_context, line)?;
-                if unwrapped.is_empty() {
-                    Ok(Vec::new())
-                } else {
-                    state.transform_line(unwrapped)
-                }
-            }
-            RewriteMode::StandardChat(state) | RewriteMode::StandardCli(state) => {
-                state.transform_line(&self.report_context, line)
-            }
+            RewriteMode::Standard(state) => state.transform_line(&self.report_context, line),
             RewriteMode::KiroToClaudeCli(_) => Ok(Vec::new()),
         }
     }

@@ -4,13 +4,14 @@ use axum::body::Body;
 use axum::http::Response;
 use serde_json::Value;
 
-use crate::gateway::ai_pipeline::contracts::core_success_background_report_kind;
-pub(crate) use crate::gateway::ai_pipeline::runtime::{
+pub(crate) use crate::ai_pipeline::adaptation::private_envelope::{
     normalize_provider_private_response_value as unwrap_local_finalize_response_value,
     provider_private_response_allows_sync_finalize as local_finalize_allows_envelope,
 };
-use crate::gateway::api::response::build_client_response_from_parts;
-use crate::gateway::{GatewayControlDecision, GatewayError, GatewaySyncReportRequest};
+use crate::ai_pipeline::contracts::core_success_background_report_kind;
+use crate::api::response::build_client_response_from_parts;
+use crate::control::GatewayControlDecision;
+use crate::{usage::GatewaySyncReportRequest, GatewayError};
 
 pub(crate) struct LocalCoreSyncFinalizeOutcome {
     pub(crate) response: Response<Body>,

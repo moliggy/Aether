@@ -6,28 +6,27 @@ use axum::http::Response;
 use base64::Engine as _;
 use tracing::warn;
 
-use crate::gateway::ai_pipeline::contracts::implicit_sync_finalize_report_kind;
-use crate::gateway::api::response::{
+use crate::ai_pipeline::contracts::implicit_sync_finalize_report_kind;
+use crate::ai_pipeline::finalize::maybe_build_sync_finalize_outcome;
+use crate::api::response::{
     attach_control_metadata_headers, build_client_response, build_client_response_from_parts,
 };
-use crate::gateway::constants::{CONTROL_CANDIDATE_ID_HEADER, CONTROL_REQUEST_ID_HEADER};
+use crate::constants::{CONTROL_CANDIDATE_ID_HEADER, CONTROL_REQUEST_ID_HEADER};
+use crate::control::GatewayControlDecision;
 #[cfg(test)]
-use crate::gateway::execution_runtime::remote_compat::post_sync_plan_to_remote_execution_runtime;
-use crate::gateway::execution_runtime::submission::submit_local_core_error_or_sync_finalize;
-use crate::gateway::execution_runtime::transport::DirectSyncExecutionRuntime;
-use crate::gateway::scheduler::{
+use crate::execution_runtime::remote_compat::post_sync_plan_to_remote_execution_runtime;
+use crate::execution_runtime::submission::submit_local_core_error_or_sync_finalize;
+use crate::execution_runtime::transport::DirectSyncExecutionRuntime;
+use crate::scheduler::{
     current_unix_secs as current_request_candidate_unix_secs,
     ensure_execution_request_candidate_slot, execution_error_details,
     record_local_request_candidate_status, resolve_core_sync_error_finalize_report_kind,
     should_fallback_to_control_sync, should_finalize_sync_response,
     should_retry_next_local_candidate_sync,
 };
-use crate::gateway::usage::{spawn_sync_report, submit_sync_report};
-use crate::gateway::video_tasks::VideoTaskSyncReportMode;
-use crate::gateway::{
-    maybe_build_sync_finalize_outcome, AppState, GatewayControlDecision, GatewayError,
-    GatewaySyncReportRequest,
-};
+use crate::usage::{spawn_sync_report, submit_sync_report};
+use crate::video_tasks::VideoTaskSyncReportMode;
+use crate::{usage::GatewaySyncReportRequest, AppState, GatewayError};
 
 #[path = "execution/policy.rs"]
 mod policy;
@@ -43,7 +42,7 @@ pub(crate) use response::{
 
 struct ImplicitSyncFinalizeOutcome {
     payload: GatewaySyncReportRequest,
-    outcome: crate::gateway::ai_pipeline::finalize::LocalCoreSyncFinalizeOutcome,
+    outcome: crate::ai_pipeline::finalize::LocalCoreSyncFinalizeOutcome,
 }
 
 async fn record_sync_terminal_usage(
@@ -88,6 +87,8 @@ pub(crate) async fn execute_execution_runtime_sync(
             Ok(result) => result,
             Err(err) => {
                 warn!(
+                    event_name = "sync_execution_runtime_unavailable",
+                    log_type = "ops",
                     trace_id = %trace_id,
                     request_id = %plan_request_id,
                     candidate_id = ?plan_candidate_id,
@@ -111,6 +112,8 @@ pub(crate) async fn execute_execution_runtime_sync(
                 Ok(result) => result,
                 Err(err) => {
                     warn!(
+                        event_name = "sync_execution_runtime_unavailable",
+                        log_type = "ops",
                         trace_id = %trace_id,
                         request_id = %plan_request_id,
                         candidate_id = ?plan_candidate_id,
@@ -165,6 +168,8 @@ pub(crate) async fn execute_execution_runtime_sync(
         )
         .await;
         warn!(
+            event_name = "local_sync_candidate_retry_scheduled",
+            log_type = "event",
             trace_id = %trace_id,
             request_id = %plan_request_id,
             status_code = result.status_code,
@@ -280,6 +285,8 @@ pub(crate) async fn execute_execution_runtime_sync(
                 spawn_sync_report(state.clone(), trace_id.to_string(), report_payload);
             } else {
                 warn!(
+                    event_name = "local_core_finalize_missing_success_report_mapping",
+                    log_type = "event",
                     trace_id = %trace_id,
                     report_kind = %implicit_finalize.payload.report_kind,
                     "gateway implicit local core finalize produced response without background success report mapping"
@@ -316,6 +323,8 @@ pub(crate) async fn execute_execution_runtime_sync(
                 spawn_sync_report(state.clone(), trace_id.to_string(), report_payload);
             } else {
                 warn!(
+                    event_name = "local_core_finalize_missing_success_report_mapping",
+                    log_type = "event",
                     trace_id = %trace_id,
                     report_kind = %payload.report_kind,
                     "gateway local core finalize produced response without background success report mapping"
@@ -366,7 +375,7 @@ pub(crate) async fn execute_execution_runtime_sync(
                 resolve_local_sync_success_background_report_kind(payload.report_kind.as_str())
             {
                 let mut report_payload = payload.clone();
-                report_payload.report_kind = success_report_kind;
+                report_payload.report_kind = success_report_kind.to_string();
                 report_payload
             } else {
                 payload.clone()
@@ -391,11 +400,15 @@ pub(crate) async fn execute_execution_runtime_sync(
                 resolve_local_sync_success_background_report_kind(payload.report_kind.as_str())
             {
                 let mut report_payload = usage_payload;
-                report_payload.report_kind = success_report_kind;
+                report_payload.report_kind = success_report_kind.to_string();
                 spawn_sync_report(state.clone(), trace_id.to_string(), report_payload);
             } else {
                 warn!(
+                    event_name = "local_video_finalize_missing_success_report_mapping",
+                    log_type = "ops",
                     trace_id = %trace_id,
+                    request_id = request_id.unwrap_or("-"),
+                    candidate_id = ?candidate_id,
                     report_kind = %payload.report_kind,
                     "gateway local video finalize produced response without background success report mapping"
                 );
@@ -413,7 +426,7 @@ pub(crate) async fn execute_execution_runtime_sync(
                 resolve_local_sync_error_background_report_kind(payload.report_kind.as_str())
             {
                 let mut report_payload = payload.clone();
-                report_payload.report_kind = error_report_kind;
+                report_payload.report_kind = error_report_kind.to_string();
                 report_payload
             } else {
                 payload.clone()
@@ -429,11 +442,15 @@ pub(crate) async fn execute_execution_runtime_sync(
                 resolve_local_sync_error_background_report_kind(payload.report_kind.as_str())
             {
                 let mut report_payload = usage_payload;
-                report_payload.report_kind = error_report_kind;
+                report_payload.report_kind = error_report_kind.to_string();
                 spawn_sync_report(state.clone(), trace_id.to_string(), report_payload);
             } else {
                 warn!(
+                    event_name = "local_video_finalize_missing_error_report_mapping",
+                    log_type = "ops",
                     trace_id = %trace_id,
+                    request_id = request_id.unwrap_or("-"),
+                    candidate_id = ?candidate_id,
                     report_kind = %payload.report_kind,
                     "gateway local video finalize produced response without background error report mapping"
                 );
@@ -560,6 +577,8 @@ async fn execute_sync_via_remote_execution_runtime(
         Ok(response) => response,
         Err(err) => {
             warn!(
+                event_name = "sync_execution_runtime_remote_unavailable",
+                log_type = "ops",
                 trace_id = %trace_id,
                 request_id = %plan_request_id,
                 candidate_id = ?plan_candidate_id,

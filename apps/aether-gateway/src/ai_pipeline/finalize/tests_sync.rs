@@ -10,7 +10,8 @@ use super::{
     convert_gemini_chat_response_to_openai_chat, convert_gemini_cli_response_to_openai_cli,
     maybe_build_local_core_sync_finalize_response,
 };
-use crate::gateway::{GatewayControlDecision, GatewaySyncReportRequest};
+use crate::control::GatewayControlDecision;
+use crate::usage::GatewaySyncReportRequest;
 
 fn test_decision() -> GatewayControlDecision {
     GatewayControlDecision {

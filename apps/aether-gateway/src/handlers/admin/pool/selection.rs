@@ -1,5 +1,5 @@
-use crate::gateway::handlers::decrypt_catalog_secret_with_fallbacks;
-use crate::gateway::AppState;
+use crate::handlers::decrypt_catalog_secret_with_fallbacks;
+use crate::AppState;
 use aether_data::repository::provider_catalog::StoredProviderCatalogKey;
 
 fn admin_pool_reason_indicates_ban(reason: &str) -> bool {

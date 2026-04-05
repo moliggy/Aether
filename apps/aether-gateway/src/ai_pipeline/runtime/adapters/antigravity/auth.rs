@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use crate::gateway::provider_transport::snapshot::GatewayProviderTransportSnapshot;
+use crate::provider_transport::snapshot::GatewayProviderTransportSnapshot;
 
 pub(crate) const ANTIGRAVITY_PROVIDER_TYPE: &str = "antigravity";
 pub(crate) const ANTIGRAVITY_REQUEST_USER_AGENT: &str = "antigravity";

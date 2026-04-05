@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use aether_runtime::{MetricKind, MetricLabel, MetricSample};
 
-use crate::gateway::GatewayControlDecision;
+use crate::control::GatewayControlDecision;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum GatewayFallbackMetricKind {
@@ -164,7 +164,7 @@ impl GatewayFallbackMetrics {
 #[cfg(test)]
 mod tests {
     use super::{GatewayFallbackMetricKind, GatewayFallbackMetrics, GatewayFallbackReason};
-    use crate::gateway::GatewayControlDecision;
+    use crate::control::GatewayControlDecision;
 
     fn sample_decision() -> GatewayControlDecision {
         GatewayControlDecision {

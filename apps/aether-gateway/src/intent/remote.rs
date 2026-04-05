@@ -1,7 +1,8 @@
 use axum::body::Body;
 use axum::http::Response;
 
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError};
+use crate::control::GatewayControlDecision;
+use crate::{AppState, GatewayError};
 
 pub(crate) async fn maybe_execute_sync_via_remote_decision(
     _state: &AppState,

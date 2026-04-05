@@ -13,6 +13,7 @@ use crate::repository::oauth_providers::OAuthProviderWriteRepository;
 use crate::repository::provider_catalog::ProviderCatalogWriteRepository;
 use crate::repository::proxy_nodes::ProxyNodeWriteRepository;
 use crate::repository::quota::ProviderQuotaWriteRepository;
+use crate::repository::settlement::SettlementWriteRepository;
 use crate::repository::shadow_results::ShadowResultWriteRepository;
 use crate::repository::usage::UsageWriteRepository;
 use crate::repository::video_tasks::VideoTaskWriteRepository;
@@ -32,6 +33,7 @@ pub struct DataWriteRepositories {
     proxy_nodes: Option<Arc<dyn ProxyNodeWriteRepository>>,
     provider_catalog: Option<Arc<dyn ProviderCatalogWriteRepository>>,
     provider_quotas: Option<Arc<dyn ProviderQuotaWriteRepository>>,
+    settlement: Option<Arc<dyn SettlementWriteRepository>>,
     usage: Option<Arc<dyn UsageWriteRepository>>,
     video_tasks: Option<Arc<dyn VideoTaskWriteRepository>>,
     wallets: Option<Arc<dyn WalletWriteRepository>>,
@@ -55,6 +57,7 @@ impl fmt::Debug for DataWriteRepositories {
             .field("has_proxy_nodes", &self.proxy_nodes.is_some())
             .field("has_provider_catalog", &self.provider_catalog.is_some())
             .field("has_provider_quotas", &self.provider_quotas.is_some())
+            .field("has_settlement", &self.settlement.is_some())
             .field("has_usage", &self.usage.is_some())
             .field("has_video_tasks", &self.video_tasks.is_some())
             .field("has_wallets", &self.wallets.is_some())
@@ -78,6 +81,7 @@ impl DataWriteRepositories {
             proxy_nodes: postgres.map(PostgresBackend::proxy_node_write_repository),
             provider_catalog: postgres.map(PostgresBackend::provider_catalog_write_repository),
             provider_quotas: postgres.map(PostgresBackend::provider_quota_write_repository),
+            settlement: postgres.map(PostgresBackend::settlement_write_repository),
             usage: postgres.map(PostgresBackend::usage_write_repository),
             video_tasks: postgres.map(PostgresBackend::video_task_write_repository),
             wallets: postgres.map(PostgresBackend::wallet_write_repository),
@@ -136,6 +140,10 @@ impl DataWriteRepositories {
         self.provider_catalog.clone()
     }
 
+    pub fn settlement(&self) -> Option<Arc<dyn SettlementWriteRepository>> {
+        self.settlement.clone()
+    }
+
     pub fn video_tasks(&self) -> Option<Arc<dyn VideoTaskWriteRepository>> {
         self.video_tasks.clone()
     }
@@ -157,6 +165,7 @@ impl DataWriteRepositories {
             || self.proxy_nodes.is_some()
             || self.provider_catalog.is_some()
             || self.provider_quotas.is_some()
+            || self.settlement.is_some()
             || self.usage.is_some()
             || self.video_tasks.is_some()
             || self.wallets.is_some()
@@ -198,6 +207,7 @@ mod tests {
         assert!(write.proxy_nodes().is_some());
         assert!(write.provider_catalog().is_some());
         assert!(write.provider_quotas().is_some());
+        assert!(write.settlement().is_some());
         assert!(write.usage().is_some());
         assert!(write.video_tasks().is_some());
         assert!(write.wallets().is_some());

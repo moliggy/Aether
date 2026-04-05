@@ -1,5 +1,6 @@
 use super::super::{admin_rpm_key_id, build_admin_key_rpm_payload};
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,

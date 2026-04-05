@@ -5,12 +5,12 @@ use axum::Json;
 use axum::Router;
 use serde_json::json;
 
-use crate::gateway::constants::{
+use crate::constants::{
     FRONTDOOR_MANIFEST_PATH, FRONTDOOR_MANIFEST_VERSION, INTERNAL_FRONTDOOR_MANIFEST_PATH,
     INTERNAL_GATEWAY_PATH_PREFIXES, INTERNAL_GATEWAY_ROUTE_GROUPS, READYZ_PATH,
     RUST_FRONTDOOR_OWNED_ROUTE_PATTERNS,
 };
-use crate::gateway::AppState;
+use crate::AppState;
 
 pub(crate) fn mount_core_routes(router: Router<AppState>) -> Router<AppState> {
     router

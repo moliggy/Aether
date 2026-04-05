@@ -4,17 +4,20 @@ use aether_data::repository::candidates::{RequestCandidateStatus, UpsertRequestC
 use serde_json::json;
 use tracing::warn;
 
-use crate::gateway::headers::collect_control_headers;
-use crate::gateway::provider_transport::{
-    apply_local_header_rules, build_openai_passthrough_headers, ensure_upstream_auth_header,
-    resolve_transport_execution_timeouts, resolve_transport_proxy_snapshot_with_tunnel_affinity,
-    resolve_transport_tls_profile, LocalResolvedOAuthRequestAuth,
+use crate::execution_runtime::{ConversionMode, ExecutionStrategy};
+use crate::headers::collect_control_headers;
+use crate::provider_transport::auth::{
+    build_openai_passthrough_headers, ensure_upstream_auth_header,
 };
-use crate::gateway::scheduler::current_unix_secs;
-use crate::gateway::{
-    append_execution_contract_fields_to_value, AppState, ConversionMode, ExecutionStrategy,
-    GatewayControlSyncDecisionResponse, EXECUTION_RUNTIME_STREAM_DECISION_ACTION,
-    EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
+use crate::provider_transport::{
+    apply_local_header_rules, resolve_transport_execution_timeouts,
+    resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
+    LocalResolvedOAuthRequestAuth,
+};
+use crate::scheduler::current_unix_secs;
+use crate::{
+    append_execution_contract_fields_to_value, AppState, GatewayControlSyncDecisionResponse,
+    EXECUTION_RUNTIME_STREAM_DECISION_ACTION, EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
 };
 
 use super::types::{LocalStandardCandidateAttempt, LocalStandardDecisionInput, LocalStandardSpec};
@@ -34,7 +37,7 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
         candidate_id,
     } = attempt;
     let provider_api_format = candidate.endpoint_api_format.trim().to_ascii_lowercase();
-    let Some(conversion_kind) = crate::gateway::ai_pipeline::conversion::request_conversion_kind(
+    let Some(conversion_kind) = crate::ai_pipeline::conversion::request_conversion_kind(
         spec.api_format,
         provider_api_format.as_str(),
     ) else {
@@ -87,7 +90,7 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
         }
     };
 
-    if !crate::gateway::ai_pipeline::conversion::request_conversion_transport_supported(
+    if !crate::ai_pipeline::conversion::request_conversion_transport_supported(
         &transport,
         conversion_kind,
     ) {
@@ -104,7 +107,7 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
         return None;
     }
 
-    let resolved_auth = crate::gateway::ai_pipeline::conversion::request_conversion_direct_auth(
+    let resolved_auth = crate::ai_pipeline::conversion::request_conversion_direct_auth(
         &transport,
         conversion_kind,
     );
@@ -158,7 +161,7 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
     }
 
     let provider_request_body =
-        match crate::gateway::ai_pipeline::planner::standard::build_standard_request_body(
+        match crate::ai_pipeline::planner::standard::build_standard_request_body(
             body_json,
             spec.api_format,
             &mapped_model,
@@ -184,7 +187,7 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
         };
 
     let upstream_url =
-        match crate::gateway::ai_pipeline::planner::standard::build_standard_upstream_url(
+        match crate::ai_pipeline::planner::standard::build_standard_upstream_url(
             parts,
             &transport,
             &mapped_model,
@@ -290,6 +293,7 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
                 "provider_id": candidate.provider_id,
                 "endpoint_id": candidate.endpoint_id,
                 "key_id": candidate.key_id,
+                "key_name": candidate.key_name,
                 "provider_api_format": provider_api_format,
                 "client_api_format": spec.api_format,
                 "mapped_model": mapped_model,
@@ -315,7 +319,7 @@ pub(super) async fn mark_skipped_local_standard_candidate(
     state: &AppState,
     input: &LocalStandardDecisionInput,
     trace_id: &str,
-    candidate: &crate::gateway::scheduler::GatewayMinimalCandidateSelectionCandidate,
+    candidate: &crate::scheduler::GatewayMinimalCandidateSelectionCandidate,
     candidate_index: u32,
     candidate_id: &str,
     skip_reason: &'static str,

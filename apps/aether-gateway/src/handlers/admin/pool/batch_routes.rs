@@ -6,10 +6,10 @@ use super::{
     ADMIN_POOL_PROVIDER_CATALOG_WRITER_UNAVAILABLE_DETAIL,
 };
 use super::{pool_payloads, pool_selection};
-use crate::gateway::handlers::encrypt_catalog_secret_with_fallbacks;
-use crate::gateway::{
-    AppState, GatewayError, GatewayPublicRequestContext, LocalProviderDeleteTaskState,
-};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::encrypt_catalog_secret_with_fallbacks;
+use crate::{AppState, GatewayError, LocalProviderDeleteTaskState};
 use aether_data::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
 };
@@ -88,6 +88,31 @@ fn build_admin_pool_batch_delete_task_payload(
         "deleted_endpoints": task.deleted_endpoints,
         "message": task.message,
     })
+}
+
+fn attach_admin_pool_batch_delete_task_terminal_audit(
+    provider_id: &str,
+    task_id: &str,
+    task_status: &str,
+    response: Response<Body>,
+) -> Response<Body> {
+    match task_status {
+        "completed" => attach_admin_audit_response(
+            response,
+            "admin_pool_batch_delete_task_completed_viewed",
+            "view_pool_batch_delete_task_terminal_state",
+            "provider_key_batch_delete_task",
+            &format!("{provider_id}:{task_id}"),
+        ),
+        "failed" => attach_admin_audit_response(
+            response,
+            "admin_pool_batch_delete_task_failed_viewed",
+            "view_pool_batch_delete_task_terminal_state",
+            "provider_key_batch_delete_task",
+            &format!("{provider_id}:{task_id}"),
+        ),
+        _ => response,
+    }
 }
 
 fn admin_pool_resolved_api_formats(
@@ -547,7 +572,12 @@ async fn build_admin_pool_batch_delete_task_status_response(
         ));
     }
 
-    Ok(Json(build_admin_pool_batch_delete_task_payload(&task)).into_response())
+    Ok(attach_admin_pool_batch_delete_task_terminal_audit(
+        &provider_id,
+        &task_id,
+        task.status.as_str(),
+        Json(build_admin_pool_batch_delete_task_payload(&task)).into_response(),
+    ))
 }
 
 pub(super) async fn maybe_build_local_admin_pool_batch_response(

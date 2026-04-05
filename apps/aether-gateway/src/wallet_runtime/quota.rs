@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use tracing::warn;
 
-use crate::gateway::gateway_data::GatewayDataState;
+use crate::data::GatewayDataState;
 
 const QUOTA_RESET_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
@@ -50,7 +50,7 @@ mod tests {
     };
 
     use super::{reset_due_provider_quotas_once, spawn_provider_quota_reset_worker};
-    use crate::gateway::gateway_data::GatewayDataState;
+    use crate::data::GatewayDataState;
 
     #[tokio::test]
     async fn resets_due_provider_quotas_from_runtime() {

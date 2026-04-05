@@ -4,4 +4,8 @@ mod types;
 
 pub use memory::InMemoryBillingReadRepository;
 pub use sql::SqlxBillingReadRepository;
-pub use types::{BillingReadRepository, StoredBillingModelContext};
+pub use types::{
+    AdminBillingCollectorRecord, AdminBillingCollectorWriteInput, AdminBillingPresetApplyResult,
+    AdminBillingRuleRecord, AdminBillingRuleWriteInput, BillingReadRepository,
+    StoredBillingModelContext,
+};

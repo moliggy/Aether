@@ -1,4 +1,4 @@
-use super::admin::build_internal_control_error_response;
+use super::admin::provider_oauth_refresh::build_internal_control_error_response;
 
 mod gateway_helpers;
 use self::gateway_helpers::*;

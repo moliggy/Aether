@@ -83,6 +83,7 @@ export interface UsageRecord {
   } | null
   provider?: string  // 仅管理员可见
   api_key_name?: string
+  provider_key_name?: string | null
   rate_multiplier?: number
   model: string
   target_model?: string | null  // 映射后的目标模型名（若无映射则为空）

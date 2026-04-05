@@ -1,4 +1,4 @@
-use crate::gateway::GatewayControlDecision;
+use crate::control::GatewayControlDecision;
 
 pub(crate) fn resolve_execution_runtime_stream_plan_kind(
     parts: &http::request::Parts,
@@ -291,7 +291,7 @@ mod tests {
         resolve_execution_runtime_sync_plan_kind, supports_stream_scheduler_decision_kind,
         supports_sync_scheduler_decision_kind,
     };
-    use crate::gateway::GatewayControlDecision;
+    use crate::control::GatewayControlDecision;
 
     fn sample_decision(route_family: &str, route_kind: &str) -> GatewayControlDecision {
         GatewayControlDecision {

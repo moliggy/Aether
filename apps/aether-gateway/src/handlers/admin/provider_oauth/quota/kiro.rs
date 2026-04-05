@@ -2,10 +2,10 @@ use super::{
     coerce_json_f64, execute_provider_quota_plan, extract_execution_error_message,
     persist_provider_quota_refresh_state, quota_refresh_success_invalid_state,
 };
-use crate::gateway::handlers::{
+use crate::handlers::{
     encrypt_catalog_secret_with_fallbacks, KIRO_USAGE_LIMITS_PATH, KIRO_USAGE_SDK_VERSION,
 };
-use crate::gateway::{AppState, GatewayError};
+use crate::{AppState, GatewayError};
 use aether_contracts::{ExecutionPlan, ExecutionResult, ExecutionTimeouts, RequestBody};
 use aether_data::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
@@ -167,7 +167,7 @@ fn parse_kiro_usage_response(
 }
 
 fn build_kiro_usage_headers(
-    auth: &crate::gateway::provider_transport::KiroRequestAuth,
+    auth: &crate::provider_transport::kiro::KiroRequestAuth,
 ) -> BTreeMap<String, String> {
     let kiro_version = auth.auth_config.effective_kiro_version();
     let machine_id = auth.machine_id.trim();
@@ -200,7 +200,9 @@ fn build_kiro_usage_headers(
     ])
 }
 
-fn build_kiro_usage_url(auth: &crate::gateway::provider_transport::KiroRequestAuth) -> String {
+fn build_kiro_usage_url(
+    auth: &crate::provider_transport::kiro::KiroRequestAuth,
+) -> String {
     let host = format!(
         "q.{}.amazonaws.com",
         auth.auth_config.effective_api_region()
@@ -220,8 +222,8 @@ fn build_kiro_usage_url(auth: &crate::gateway::provider_transport::KiroRequestAu
 
 async fn execute_kiro_quota_plan(
     state: &AppState,
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
-    auth: &crate::gateway::provider_transport::KiroRequestAuth,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
+    auth: &crate::provider_transport::kiro::KiroRequestAuth,
 ) -> Result<Option<ExecutionResult>, GatewayError> {
     let plan = ExecutionPlan {
         request_id: format!("kiro-quota:{}", transport.key.id),
@@ -244,9 +246,9 @@ async fn execute_kiro_quota_plan(
         client_api_format: "claude:cli".to_string(),
         provider_api_format: "kiro:usage".to_string(),
         model_name: Some("kiro-usage-limits".to_string()),
-        proxy: crate::gateway::provider_transport::resolve_transport_proxy_snapshot_with_tunnel_affinity(state, transport).await,
-        tls_profile: crate::gateway::provider_transport::resolve_transport_tls_profile(transport),
-        timeouts: crate::gateway::provider_transport::resolve_transport_execution_timeouts(
+        proxy: crate::provider_transport::resolve_transport_proxy_snapshot_with_tunnel_affinity(state, transport).await,
+        tls_profile: crate::provider_transport::resolve_transport_tls_profile(transport),
+        timeouts: crate::provider_transport::resolve_transport_execution_timeouts(
             transport,
         )
         .or(Some(ExecutionTimeouts {
@@ -291,7 +293,7 @@ pub(crate) async fn refresh_kiro_provider_quota_locally(
         };
 
         let Some(auth) = (match state.resolve_local_oauth_request_auth(&transport).await? {
-            Some(crate::gateway::provider_transport::LocalResolvedOAuthRequestAuth::Kiro(auth)) => {
+            Some(crate::provider_transport::LocalResolvedOAuthRequestAuth::Kiro(auth)) => {
                 Some(auth)
             }
             _ => None,

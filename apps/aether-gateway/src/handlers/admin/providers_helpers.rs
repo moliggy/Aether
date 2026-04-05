@@ -1,8 +1,8 @@
-use crate::gateway::handlers::public::matches_model_mapping_for_models;
-use crate::gateway::handlers::{
+use crate::handlers::public::matches_model_mapping_for_models;
+use crate::handlers::{
     decrypt_catalog_secret_with_fallbacks, json_string_list, put_admin_provider_delete_task,
 };
-use crate::gateway::{AppState, GatewayError, LocalProviderDeleteTaskState};
+use crate::{AppState, GatewayError, LocalProviderDeleteTaskState};
 use aether_data::repository::global_models::{
     AdminProviderModelListQuery, PublicGlobalModelQuery, StoredPublicGlobalModel,
 };
@@ -23,8 +23,8 @@ mod summary;
 pub(crate) use self::pool::{
     admin_provider_pool_config, build_admin_provider_pool_status_payload,
     clear_admin_provider_pool_cooldown, read_admin_provider_pool_cooldown_count,
-    read_admin_provider_pool_cooldown_key_ids, read_admin_provider_pool_runtime_state,
-    reset_admin_provider_pool_cost,
+    read_admin_provider_pool_cooldown_counts, read_admin_provider_pool_cooldown_key_ids,
+    read_admin_provider_pool_runtime_state, reset_admin_provider_pool_cost,
 };
 pub(crate) use self::summary::{
     build_admin_provider_health_monitor_payload, build_admin_provider_summary_payload,

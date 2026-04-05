@@ -2,7 +2,8 @@ use super::{
     admin_usage_bad_request_response, admin_usage_data_unavailable_response,
     ADMIN_USAGE_DATA_UNAVAILABLE_DETAIL,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,
@@ -322,7 +323,7 @@ pub(super) fn admin_usage_curl_url(
         .as_deref()
         .filter(|value| !value.is_empty())
     {
-        return crate::gateway::provider_transport::build_passthrough_path_url(
+        return crate::provider_transport::url::build_passthrough_path_url(
             &endpoint.base_url,
             custom_path,
             None,
@@ -333,10 +334,13 @@ pub(super) fn admin_usage_curl_url(
 
     match api_format {
         value if value.starts_with("claude:") => {
-            crate::gateway::provider_transport::build_claude_messages_url(&endpoint.base_url, None)
+            crate::provider_transport::url::build_claude_messages_url(
+                &endpoint.base_url,
+                None,
+            )
         }
         value if value.starts_with("gemini:") => {
-            crate::gateway::provider_transport::build_gemini_content_url(
+            crate::provider_transport::url::build_gemini_content_url(
                 &endpoint.base_url,
                 item.target_model.as_deref().unwrap_or(item.model.as_str()),
                 item.is_stream,
@@ -345,7 +349,7 @@ pub(super) fn admin_usage_curl_url(
             .unwrap_or_else(|| endpoint.base_url.clone())
         }
         value if value.starts_with("openai:") => {
-            crate::gateway::provider_transport::build_openai_chat_url(&endpoint.base_url, None)
+            crate::provider_transport::url::build_openai_chat_url(&endpoint.base_url, None)
         }
         _ => endpoint.base_url.clone(),
     }

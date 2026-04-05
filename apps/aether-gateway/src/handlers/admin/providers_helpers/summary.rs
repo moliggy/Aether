@@ -1,8 +1,8 @@
-use crate::gateway::handlers::public::{
+use crate::handlers::public::{
     provider_key_api_formats, request_candidate_event_unix_secs, request_candidate_status_label,
 };
-use crate::gateway::handlers::unix_secs_to_rfc3339;
-use crate::gateway::AppState;
+use crate::handlers::unix_secs_to_rfc3339;
+use crate::AppState;
 use aether_data::repository::candidates::{RequestCandidateStatus, StoredRequestCandidate};
 use aether_data::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,

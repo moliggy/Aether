@@ -157,7 +157,7 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
     if transport.provider.proxy.is_some()
         || transport.endpoint.proxy.is_some()
         || transport.key.proxy.is_some()
-        || crate::gateway::provider_transport::resolve_transport_tls_profile(&transport).is_some()
+        || crate::provider_transport::resolve_transport_tls_profile(&transport).is_some()
     {
         return None;
     }
@@ -179,7 +179,7 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
         }),
         _ => return None,
     };
-    if !crate::gateway::provider_transport::apply_local_body_rules(
+    if !crate::provider_transport::apply_local_body_rules(
         &mut provider_request_body,
         transport.endpoint.body_rules.as_ref(),
         None,
@@ -191,7 +191,7 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
         "openai:chat" | "claude:chat" => {
             match state.resolve_local_oauth_request_auth(&transport).await {
                 Ok(Some(
-                    crate::gateway::provider_transport::LocalResolvedOAuthRequestAuth::Header {
+                    crate::provider_transport::LocalResolvedOAuthRequestAuth::Header {
                         name,
                         value,
                     },
@@ -204,14 +204,16 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
 
     let auth = match format_value.as_str() {
         "openai:chat" => {
-            crate::gateway::provider_transport::resolve_local_openai_chat_auth(&transport)
+            crate::provider_transport::auth::resolve_local_openai_chat_auth(&transport)
                 .or(oauth_auth.clone())
         }
         "claude:chat" => {
-            crate::gateway::provider_transport::resolve_local_standard_auth(&transport)
+            crate::provider_transport::auth::resolve_local_standard_auth(&transport)
                 .or(oauth_auth.clone())
         }
-        "gemini:chat" => crate::gateway::provider_transport::resolve_local_gemini_auth(&transport),
+        "gemini:chat" => {
+            crate::provider_transport::auth::resolve_local_gemini_auth(&transport)
+        }
         _ => None,
     };
     let Some((auth_header, auth_value)) = auth else {
@@ -227,7 +229,7 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
             .filter(|value| !value.is_empty());
         match (format_value.as_str(), custom_path) {
             ("openai:chat", Some(path)) | ("claude:chat", Some(path)) => {
-                crate::gateway::provider_transport::build_passthrough_path_url(
+                crate::provider_transport::url::build_passthrough_path_url(
                     &transport.endpoint.base_url,
                     path,
                     None,
@@ -235,31 +237,33 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
                 )
             }
             ("gemini:chat", Some(path)) => {
-                crate::gateway::provider_transport::build_passthrough_path_url(
+                crate::provider_transport::url::build_passthrough_path_url(
                     &transport.endpoint.base_url,
                     path,
                     None,
                     &["key"],
                 )
             }
-            ("openai:chat", None) => {
-                Some(crate::gateway::provider_transport::build_openai_chat_url(
-                    &transport.endpoint.base_url,
-                    None,
-                ))
-            }
-            ("claude:chat", None) => Some(
-                crate::gateway::provider_transport::build_claude_messages_url(
+            ("openai:chat", None) => Some(
+                crate::provider_transport::url::build_openai_chat_url(
                     &transport.endpoint.base_url,
                     None,
                 ),
             ),
-            ("gemini:chat", None) => crate::gateway::provider_transport::build_gemini_content_url(
-                &transport.endpoint.base_url,
-                &model,
-                false,
-                None,
+            ("claude:chat", None) => Some(
+                crate::provider_transport::url::build_claude_messages_url(
+                    &transport.endpoint.base_url,
+                    None,
+                ),
             ),
+            ("gemini:chat", None) => {
+                crate::provider_transport::url::build_gemini_content_url(
+                    &transport.endpoint.base_url,
+                    &model,
+                    false,
+                    None,
+                )
+            }
             _ => None,
         }
     };
@@ -271,7 +275,7 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
         ("content-type".to_string(), "application/json".to_string()),
         (auth_header.clone(), auth_value.clone()),
     ]);
-    if !crate::gateway::provider_transport::apply_local_header_rules(
+    if !crate::provider_transport::apply_local_header_rules(
         &mut provider_request_headers,
         transport.endpoint.header_rules.as_ref(),
         &[auth_header.as_str(), "content-type"],
@@ -280,7 +284,7 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
     ) {
         return None;
     }
-    crate::gateway::provider_transport::ensure_upstream_auth_header(
+    crate::provider_transport::ensure_upstream_auth_header(
         &mut provider_request_headers,
         &auth_header,
         &auth_value,
@@ -291,7 +295,7 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
         upstream_request = upstream_request.header(name, value);
     }
     if let Some(total_ms) =
-        crate::gateway::provider_transport::resolve_transport_execution_timeouts(&transport)
+        crate::provider_transport::resolve_transport_execution_timeouts(&transport)
             .and_then(|timeouts| timeouts.total_ms.or(timeouts.first_byte_ms))
     {
         upstream_request = upstream_request.timeout(Duration::from_millis(total_ms));

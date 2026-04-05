@@ -8,8 +8,9 @@ use super::super::provider_oauth_state::{
     admin_provider_oauth_template, build_admin_provider_oauth_backend_unavailable_response,
     exchange_admin_provider_oauth_refresh_token, is_fixed_provider_type_for_provider_oauth,
 };
-use crate::gateway::handlers::admin_provider_oauth_import_provider_id;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin_provider_oauth_import_provider_id;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,

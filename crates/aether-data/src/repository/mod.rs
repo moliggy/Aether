@@ -1,4 +1,5 @@
 pub mod announcements;
+pub mod audit;
 pub mod auth;
 pub mod auth_modules;
 pub mod billing;
@@ -9,9 +10,12 @@ pub mod global_models;
 pub mod management_tokens;
 pub mod oauth_providers;
 pub mod provider_catalog;
+pub mod provider_oauth;
 pub mod proxy_nodes;
 pub mod quota;
+pub mod settlement;
 pub mod shadow_results;
+pub mod system;
 pub mod usage;
 pub mod users;
 pub mod video_tasks;

@@ -3,14 +3,17 @@ mod local;
 use self::local::{
     maybe_build_local_admin_proxy_response, maybe_build_local_internal_proxy_response,
 };
+use super::admin::misc_helpers::{
+    build_admin_proxy_auth_required_response, build_unhandled_admin_proxy_response,
+};
 use super::internal::resolve_local_proxy_execution_path;
 pub(crate) use super::public::matches_model_mapping_for_models;
-use crate::gateway::ai_pipeline::{finalize as ai_finalize, runtime as ai_runtime};
-use crate::gateway::api::response::{
+use crate::ai_pipeline::{finalize as ai_finalize, runtime as ai_runtime};
+use crate::api::response::{
     build_local_auth_rejection_response, build_local_http_error_response,
     build_local_overloaded_response, build_local_user_rpm_limited_response,
 };
-use crate::gateway::constants::{
+use crate::constants::{
     DEPENDENCY_REASON_HEADER, EXECUTION_PATH_CONTROL_EXECUTE_STREAM,
     EXECUTION_PATH_CONTROL_EXECUTE_SYNC, EXECUTION_PATH_DISTRIBUTED_OVERLOADED,
     EXECUTION_PATH_EXECUTION_RUNTIME_STREAM, EXECUTION_PATH_EXECUTION_RUNTIME_SYNC,
@@ -24,16 +27,20 @@ use crate::gateway::constants::{
     TRUSTED_AUTH_BALANCE_HEADER, TRUSTED_AUTH_USER_ID_HEADER, TUNNEL_AFFINITY_FORWARDED_BY_HEADER,
     TUNNEL_AFFINITY_OWNER_INSTANCE_HEADER,
 };
-use crate::gateway::handlers::{
+use crate::control::maybe_execute_via_control;
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     allows_control_execute_emergency, local_proxy_route_requires_buffered_body,
     request_enables_control_execute, request_model_local_rejection,
     should_buffer_request_for_local_auth, should_strip_forwarded_provider_credential_header,
     should_strip_forwarded_trusted_admin_header, trusted_auth_local_rejection,
 };
-use crate::gateway::headers::{extract_or_generate_trace_id, should_skip_request_header};
-use crate::gateway::{
-    maybe_execute_via_control, AppState, FrontdoorUserRpmOutcome, GatewayControlDecision,
-    GatewayError, GatewayFallbackMetricKind, GatewayFallbackReason, GatewayPublicRequestContext,
+use crate::headers::{extract_or_generate_trace_id, should_skip_request_header};
+use crate::router::RequestAdmissionError;
+use crate::{
+    AppState, FrontdoorUserRpmOutcome, GatewayError, GatewayFallbackMetricKind,
+    GatewayFallbackReason,
 };
 use axum::body::{to_bytes, Body, Bytes};
 use axum::extract::{ConnectInfo, Request, State};
@@ -108,7 +115,7 @@ async fn maybe_forward_public_request_to_tunnel_owner(
         return Ok(None);
     };
     let empty_body = Bytes::new();
-    let Some(requested_model) = crate::gateway::extract_requested_model(
+    let Some(requested_model) = crate::control::extract_requested_model(
         decision,
         &parts.uri,
         &parts.headers,
@@ -116,7 +123,7 @@ async fn maybe_forward_public_request_to_tunnel_owner(
     ) else {
         return Ok(None);
     };
-    let Some(target) = crate::gateway::scheduler::read_cached_scheduler_affinity_target(
+    let Some(target) = crate::scheduler::read_cached_scheduler_affinity_target(
         state,
         &auth_context.api_key_id,
         api_format,
@@ -145,7 +152,7 @@ async fn maybe_forward_public_request_to_tunnel_owner(
     };
 
     let Some(proxy) =
-        crate::gateway::provider_transport::resolve_transport_proxy_snapshot(&transport)
+        crate::provider_transport::resolve_transport_proxy_snapshot(&transport)
     else {
         return Ok(None);
     };
@@ -257,9 +264,10 @@ pub(crate) async fn proxy_request(
     let started_at = Instant::now();
     let mut request_permit = match state.try_acquire_request_permit().await {
         Ok(permit) => permit,
-        Err(crate::gateway::RequestAdmissionError::Local(
-            aether_runtime::ConcurrencyError::Saturated { gate, limit },
-        )) => {
+        Err(RequestAdmissionError::Local(aether_runtime::ConcurrencyError::Saturated {
+            gate,
+            limit,
+        })) => {
             let trace_id = extract_or_generate_trace_id(request.headers());
             let response = build_local_overloaded_response(&trace_id, None, gate, limit)?;
             return Ok(finalize_gateway_response(
@@ -279,17 +287,15 @@ pub(crate) async fn proxy_request(
                 None,
             ));
         }
-        Err(crate::gateway::RequestAdmissionError::Local(
-            aether_runtime::ConcurrencyError::Closed { gate },
-        )) => {
+        Err(RequestAdmissionError::Local(aether_runtime::ConcurrencyError::Closed { gate })) => {
             return Err(GatewayError::Internal(format!(
                 "gateway request concurrency gate {gate} is closed"
             )));
         }
-        Err(crate::gateway::RequestAdmissionError::Distributed(
+        Err(RequestAdmissionError::Distributed(
             aether_runtime::DistributedConcurrencyError::Saturated { gate, limit },
         ))
-        | Err(crate::gateway::RequestAdmissionError::Distributed(
+        | Err(RequestAdmissionError::Distributed(
             aether_runtime::DistributedConcurrencyError::Unavailable { gate, limit, .. },
         )) => {
             let trace_id = extract_or_generate_trace_id(request.headers());
@@ -311,14 +317,14 @@ pub(crate) async fn proxy_request(
                 None,
             ));
         }
-        Err(crate::gateway::RequestAdmissionError::Distributed(
+        Err(RequestAdmissionError::Distributed(
             aether_runtime::DistributedConcurrencyError::InvalidConfiguration(message),
         )) => return Err(GatewayError::Internal(message)),
     };
     let (parts, body) = request.into_parts();
     let trace_id = extract_or_generate_trace_id(&parts.headers);
     state.clear_local_execution_runtime_miss_diagnostic(&trace_id);
-    let request_context = crate::gateway::control::resolve_public_request_context(
+    let request_context = crate::control::resolve_public_request_context(
         &state,
         &parts.method,
         &parts.uri,
@@ -389,7 +395,7 @@ pub(crate) async fn proxy_request(
                 && decision.admin_principal.is_none()
         })
     {
-        let response = super::admin::build_admin_proxy_auth_required_response(&request_context);
+        let response = build_admin_proxy_auth_required_response(&request_context);
         return Ok(finalize_gateway_response_with_context(
             &state,
             response,
@@ -408,7 +414,7 @@ pub(crate) async fn proxy_request(
                 && decision.admin_principal.is_some()
         })
     {
-        let response = super::admin::build_unhandled_admin_proxy_response(&request_context);
+        let response = build_unhandled_admin_proxy_response(&request_context);
         return Ok(finalize_gateway_response_with_context(
             &state,
             response,
@@ -420,7 +426,7 @@ pub(crate) async fn proxy_request(
         ));
     }
     if request_context.request_path.starts_with("/api/admin/") {
-        let response = super::admin::build_unhandled_admin_proxy_response(&request_context);
+        let response = build_unhandled_admin_proxy_response(&request_context);
         return Ok(finalize_gateway_response_with_context(
             &state,
             response,

@@ -9,8 +9,8 @@ use axum::body::Bytes;
 use base64::Engine as _;
 use futures_util::{Stream, StreamExt};
 
-use crate::gateway::execution_runtime::ndjson::encode_stream_frame_ndjson;
-use crate::gateway::execution_runtime::DirectUpstreamStreamExecution;
+use crate::execution_runtime::ndjson::encode_stream_frame_ndjson;
+use crate::execution_runtime::DirectUpstreamStreamExecution;
 
 pub(crate) fn build_direct_execution_frame_stream(
     execution: DirectUpstreamStreamExecution,
@@ -41,10 +41,14 @@ pub(crate) fn build_direct_execution_frame_stream(
         }
 
         let mut upstream_bytes = 0u64;
+        let mut ttfb_ms = None;
         let mut bytes_stream = response.bytes_stream();
         while let Some(item) = bytes_stream.next().await {
             match item {
                 Ok(chunk) => {
+                    if ttfb_ms.is_none() {
+                        ttfb_ms = Some(started_at.elapsed().as_millis() as u64);
+                    }
                     upstream_bytes += chunk.len() as u64;
                     let frame = StreamFrame {
                         frame_type: StreamFrameType::Data,
@@ -91,7 +95,7 @@ pub(crate) fn build_direct_execution_frame_stream(
             frame_type: StreamFrameType::Telemetry,
             payload: StreamFramePayload::Telemetry {
                 telemetry: ExecutionTelemetry {
-                    ttfb_ms: None,
+                    ttfb_ms,
                     elapsed_ms: Some(started_at.elapsed().as_millis() as u64),
                     upstream_bytes: Some(upstream_bytes),
                 },
@@ -108,5 +112,109 @@ pub(crate) fn build_direct_execution_frame_stream(
             Ok(frame) => yield Ok(frame),
             Err(err) => yield Err(err),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::convert::Infallible;
+    use std::time::Duration;
+
+    use aether_contracts::{ExecutionPlan, ExecutionTimeouts, RequestBody};
+    use async_stream::stream;
+    use axum::body::{Body, Bytes};
+    use axum::routing::post;
+    use axum::{http::header, http::HeaderValue, Router};
+    use futures_util::StreamExt;
+    use serde_json::Value;
+
+    use super::build_direct_execution_frame_stream;
+    use crate::execution_runtime::transport::DirectSyncExecutionRuntime;
+
+    #[tokio::test]
+    async fn direct_execution_frame_stream_reports_ttfb_after_first_upstream_chunk() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should resolve");
+        let app = Router::new().route(
+            "/chat",
+            post(|| async {
+                let stream = stream! {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                    yield Ok::<Bytes, Infallible>(Bytes::from_static(b"data: hello\n\n"));
+                    yield Ok::<Bytes, Infallible>(Bytes::from_static(b"data: [DONE]\n\n"));
+                };
+                let mut response = axum::http::Response::new(Body::from_stream(stream));
+                response.headers_mut().insert(
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("text/event-stream"),
+                );
+                response
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("test server should run");
+        });
+
+        let execution = DirectSyncExecutionRuntime::new()
+            .execute_stream(ExecutionPlan {
+                request_id: "req-stream-ttfb-1".into(),
+                candidate_id: Some("cand-stream-ttfb-1".into()),
+                provider_name: Some("openai".into()),
+                provider_id: "prov-1".into(),
+                endpoint_id: "ep-1".into(),
+                key_id: "key-1".into(),
+                method: "POST".into(),
+                url: format!("http://{addr}/chat"),
+                headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
+                content_type: Some("application/json".into()),
+                content_encoding: None,
+                body: RequestBody::from_json(serde_json::json!({"stream": true})),
+                stream: true,
+                client_api_format: "openai:chat".into(),
+                provider_api_format: "openai:chat".into(),
+                model_name: Some("gpt-5".into()),
+                proxy: None,
+                tls_profile: None,
+                timeouts: Some(ExecutionTimeouts {
+                    connect_ms: Some(5_000),
+                    total_ms: Some(5_000),
+                    ..ExecutionTimeouts::default()
+                }),
+            })
+            .await
+            .expect("stream execution should succeed");
+
+        let frame_output = build_direct_execution_frame_stream(execution)
+            .map(|item| item.expect("frame should encode"))
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|bytes| String::from_utf8(bytes.to_vec()).expect("frame should be utf8"))
+            .collect::<String>();
+
+        server.abort();
+
+        let telemetry_ttfb_ms = frame_output
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find_map(|frame| {
+                (frame.get("type").and_then(Value::as_str) == Some("telemetry")).then(|| {
+                    frame
+                        .get("payload")
+                        .and_then(|payload| payload.get("telemetry"))
+                        .and_then(|telemetry| telemetry.get("ttfb_ms"))
+                        .and_then(Value::as_u64)
+                })?
+            });
+
+        assert!(
+            telemetry_ttfb_ms.is_some_and(|value| value > 0),
+            "telemetry frame should include a measured ttfb"
+        );
     }
 }

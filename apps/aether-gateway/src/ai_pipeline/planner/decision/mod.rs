@@ -5,18 +5,25 @@ mod sync;
 pub(crate) use self::control_plan::{
     maybe_build_stream_plan_payload_impl, maybe_build_sync_plan_payload_impl,
 };
-pub(crate) use self::stream::maybe_build_stream_decision_payload_impl as maybe_build_stream_decision_payload;
-pub(crate) use self::sync::maybe_build_sync_decision_payload_impl as maybe_build_sync_decision_payload;
-pub(crate) use super::{
-    maybe_build_stream_local_decision_payload,
-    maybe_build_stream_local_gemini_files_decision_payload,
-    maybe_build_stream_local_openai_cli_decision_payload,
+pub(crate) use self::stream::maybe_build_stream_decision_payload;
+pub(crate) use self::sync::maybe_build_sync_decision_payload;
+pub(crate) use super::passthrough::{
     maybe_build_stream_local_same_format_provider_decision_payload,
-    maybe_build_stream_local_standard_decision_payload, maybe_build_sync_local_decision_payload,
-    maybe_build_sync_local_gemini_files_decision_payload,
-    maybe_build_sync_local_openai_cli_decision_payload,
     maybe_build_sync_local_same_format_provider_decision_payload,
+};
+pub(crate) use super::specialized::{
+    maybe_build_stream_local_gemini_files_decision_payload,
+    maybe_build_sync_local_gemini_files_decision_payload,
+    maybe_build_sync_local_video_decision_payload,
+};
+pub(crate) use super::standard::{
+    maybe_build_stream_local_decision_payload,
+    maybe_build_stream_local_openai_cli_decision_payload,
+    maybe_build_stream_local_standard_decision_payload, maybe_build_sync_local_decision_payload,
+    maybe_build_sync_local_openai_cli_decision_payload,
     maybe_build_sync_local_standard_decision_payload,
-    maybe_build_sync_local_video_decision_payload, resolve_stream_plan_kind,
-    resolve_sync_plan_kind,
+};
+pub(crate) use crate::scheduler::{
+    resolve_execution_runtime_stream_plan_kind as resolve_stream_plan_kind,
+    resolve_execution_runtime_sync_plan_kind as resolve_sync_plan_kind,
 };

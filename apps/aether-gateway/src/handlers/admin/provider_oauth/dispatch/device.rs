@@ -11,12 +11,16 @@ use super::super::provider_oauth_state::{
     json_u64_value, normalize_kiro_device_region, poll_admin_kiro_device_token,
     read_provider_oauth_device_session, register_admin_kiro_device_oidc_client,
     save_provider_oauth_device_session, start_admin_kiro_device_authorization,
-    StoredAdminProviderOAuthDeviceSession, KIRO_DEVICE_AUTH_SESSION_TTL_BUFFER_SECS,
 };
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::{
     admin_provider_oauth_device_authorize_provider_id, admin_provider_oauth_device_poll_provider_id,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
+use aether_data::repository::provider_oauth::{
+    StoredAdminProviderOAuthDeviceSession, KIRO_DEVICE_AUTH_SESSION_TTL_BUFFER_SECS,
+};
 use axum::{
     body::{Body, Bytes},
     http,
@@ -295,12 +299,16 @@ pub(super) async fn handle_admin_provider_oauth_device_poll(
         session.status = "expired".to_string();
         session.error_msg = Some("设备码已过期".to_string());
         let _ = save_provider_oauth_device_session(state, session_id, &session, 30).await;
-        return Ok(Json(json!({
-            "status": "expired",
-            "error": "设备码已过期",
-            "replaced": false,
-        }))
-        .into_response());
+        return Ok(attach_admin_provider_oauth_device_poll_terminal_response(
+            session_id,
+            "expired",
+            Json(json!({
+                "status": "expired",
+                "error": "设备码已过期",
+                "replaced": false,
+            }))
+            .into_response(),
+        ));
     }
 
     let Some(provider) = state
@@ -344,23 +352,31 @@ pub(super) async fn handle_admin_provider_oauth_device_poll(
             session.status = "expired".to_string();
             session.error_msg = Some("设备码已过期".to_string());
             let _ = save_provider_oauth_device_session(state, session_id, &session, 30).await;
-            return Ok(Json(json!({
-                "status": "expired",
-                "error": "设备码已过期",
-                "replaced": false,
-            }))
-            .into_response());
+            return Ok(attach_admin_provider_oauth_device_poll_terminal_response(
+                session_id,
+                "expired",
+                Json(json!({
+                    "status": "expired",
+                    "error": "设备码已过期",
+                    "replaced": false,
+                }))
+                .into_response(),
+            ));
         }
         if error_code == "access_denied" {
             session.status = "error".to_string();
             session.error_msg = Some("用户拒绝授权".to_string());
             let _ = save_provider_oauth_device_session(state, session_id, &session, 30).await;
-            return Ok(Json(json!({
-                "status": "error",
-                "error": "用户拒绝授权",
-                "replaced": false,
-            }))
-            .into_response());
+            return Ok(attach_admin_provider_oauth_device_poll_terminal_response(
+                session_id,
+                "error",
+                Json(json!({
+                    "status": "error",
+                    "error": "用户拒绝授权",
+                    "replaced": false,
+                }))
+                .into_response(),
+            ));
         }
         let error_message = json_non_empty_string(token_result.get("error_description"))
             .or_else(|| (!error_code.is_empty()).then_some(error_code.clone()))
@@ -489,11 +505,46 @@ pub(super) async fn handle_admin_provider_oauth_device_poll(
     session.error_msg = None;
     let _ = save_provider_oauth_device_session(state, session_id, &session, 60).await;
 
-    Ok(Json(json!({
-        "status": "authorized",
-        "key_id": persisted_key.id,
-        "email": email,
-        "replaced": replaced,
-    }))
-    .into_response())
+    Ok(attach_admin_provider_oauth_device_poll_terminal_response(
+        session_id,
+        "authorized",
+        Json(json!({
+            "status": "authorized",
+            "key_id": persisted_key.id,
+            "email": email,
+            "replaced": replaced,
+        }))
+        .into_response(),
+    ))
+}
+
+fn attach_admin_provider_oauth_device_poll_terminal_response(
+    session_id: &str,
+    status: &str,
+    response: Response<Body>,
+) -> Response<Body> {
+    match status {
+        "authorized" => attach_admin_audit_response(
+            response,
+            "admin_provider_oauth_device_authorization_completed",
+            "poll_provider_oauth_device_authorization_terminal_state",
+            "provider_oauth_device_session",
+            session_id,
+        ),
+        "expired" => attach_admin_audit_response(
+            response,
+            "admin_provider_oauth_device_authorization_expired",
+            "poll_provider_oauth_device_authorization_terminal_state",
+            "provider_oauth_device_session",
+            session_id,
+        ),
+        "error" => attach_admin_audit_response(
+            response,
+            "admin_provider_oauth_device_authorization_failed",
+            "poll_provider_oauth_device_authorization_terminal_state",
+            "provider_oauth_device_session",
+            session_id,
+        ),
+        _ => response,
+    }
 }

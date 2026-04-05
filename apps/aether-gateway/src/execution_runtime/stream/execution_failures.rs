@@ -5,16 +5,17 @@ use base64::Engine as _;
 use serde_json::{Map, Value};
 use tracing::warn;
 
-use crate::gateway::api::response::attach_control_metadata_headers;
-use crate::gateway::execution_runtime::submission::{
+use crate::api::response::attach_control_metadata_headers;
+use crate::control::GatewayControlDecision;
+use crate::execution_runtime::submission::{
     resolve_core_error_background_report_kind, submit_local_core_error_or_sync_finalize,
 };
-use crate::gateway::scheduler::{
+use crate::scheduler::{
     current_unix_secs as current_request_candidate_unix_secs,
     record_report_request_candidate_status,
 };
-use crate::gateway::usage::submit_sync_report;
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError, GatewaySyncReportRequest};
+use crate::usage::submit_sync_report;
+use crate::{usage::GatewaySyncReportRequest, AppState, GatewayError};
 
 #[derive(Debug, Clone)]
 pub(super) struct StreamFailureReport {
@@ -220,7 +221,12 @@ pub(super) async fn submit_midstream_stream_failure(
     .await;
     if let Err(err) = submit_sync_report(state, trace_id, payload).await {
         warn!(
+            event_name = "execution_report_submit_failed",
+            log_type = "ops",
             trace_id = %trace_id,
+            request_id = %plan.request_id,
+            candidate_id = ?plan.candidate_id,
+            report_scope = "stream_failure",
             error = ?err,
             "gateway failed to submit sync execution report for terminal stream failure"
         );

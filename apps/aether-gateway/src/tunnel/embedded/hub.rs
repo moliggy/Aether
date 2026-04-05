@@ -832,9 +832,7 @@ impl HubStats {
 mod tests {
     use aether_runtime::bounded_queue;
 
-    use super::{
-        protocol, ControlPlaneClient, HubRouter, ProxyConn, MAX_REQUEST_BODY_FRAME_SIZE,
-    };
+    use super::{protocol, ControlPlaneClient, HubRouter, ProxyConn, MAX_REQUEST_BODY_FRAME_SIZE};
     use axum::extract::ws::Message;
     use bytes::Bytes;
     use std::collections::HashMap;

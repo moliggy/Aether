@@ -1,7 +1,8 @@
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     admin_provider_ops_architecture_id_from_path, is_admin_provider_ops_architectures_root,
 };
-use crate::gateway::{GatewayError, GatewayPublicRequestContext};
+use crate::GatewayError;
 use axum::{
     body::Body,
     http,

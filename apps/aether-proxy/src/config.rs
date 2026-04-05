@@ -1,5 +1,8 @@
 use std::path::Path;
 
+use aether_runtime::{
+    FileLoggingConfig, LogDestination, LogFormat, LogRotation, ServiceRuntimeConfig,
+};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +35,40 @@ const DELEGATE_TO_UPSTREAM: &[(&str, &str)] = &[
     ("delegate_tcp_keepalive_secs", "upstream_tcp_keepalive_secs"),
     ("delegate_tcp_nodelay", "upstream_tcp_nodelay"),
 ];
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProxyLogDestinationArg {
+    Stdout,
+    File,
+    Both,
+}
+
+impl From<ProxyLogDestinationArg> for LogDestination {
+    fn from(value: ProxyLogDestinationArg) -> Self {
+        match value {
+            ProxyLogDestinationArg::Stdout => LogDestination::Stdout,
+            ProxyLogDestinationArg::File => LogDestination::File,
+            ProxyLogDestinationArg::Both => LogDestination::Both,
+        }
+    }
+}
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProxyLogRotationArg {
+    Hourly,
+    Daily,
+}
+
+impl From<ProxyLogRotationArg> for LogRotation {
+    fn from(value: ProxyLogRotationArg) -> Self {
+        match value {
+            ProxyLogRotationArg::Hourly => LogRotation::Hourly,
+            ProxyLogRotationArg::Daily => LogRotation::Daily,
+        }
+    }
+}
 
 /// Aether tunnel proxy.
 ///
@@ -242,6 +279,36 @@ pub struct Config {
     #[arg(long, env = "AETHER_PROXY_LOG_JSON", default_value_t = false)]
     pub log_json: bool,
 
+    /// Log destination (stdout, file, both)
+    #[arg(
+        long,
+        env = "AETHER_PROXY_LOG_DESTINATION",
+        value_enum,
+        default_value = "stdout"
+    )]
+    pub log_destination: ProxyLogDestinationArg,
+
+    /// Log directory when file logging is enabled
+    #[arg(long, env = "AETHER_PROXY_LOG_DIR")]
+    pub log_dir: Option<String>,
+
+    /// Log rotation schedule for file logging
+    #[arg(
+        long,
+        env = "AETHER_PROXY_LOG_ROTATION",
+        value_enum,
+        default_value = "daily"
+    )]
+    pub log_rotation: ProxyLogRotationArg,
+
+    /// Log file retention days for file logging
+    #[arg(long, env = "AETHER_PROXY_LOG_RETENTION_DAYS", default_value_t = 7)]
+    pub log_retention_days: u64,
+
+    /// Maximum number of retained rolled log files
+    #[arg(long, env = "AETHER_PROXY_LOG_MAX_FILES", default_value_t = 30)]
+    pub log_max_files: usize,
+
     /// Tunnel reconnect base delay in milliseconds (used by exponential backoff)
     #[arg(
         long,
@@ -356,7 +423,48 @@ impl Config {
         if self.distributed_stream_command_timeout_ms == 0 {
             anyhow::bail!("distributed_stream_command_timeout_ms must be > 0");
         }
+        if matches!(
+            self.log_destination,
+            ProxyLogDestinationArg::File | ProxyLogDestinationArg::Both
+        ) && self
+            .log_dir
+            .as_deref()
+            .map(str::trim)
+            .is_none_or(|value| value.is_empty())
+        {
+            anyhow::bail!("log_dir must be set when AETHER_PROXY_LOG_DESTINATION is file or both");
+        }
         Ok(())
+    }
+
+    pub fn service_runtime_config(&self) -> anyhow::Result<ServiceRuntimeConfig> {
+        let mut config = ServiceRuntimeConfig::new("aether-proxy", "aether_proxy=info")
+            .with_log_format(if self.log_json {
+                LogFormat::Json
+            } else {
+                LogFormat::Pretty
+            })
+            .with_log_destination(self.log_destination.into())
+            .with_node_role("proxy")
+            .with_instance_id(self.node_name.trim().to_string());
+        if matches!(
+            self.log_destination,
+            ProxyLogDestinationArg::File | ProxyLogDestinationArg::Both
+        ) {
+            let log_dir = self
+                .log_dir
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("log_dir must be configured for file logging"))?;
+            config = config.with_file_logging(FileLoggingConfig::new(
+                log_dir,
+                self.log_rotation.into(),
+                self.log_retention_days,
+                self.log_max_files,
+            ));
+        }
+        Ok(config)
     }
 }
 
@@ -431,6 +539,16 @@ pub struct ConfigFile {
     pub log_level: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub log_json: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_destination: Option<ProxyLogDestinationArg>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_rotation: Option<ProxyLogRotationArg>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_retention_days: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_max_files: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tunnel_reconnect_base_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -678,6 +796,24 @@ impl ConfigFile {
         );
         set!("AETHER_PROXY_LOG_LEVEL", self.log_level);
         set!("AETHER_PROXY_LOG_JSON", self.log_json);
+        set!(
+            "AETHER_PROXY_LOG_DESTINATION",
+            self.log_destination.map(|v| match v {
+                ProxyLogDestinationArg::Stdout => "stdout",
+                ProxyLogDestinationArg::File => "file",
+                ProxyLogDestinationArg::Both => "both",
+            })
+        );
+        set!("AETHER_PROXY_LOG_DIR", self.log_dir.as_deref());
+        set!(
+            "AETHER_PROXY_LOG_ROTATION",
+            self.log_rotation.map(|v| match v {
+                ProxyLogRotationArg::Hourly => "hourly",
+                ProxyLogRotationArg::Daily => "daily",
+            })
+        );
+        set!("AETHER_PROXY_LOG_RETENTION_DAYS", self.log_retention_days);
+        set!("AETHER_PROXY_LOG_MAX_FILES", self.log_max_files);
         set!(
             "AETHER_PROXY_TUNNEL_RECONNECT_BASE_MS",
             self.tunnel_reconnect_base_ms

@@ -8,7 +8,7 @@ use super::request::{
     classify_antigravity_safe_request_body, AntigravityEnvelopeRequestType,
     AntigravityRequestEnvelopeUnsupportedReason,
 };
-use crate::gateway::provider_transport::snapshot::GatewayProviderTransportSnapshot;
+use crate::provider_transport::snapshot::GatewayProviderTransportSnapshot;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AntigravityRequestSideSpec {

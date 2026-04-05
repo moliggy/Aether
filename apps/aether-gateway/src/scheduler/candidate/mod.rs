@@ -1,23 +1,25 @@
 use self::affinity::{
     build_scheduler_affinity_cache_key, build_scheduler_affinity_cache_key_for_api_key_id,
-    candidate_affinity_hash, candidate_key, compare_affinity_order, matches_affinity_target,
-    remember_scheduler_affinity,
+    candidate_affinity_hash, candidate_key, remember_scheduler_affinity,
 };
 use self::model::{
-    auth_snapshot_allows_api_format, auth_snapshot_allows_model, auth_snapshot_allows_provider,
-    candidate_model_names, candidate_supports_required_capability,
-    extract_global_priority_for_format, matches_model_mapping, normalize_api_format,
+    auth_snapshot_allows_api_format, auth_snapshot_constraints, candidate_model_names,
+    candidate_supports_required_capability, matches_model_mapping, normalize_api_format,
     read_requested_model_rows, resolve_provider_model_name, resolve_requested_global_model_name,
-    row_supports_required_capability, select_provider_model_name,
+    select_provider_model_name,
 };
 use self::selection::{
     is_candidate_selectable, read_provider_concurrent_limits, read_provider_key_rpm_states,
     reorder_candidates_by_scheduler_health, should_skip_provider_quota,
 };
+pub(crate) use self::state::{
+    SchedulerCandidateSelectionRowSource, SchedulerRuntimeState,
+};
 
 mod affinity;
 mod model;
 mod selection;
+mod state;
 
 #[cfg(test)]
 mod tests;
@@ -34,54 +36,31 @@ use aether_data::repository::provider_catalog::{
 };
 use aether_data::repository::quota::StoredProviderQuotaSnapshot;
 use aether_data::DataLayerError;
+use aether_scheduler_core::{
+    auth_api_key_concurrency_limit_reached, build_minimal_candidate_selection,
+    collect_global_model_names_for_required_capability, collect_selectable_candidates_from_keys,
+    SchedulerAffinityTarget, SchedulerMinimalCandidateSelectionCandidate,
+};
 use aether_wallet::{ProviderBillingType, ProviderQuotaSnapshot};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 
-use crate::gateway::gateway_cache::SchedulerAffinityTarget;
-use crate::gateway::gateway_data::{GatewayDataState, StoredGatewayAuthApiKeySnapshot};
-use crate::gateway::{AppState, GatewayError};
-
-use super::health::{
-    count_recent_active_requests_for_api_key, count_recent_active_requests_for_provider,
-    effective_provider_key_health_score, is_candidate_in_recent_failure_cooldown,
-    is_provider_key_circuit_open, provider_key_health_bucket, provider_key_health_score,
-    provider_key_rpm_allows_request_since,
-};
+use crate::data::auth::GatewayAuthApiKeySnapshot;
+use crate::{AppState, GatewayError};
 
 const SCHEDULER_AFFINITY_TTL: Duration = Duration::from_secs(300);
 #[cfg_attr(not(test), allow(dead_code))]
 const SCHEDULER_AFFINITY_MAX_ENTRIES: usize = 10_000;
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub(crate) struct GatewayMinimalCandidateSelectionCandidate {
-    pub(crate) provider_id: String,
-    pub(crate) provider_name: String,
-    pub(crate) provider_type: String,
-    pub(crate) provider_priority: i32,
-    pub(crate) endpoint_id: String,
-    pub(crate) endpoint_api_format: String,
-    pub(crate) key_id: String,
-    pub(crate) key_name: String,
-    pub(crate) key_auth_type: String,
-    pub(crate) key_internal_priority: i32,
-    pub(crate) key_global_priority_for_format: Option<i32>,
-    pub(crate) key_capabilities: Option<serde_json::Value>,
-    pub(crate) model_id: String,
-    pub(crate) global_model_id: String,
-    pub(crate) global_model_name: String,
-    pub(crate) selected_provider_model_name: String,
-    pub(crate) mapping_matched_model: Option<String>,
-}
+pub(crate) use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate as GatewayMinimalCandidateSelectionCandidate;
 
 #[allow(dead_code)]
 pub(crate) async fn read_minimal_candidate_selection(
-    state: &GatewayDataState,
+    state: &(impl SchedulerCandidateSelectionRowSource + Sync),
     api_format: &str,
     requested_model_name: &str,
     require_streaming: bool,
-    auth_snapshot: Option<&StoredGatewayAuthApiKeySnapshot>,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
 ) -> Result<Vec<GatewayMinimalCandidateSelectionCandidate>, DataLayerError> {
     let normalized_api_format = normalize_api_format(api_format);
     if normalized_api_format.is_empty() {
@@ -97,73 +76,19 @@ pub(crate) async fn read_minimal_candidate_selection(
     else {
         return Ok(Vec::new());
     };
-
-    if !auth_snapshot_allows_model(
-        auth_snapshot,
-        requested_model_name,
-        resolved_global_model_name.as_str(),
-    ) {
-        return Ok(Vec::new());
-    }
-
-    let mut candidates = Vec::new();
-    for row in rows {
-        if !auth_snapshot_allows_provider(auth_snapshot, &row.provider_id, &row.provider_name) {
-            continue;
-        }
-        if require_streaming && !row.supports_streaming() {
-            continue;
-        }
-        let Some((selected_provider_model_name, mapping_matched_model)) =
-            resolve_provider_model_name(&row, requested_model_name, &normalized_api_format)
-        else {
-            continue;
-        };
-
-        candidates.push(GatewayMinimalCandidateSelectionCandidate {
-            provider_id: row.provider_id,
-            provider_name: row.provider_name,
-            provider_type: row.provider_type,
-            provider_priority: row.provider_priority,
-            endpoint_id: row.endpoint_id,
-            endpoint_api_format: row.endpoint_api_format,
-            key_id: row.key_id,
-            key_name: row.key_name,
-            key_auth_type: row.key_auth_type,
-            key_internal_priority: row.key_internal_priority,
-            key_global_priority_for_format: extract_global_priority_for_format(
-                row.key_global_priority_by_format.as_ref(),
-                &normalized_api_format,
-            )?,
-            key_capabilities: row.key_capabilities,
-            model_id: row.model_id,
-            global_model_id: row.global_model_id,
-            global_model_name: row.global_model_name,
-            selected_provider_model_name,
-            mapping_matched_model,
-        });
-    }
-
+    let auth_constraints = auth_snapshot.map(auth_snapshot_constraints);
     let affinity_key = auth_snapshot
         .map(|snapshot| snapshot.api_key_id.trim())
         .filter(|value| !value.is_empty());
-    candidates.sort_by(|left, right| {
-        left.key_global_priority_for_format
-            .unwrap_or(i32::MAX)
-            .cmp(&right.key_global_priority_for_format.unwrap_or(i32::MAX))
-            .then_with(|| compare_affinity_order(left, right, affinity_key))
-            .then(left.provider_priority.cmp(&right.provider_priority))
-            .then(left.key_internal_priority.cmp(&right.key_internal_priority))
-            .then(left.provider_id.cmp(&right.provider_id))
-            .then(left.endpoint_id.cmp(&right.endpoint_id))
-            .then(left.key_id.cmp(&right.key_id))
-            .then(
-                left.selected_provider_model_name
-                    .cmp(&right.selected_provider_model_name),
-            )
-    });
-
-    Ok(candidates)
+    build_minimal_candidate_selection(
+        rows,
+        &normalized_api_format,
+        requested_model_name,
+        resolved_global_model_name.as_str(),
+        require_streaming,
+        auth_constraints.as_ref(),
+        affinity_key,
+    )
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -172,7 +97,7 @@ pub(crate) async fn select_minimal_candidate(
     api_format: &str,
     global_model_name: &str,
     require_streaming: bool,
-    auth_snapshot: Option<&StoredGatewayAuthApiKeySnapshot>,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
     now_unix_secs: u64,
 ) -> Result<Option<GatewayMinimalCandidateSelectionCandidate>, GatewayError> {
     let affinity_cache_key =
@@ -199,7 +124,7 @@ pub(crate) async fn list_selectable_candidates(
     api_format: &str,
     global_model_name: &str,
     require_streaming: bool,
-    auth_snapshot: Option<&StoredGatewayAuthApiKeySnapshot>,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
     now_unix_secs: u64,
 ) -> Result<Vec<GatewayMinimalCandidateSelectionCandidate>, GatewayError> {
     collect_selectable_candidates(
@@ -218,7 +143,7 @@ pub(crate) async fn list_selectable_candidates_for_required_capability_without_r
     candidate_api_format: &str,
     required_capability: &str,
     require_streaming: bool,
-    auth_snapshot: Option<&StoredGatewayAuthApiKeySnapshot>,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
     now_unix_secs: u64,
 ) -> Result<Vec<GatewayMinimalCandidateSelectionCandidate>, GatewayError> {
     let normalized_api_format = normalize_api_format(candidate_api_format);
@@ -232,28 +157,17 @@ pub(crate) async fn list_selectable_candidates_for_required_capability_without_r
     }
 
     let rows = state
-        .list_minimal_candidate_selection_rows_for_api_format(&normalized_api_format)
-        .await?;
-    let mut model_names = BTreeSet::new();
-    for row in rows {
-        if !auth_snapshot_allows_provider(auth_snapshot, &row.provider_id, &row.provider_name) {
-            continue;
-        }
-        if !row_supports_required_capability(&row, required_capability) {
-            continue;
-        }
-        if require_streaming && !row.supports_streaming() {
-            continue;
-        }
-        if !auth_snapshot_allows_model(
-            auth_snapshot,
-            &row.global_model_name,
-            &row.global_model_name,
-        ) {
-            continue;
-        }
-        model_names.insert(row.global_model_name);
-    }
+        .read_minimal_candidate_selection_rows_for_api_format(&normalized_api_format)
+        .await
+        .map_err(|err| GatewayError::Internal(err.to_string()))?;
+    let auth_constraints = auth_snapshot.map(auth_snapshot_constraints);
+    let model_names = collect_global_model_names_for_required_capability(
+        rows,
+        &normalized_api_format,
+        required_capability,
+        require_streaming,
+        auth_constraints.as_ref(),
+    );
 
     for global_model_name in model_names {
         let candidates = list_selectable_candidates(
@@ -290,9 +204,7 @@ pub(crate) fn read_cached_scheduler_affinity_target(
         api_format,
         global_model_name,
     )?;
-    state
-        .scheduler_affinity_cache
-        .get_fresh(&cache_key, SCHEDULER_AFFINITY_TTL)
+    state.read_cached_scheduler_affinity_target(&cache_key, SCHEDULER_AFFINITY_TTL)
 }
 
 async fn collect_selectable_candidates(
@@ -300,7 +212,7 @@ async fn collect_selectable_candidates(
     api_format: &str,
     global_model_name: &str,
     require_streaming: bool,
-    auth_snapshot: Option<&StoredGatewayAuthApiKeySnapshot>,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
     now_unix_secs: u64,
 ) -> Result<Vec<GatewayMinimalCandidateSelectionCandidate>, GatewayError> {
     let mut candidates = state
@@ -322,9 +234,7 @@ async fn collect_selectable_candidates(
     let affinity_cache_key =
         build_scheduler_affinity_cache_key(auth_snapshot, api_format, global_model_name);
     let cached_affinity_target = affinity_cache_key.as_deref().and_then(|cache_key| {
-        state
-            .scheduler_affinity_cache
-            .get_fresh(cache_key, SCHEDULER_AFFINITY_TTL)
+        state.read_cached_scheduler_affinity_target(cache_key, SCHEDULER_AFFINITY_TTL)
     });
 
     if let Some((api_key_id, limit)) = auth_snapshot.and_then(|snapshot| {
@@ -337,45 +247,21 @@ async fn collect_selectable_candidates(
                 Some((snapshot.api_key_id.as_str(), limit))
             })
     }) {
-        let active_requests =
-            count_recent_active_requests_for_api_key(&recent_candidates, api_key_id, now_unix_secs);
-        if active_requests >= limit {
+        if auth_api_key_concurrency_limit_reached(
+            &recent_candidates,
+            now_unix_secs,
+            api_key_id,
+            limit,
+        ) {
             return Ok(Vec::new());
         }
     }
 
-    let mut selected = Vec::new();
     let mut selected_keys = BTreeSet::new();
 
-    if let Some(target) = cached_affinity_target.as_ref() {
-        if let Some(candidate) = candidates
-            .iter()
-            .find(|candidate| matches_affinity_target(candidate, target))
-            .cloned()
-        {
-            if is_candidate_selectable(
-                &candidate,
-                &recent_candidates,
-                &provider_concurrent_limits,
-                &provider_key_rpm_states,
-                now_unix_secs,
-                cached_affinity_target.as_ref(),
-                state,
-            )
-            .await?
-            {
-                selected_keys.insert(candidate_key(&candidate));
-                selected.push(candidate);
-            }
-        }
-    }
-
-    for candidate in candidates {
-        if selected_keys.contains(&candidate_key(&candidate)) {
-            continue;
-        }
+    for candidate in &candidates {
         if !is_candidate_selectable(
-            &candidate,
+            candidate,
             &recent_candidates,
             &provider_concurrent_limits,
             &provider_key_rpm_states,
@@ -387,9 +273,12 @@ async fn collect_selectable_candidates(
         {
             continue;
         }
-        selected_keys.insert(candidate_key(&candidate));
-        selected.push(candidate);
+        selected_keys.insert(candidate_key(candidate));
     }
 
-    Ok(selected)
+    Ok(collect_selectable_candidates_from_keys(
+        candidates,
+        &selected_keys,
+        cached_affinity_target.as_ref(),
+    ))
 }

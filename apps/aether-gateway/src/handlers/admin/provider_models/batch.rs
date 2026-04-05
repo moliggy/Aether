@@ -2,8 +2,10 @@ use super::super::{
     admin_provider_model_name_exists, build_admin_provider_model_create_record,
     build_admin_provider_model_response,
 };
-use crate::gateway::handlers::{admin_provider_models_batch_path, AdminProviderModelCreateRequest};
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{admin_provider_models_batch_path, AdminProviderModelCreateRequest};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,

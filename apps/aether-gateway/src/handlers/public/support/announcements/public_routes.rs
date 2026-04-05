@@ -5,7 +5,8 @@ use axum::{
     Json,
 };
 
-use crate::gateway::{AppState, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::AppState;
 
 use super::super::build_unhandled_public_support_response;
 use super::announcements_shared::{

@@ -8,6 +8,10 @@ import type {
   ProxyConfig,
 } from './types'
 
+interface ProviderRequestOptions {
+  timeout?: number
+}
+
 /**
  * 获取 Providers 摘要（分页）
  */
@@ -73,9 +77,10 @@ export async function updateProvider(
     claude_code_advanced: ClaudeCodeAdvancedConfig | null
     pool_advanced: PoolAdvancedConfig | null
     failover_rules: FailoverRulesConfig | null
-  }>
+  }>,
+  requestOptions?: ProviderRequestOptions,
 ): Promise<ProviderWithEndpointsSummary> {
-  const response = await client.patch(`/api/admin/providers/${providerId}`, data)
+  const response = await client.patch(`/api/admin/providers/${providerId}`, data, requestOptions)
   return response.data
 }
 

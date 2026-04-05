@@ -3,16 +3,19 @@ use std::collections::BTreeMap;
 use serde_json::{json, Map, Value};
 use url::form_urlencoded;
 
-use crate::gateway::ai_pipeline::conversion::request::{
+use crate::ai_pipeline::conversion::request::{
     convert_openai_chat_request_to_claude_request, convert_openai_chat_request_to_gemini_request,
     convert_openai_chat_request_to_openai_cli_request, extract_openai_text_content,
     normalize_openai_cli_request_to_openai_chat_request, parse_openai_tool_result_content,
 };
-use crate::gateway::ai_pipeline::conversion::{request_conversion_kind, RequestConversionKind};
-use crate::gateway::provider_transport::{
-    apply_local_body_rules, build_antigravity_v1internal_url, build_claude_messages_url,
-    build_gemini_content_url, build_openai_chat_url, build_openai_cli_url,
-    build_passthrough_path_url, AntigravityRequestUrlAction,
+use crate::ai_pipeline::conversion::{request_conversion_kind, RequestConversionKind};
+use crate::provider_transport::antigravity::{
+    build_antigravity_v1internal_url, AntigravityRequestUrlAction,
+};
+use crate::provider_transport::apply_local_body_rules;
+use crate::provider_transport::url::{
+    build_claude_messages_url, build_gemini_content_url, build_openai_chat_url,
+    build_openai_cli_url, build_passthrough_path_url,
 };
 
 pub(crate) fn build_local_openai_chat_request_body(
@@ -40,7 +43,7 @@ pub(crate) fn build_local_openai_chat_request_body(
 
 pub(crate) fn build_local_openai_chat_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
 ) -> Option<String> {
     let custom_path = transport
         .endpoint
@@ -101,7 +104,7 @@ pub(crate) fn build_cross_format_openai_chat_request_body(
 
 pub(crate) fn build_cross_format_openai_chat_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
     mapped_model: &str,
     provider_api_format: &str,
     upstream_is_stream: bool,
@@ -214,7 +217,7 @@ pub(crate) fn build_cross_format_openai_cli_request_body(
 
 pub(crate) fn build_local_openai_cli_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
     compact: bool,
 ) -> Option<String> {
     let custom_path = transport
@@ -238,7 +241,7 @@ pub(crate) fn build_local_openai_cli_upstream_url(
 
 pub(crate) fn build_cross_format_openai_cli_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
     mapped_model: &str,
     client_api_format: &str,
     provider_api_format: &str,

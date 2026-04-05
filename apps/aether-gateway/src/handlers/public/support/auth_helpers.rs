@@ -218,7 +218,7 @@ fn auth_non_empty_string(value: Option<String>) -> Option<String> {
 
 pub(super) fn extract_bearer_token(headers: &http::HeaderMap) -> Option<String> {
     let value =
-        crate::gateway::headers::header_value_str(headers, http::header::AUTHORIZATION.as_str())?;
+        crate::headers::header_value_str(headers, http::header::AUTHORIZATION.as_str())?;
     let (scheme, token) = value.split_once(' ')?;
     if !scheme.eq_ignore_ascii_case("bearer") {
         return None;
@@ -227,7 +227,7 @@ pub(super) fn extract_bearer_token(headers: &http::HeaderMap) -> Option<String> 
 }
 
 pub(super) fn extract_cookie_value(headers: &http::HeaderMap, cookie_name: &str) -> Option<String> {
-    let header = crate::gateway::headers::header_value_str(headers, http::header::COOKIE.as_str())?;
+    let header = crate::headers::header_value_str(headers, http::header::COOKIE.as_str())?;
     for pair in header.split(';') {
         let (name, value) = pair.trim().split_once('=')?;
         if name.trim() == cookie_name {
@@ -241,7 +241,7 @@ pub(super) fn extract_client_device_id(
     request_context: &GatewayPublicRequestContext,
     headers: &http::HeaderMap,
 ) -> Result<String, Response<Body>> {
-    let header_value = crate::gateway::headers::header_value_str(headers, "x-client-device-id");
+    let header_value = crate::headers::header_value_str(headers, "x-client-device-id");
     let query_value = request_context
         .request_query_string
         .as_deref()
@@ -268,12 +268,12 @@ pub(super) fn extract_client_device_id(
 }
 
 pub(super) fn auth_user_agent(headers: &http::HeaderMap) -> Option<String> {
-    crate::gateway::headers::header_value_str(headers, http::header::USER_AGENT.as_str())
+    crate::headers::header_value_str(headers, http::header::USER_AGENT.as_str())
         .map(|value| value.chars().take(1000).collect())
 }
 
 pub(super) fn auth_client_ip(headers: &http::HeaderMap) -> Option<String> {
-    crate::gateway::headers::header_value_str(headers, "x-forwarded-for")
+    crate::headers::header_value_str(headers, "x-forwarded-for")
         .and_then(|value| {
             value
                 .split(',')
@@ -283,7 +283,7 @@ pub(super) fn auth_client_ip(headers: &http::HeaderMap) -> Option<String> {
         .filter(|value| !value.is_empty())
         .map(|value| value.chars().take(45).collect())
         .or_else(|| {
-            crate::gateway::headers::header_value_str(headers, "x-real-ip")
+            crate::headers::header_value_str(headers, "x-real-ip")
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())

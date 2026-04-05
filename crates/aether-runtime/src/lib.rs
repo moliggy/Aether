@@ -7,6 +7,7 @@ mod error;
 pub mod metrics;
 mod observability;
 pub mod queue;
+pub mod redaction;
 pub mod shutdown;
 pub mod task;
 mod tracing;
@@ -23,9 +24,14 @@ pub use distributed::{
 };
 pub use error::RuntimeBootstrapError;
 pub use metrics::{prometheus_response, service_up_sample, MetricKind, MetricLabel, MetricSample};
-pub use observability::ServiceObservabilityConfig;
+pub use observability::{
+    FileLoggingConfig, LogDestination, LogRotation, ServiceObservabilityConfig,
+};
 pub use queue::{
     bounded_queue, BoundedQueueReceiver, BoundedQueueSender, QueueSendError, QueueSnapshot,
 };
+pub use redaction::{summarize_text_payload, TextPayloadSummary};
 pub use shutdown::wait_for_shutdown_signal;
-pub use tracing::{init_reloadable_tracing, LogFormat, LogReloader};
+pub use tracing::{
+    init_reloadable_service_tracing, init_reloadable_tracing, LogFormat, LogReloader,
+};

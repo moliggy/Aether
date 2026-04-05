@@ -1,6 +1,8 @@
 use super::super::{build_admin_provider_model_response, build_admin_provider_model_update_record};
-use crate::gateway::handlers::{admin_provider_model_route_parts, AdminProviderModelUpdateRequest};
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{admin_provider_model_route_parts, AdminProviderModelUpdateRequest};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,

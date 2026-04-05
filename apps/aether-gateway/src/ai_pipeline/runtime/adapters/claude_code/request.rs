@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
-use crate::gateway::provider_transport::auth::build_openai_passthrough_headers;
+use crate::provider_transport::auth::build_openai_passthrough_headers;
 
 const DEFAULT_ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_ACCEPT: &str = "application/json";

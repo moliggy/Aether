@@ -6,14 +6,15 @@ use super::{
     parse_admin_monitoring_hours, parse_admin_monitoring_limit, parse_admin_monitoring_offset,
     parse_admin_monitoring_username_filter,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::query::monitoring as monitoring_query;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     response::{IntoResponse, Response},
     Json,
 };
 use serde_json::json;
-use sqlx::Row;
 
 fn build_admin_monitoring_audit_logs_payload(
     items: Vec<serde_json::Value>,
@@ -121,86 +122,18 @@ pub(super) async fn build_admin_monitoring_audit_logs_response(
         .map(admin_monitoring_escape_like_pattern)
         .map(|value| format!("%{value}%"));
 
-    let total = sqlx::query_scalar::<_, i64>(
-        r#"
-SELECT COUNT(*)
-FROM audit_logs AS a
-LEFT JOIN users AS u ON a.user_id = u.id
-WHERE a.created_at >= $1
-  AND ($2::text IS NULL OR u.username ILIKE $2 ESCAPE '\')
-  AND ($3::text IS NULL OR a.event_type = $3)
-"#,
-    )
-    .bind(cutoff_time)
-    .bind(username_pattern.as_deref())
-    .bind(event_type.as_deref())
-    .fetch_one(&pool)
-    .await
-    .map_err(|err| GatewayError::Internal(format!("admin audit logs count failed: {err}")))?;
-
-    let rows = sqlx::query(
-        r#"
-SELECT
-  a.id,
-  a.event_type,
-  a.user_id,
-  u.email AS user_email,
-  u.username AS user_username,
-  a.description,
-  a.ip_address,
-  a.status_code,
-  a.error_message,
-  a.event_metadata AS metadata,
-  a.created_at
-FROM audit_logs AS a
-LEFT JOIN users AS u ON a.user_id = u.id
-WHERE a.created_at >= $1
-  AND ($2::text IS NULL OR u.username ILIKE $2 ESCAPE '\')
-  AND ($3::text IS NULL OR a.event_type = $3)
-ORDER BY a.created_at DESC
-LIMIT $4 OFFSET $5
-"#,
-    )
-    .bind(cutoff_time)
-    .bind(username_pattern.as_deref())
-    .bind(event_type.as_deref())
-    .bind(i64::try_from(limit).unwrap_or(i64::MAX))
-    .bind(i64::try_from(offset).unwrap_or(i64::MAX))
-    .fetch_all(&pool)
-    .await
-    .map_err(|err| GatewayError::Internal(format!("admin audit logs read failed: {err}")))?;
-
-    let items = rows
-        .into_iter()
-        .map(|row| {
-            let created_at = row
-                .try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
-                .ok()
-                .map(|value| value.to_rfc3339());
-            json!({
-                "id": row.try_get::<String, _>("id").ok(),
-                "event_type": row.try_get::<String, _>("event_type").ok(),
-                "user_id": row.try_get::<Option<String>, _>("user_id").ok().flatten(),
-                "user_email": row.try_get::<Option<String>, _>("user_email").ok().flatten(),
-                "user_username": row.try_get::<Option<String>, _>("user_username").ok().flatten(),
-                "description": row.try_get::<Option<String>, _>("description").ok().flatten(),
-                "ip_address": row.try_get::<Option<String>, _>("ip_address").ok().flatten(),
-                "status_code": row.try_get::<Option<i32>, _>("status_code").ok().flatten(),
-                "error_message": row.try_get::<Option<String>, _>("error_message").ok().flatten(),
-                "metadata": row.try_get::<Option<serde_json::Value>, _>("metadata").ok().flatten(),
-                "created_at": created_at,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    Ok(build_admin_monitoring_audit_logs_payload(
-        items,
-        usize::try_from(total.max(0)).unwrap_or(usize::MAX),
+    let (items, total) = monitoring_query::list_admin_audit_logs(
+        &pool,
+        cutoff_time,
+        username_pattern.as_deref(),
+        event_type.as_deref(),
         limit,
         offset,
-        username,
-        event_type,
-        days,
+    )
+    .await?;
+
+    Ok(build_admin_monitoring_audit_logs_payload(
+        items, total, limit, offset, username, event_type, days,
     ))
 }
 
@@ -222,54 +155,7 @@ pub(super) async fn build_admin_monitoring_suspicious_activities_response(
     };
 
     let cutoff_time = chrono::Utc::now() - chrono::Duration::hours(hours);
-    let rows = sqlx::query(
-        r#"
-SELECT
-  id,
-  event_type,
-  user_id,
-  description,
-  ip_address,
-  event_metadata AS metadata,
-  created_at
-FROM audit_logs
-WHERE created_at >= $1
-  AND event_type = ANY($2)
-ORDER BY created_at DESC
-LIMIT 100
-"#,
-    )
-    .bind(cutoff_time)
-    .bind(vec![
-        "suspicious_activity",
-        "unauthorized_access",
-        "login_failed",
-        "request_rate_limited",
-    ])
-    .fetch_all(&pool)
-    .await
-    .map_err(|err| {
-        GatewayError::Internal(format!("admin suspicious activities read failed: {err}"))
-    })?;
-
-    let activities = rows
-        .into_iter()
-        .map(|row| {
-            let created_at = row
-                .try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
-                .ok()
-                .map(|value| value.to_rfc3339());
-            json!({
-                "id": row.try_get::<String, _>("id").ok(),
-                "event_type": row.try_get::<String, _>("event_type").ok(),
-                "user_id": row.try_get::<Option<String>, _>("user_id").ok().flatten(),
-                "description": row.try_get::<Option<String>, _>("description").ok().flatten(),
-                "ip_address": row.try_get::<Option<String>, _>("ip_address").ok().flatten(),
-                "metadata": row.try_get::<Option<serde_json::Value>, _>("metadata").ok().flatten(),
-                "created_at": created_at,
-            })
-        })
-        .collect::<Vec<_>>();
+    let activities = monitoring_query::list_admin_suspicious_activities(&pool, cutoff_time).await?;
 
     Ok(build_admin_monitoring_suspicious_activities_payload(
         activities, hours,
@@ -303,33 +189,9 @@ pub(super) async fn build_admin_monitoring_user_behavior_response(
 
     let cutoff_time = chrono::Utc::now() - chrono::Duration::days(days);
 
-    let event_rows = sqlx::query(
-        r#"
-SELECT event_type, COUNT(*)::bigint AS count
-FROM audit_logs
-WHERE user_id = $1
-  AND created_at >= $2
-GROUP BY event_type
-"#,
-    )
-    .bind(&user_id)
-    .bind(cutoff_time)
-    .fetch_all(&pool)
-    .await
-    .map_err(|err| GatewayError::Internal(format!("admin user behavior read failed: {err}")))?;
-
-    let event_counts = event_rows
-        .into_iter()
-        .filter_map(|row| {
-            let event_type = row.try_get::<String, _>("event_type").ok()?;
-            let count = row
-                .try_get::<i64, _>("count")
-                .ok()
-                .and_then(|value| u64::try_from(value.max(0)).ok())
-                .unwrap_or(0);
-            Some((event_type, count))
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
+    let event_counts =
+        monitoring_query::read_admin_user_behavior_event_counts(&pool, &user_id, cutoff_time)
+            .await?;
 
     let failed_requests = event_counts
         .get("request_failed")

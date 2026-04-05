@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use super::super::to_openai_chat::{extract_openai_text_content, parse_openai_tool_result_content};
 use super::shared::parse_openai_tool_arguments;
-use crate::gateway::ai_pipeline::planner::standard::{
+use crate::ai_pipeline::planner::standard::{
     copy_request_number_field, map_openai_reasoning_effort_to_claude_output,
     parse_openai_stop_sequences, resolve_openai_chat_max_tokens,
 };

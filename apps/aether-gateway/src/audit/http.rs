@@ -6,7 +6,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::gateway::{AppState, GatewayError};
+use crate::{AppState, GatewayError};
 
 const DEFAULT_RECENT_LIMIT: usize = 20;
 const MAX_RECENT_LIMIT: usize = 200;
@@ -80,7 +80,10 @@ pub(crate) async fn get_request_candidate_trace(
     State(state): State<AppState>,
     Path(request_id): Path<String>,
     Query(query): Query<GetRequestCandidateTraceQuery>,
-) -> Result<Json<crate::gateway::gateway_data::RequestCandidateTrace>, axum::response::Response> {
+) -> Result<
+    Json<crate::data::candidates::RequestCandidateTrace>,
+    axum::response::Response,
+> {
     let attempted_only = query.attempted_only.unwrap_or(false);
     let trace = state
         .read_request_candidate_trace(&request_id, attempted_only)
@@ -105,7 +108,10 @@ pub(crate) async fn get_decision_trace(
     State(state): State<AppState>,
     Path(request_id): Path<String>,
     Query(query): Query<GetRequestCandidateTraceQuery>,
-) -> Result<Json<crate::gateway::gateway_data::DecisionTrace>, axum::response::Response> {
+) -> Result<
+    Json<crate::data::decision_trace::DecisionTrace>,
+    axum::response::Response,
+> {
     let attempted_only = query.attempted_only.unwrap_or(false);
     let trace = state
         .read_decision_trace(&request_id, attempted_only)
@@ -130,7 +136,7 @@ pub(crate) async fn get_auth_api_key_snapshot(
     State(state): State<AppState>,
     Path((user_id, api_key_id)): Path<(String, String)>,
 ) -> Result<
-    Json<crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot>,
+    Json<crate::data::auth::GatewayAuthApiKeySnapshot>,
     axum::response::Response,
 > {
     let snapshot = state

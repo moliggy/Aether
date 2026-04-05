@@ -5,8 +5,8 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use aether_runtime::{
-    init_reloadable_tracing, wait_for_shutdown_signal, ConcurrencyGate, DistributedConcurrencyGate,
-    LogFormat, RedisDistributedConcurrencyConfig,
+    init_reloadable_service_tracing, wait_for_shutdown_signal, ConcurrencyGate,
+    DistributedConcurrencyGate, RedisDistributedConcurrencyConfig,
 };
 use arc_swap::ArcSwap;
 use tokio::sync::{watch, Mutex};
@@ -338,14 +338,13 @@ async fn retry_failed_registrations(
 }
 
 fn init_tracing(config: &Config) {
-    let format = if config.log_json {
-        LogFormat::Json
-    } else {
-        LogFormat::Pretty
-    };
-
-    let reloader = init_reloadable_tracing(&config.log_level, format)
-        .expect("proxy tracing should initialize");
+    let reloader = init_reloadable_service_tracing(
+        &config.log_level,
+        config
+            .service_runtime_config()
+            .expect("proxy service runtime config should be valid"),
+    )
+    .expect("proxy tracing should initialize");
     runtime::set_log_reloader(reloader);
 }
 

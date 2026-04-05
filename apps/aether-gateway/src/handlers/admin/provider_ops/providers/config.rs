@@ -1,8 +1,8 @@
 use super::{AdminProviderOpsSaveConfigRequest, ADMIN_PROVIDER_OPS_SENSITIVE_FIELDS};
-use crate::gateway::handlers::{
+use crate::handlers::{
     decrypt_catalog_secret_with_fallbacks, encrypt_catalog_secret_with_fallbacks,
 };
-use crate::gateway::AppState;
+use crate::AppState;
 use aether_data::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogProvider,
 };

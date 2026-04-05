@@ -8,7 +8,8 @@ use super::{
     build_admin_update_user_api_key_response, build_admin_update_user_response,
     build_admin_users_data_unavailable_response,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::{AppState, GatewayError};
 use axum::{body::Body, http, response::Response};
 
 fn is_admin_users_route(request_context: &GatewayPublicRequestContext) -> bool {

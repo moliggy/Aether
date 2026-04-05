@@ -7,13 +7,15 @@ use super::super::{
     refresh_antigravity_provider_quota_locally, refresh_codex_provider_quota_locally,
     refresh_kiro_provider_quota_locally,
 };
-use crate::gateway::handlers::public::build_admin_keys_grouped_by_format_payload;
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::public::build_admin_keys_grouped_by_format_payload;
+use crate::handlers::{
     admin_provider_id_for_keys, query_param_value, AdminProviderKeyBatchDeleteRequest,
     AdminProviderKeyCreateRequest, AdminProviderKeyUpdateRequest, AdminProviderQuotaRefreshRequest,
     OAUTH_ACCOUNT_BLOCK_PREFIX,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,
@@ -74,7 +76,13 @@ pub(super) async fn maybe_build_local_admin_endpoints_keys_response(
             ));
         };
         return Ok(Some(match build_admin_reveal_key_payload(state, &key) {
-            Ok(payload) => Json(payload).into_response(),
+            Ok(payload) => attach_admin_audit_response(
+                Json(payload).into_response(),
+                "admin_provider_key_revealed",
+                "reveal_provider_key",
+                "provider_key",
+                &key_id,
+            ),
             Err(detail) => (
                 http::StatusCode::BAD_REQUEST,
                 Json(json!({ "detail": detail })),
@@ -115,7 +123,13 @@ pub(super) async fn maybe_build_local_admin_endpoints_keys_response(
         };
         return Ok(Some(
             match build_admin_export_key_payload(state, &key).await {
-                Ok(payload) => Json(payload).into_response(),
+                Ok(payload) => attach_admin_audit_response(
+                    Json(payload).into_response(),
+                    "admin_provider_key_exported",
+                    "export_provider_key",
+                    "provider_key_export",
+                    &key_id,
+                ),
                 Err(detail) => (
                     http::StatusCode::BAD_REQUEST,
                     Json(json!({ "detail": detail })),

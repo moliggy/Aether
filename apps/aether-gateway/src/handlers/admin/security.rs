@@ -1,4 +1,6 @@
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,
@@ -130,13 +132,19 @@ async fn build_admin_security_blacklist_add_response(
             .into_response());
     }
 
-    Ok(Json(json!({
-        "success": true,
-        "message": format!("IP {} 已加入黑名单", payload.ip_address.trim()),
-        "reason": payload.reason.trim(),
-        "ttl": payload.ttl.map(serde_json::Value::from).unwrap_or_else(|| json!("永久")),
-    }))
-    .into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({
+            "success": true,
+            "message": format!("IP {} 已加入黑名单", payload.ip_address.trim()),
+            "reason": payload.reason.trim(),
+            "ttl": payload.ttl.map(serde_json::Value::from).unwrap_or_else(|| json!("永久")),
+        }))
+        .into_response(),
+        "admin_security_blacklist_added",
+        "add_security_blacklist_entry",
+        "security_blacklist_entry",
+        payload.ip_address.trim(),
+    ))
 }
 
 async fn build_admin_security_blacklist_remove_response(
@@ -154,11 +162,17 @@ async fn build_admin_security_blacklist_remove_response(
         )));
     }
 
-    Ok(Json(json!({
-        "success": true,
-        "message": format!("IP {ip_address} 已从黑名单移除"),
-    }))
-    .into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({
+            "success": true,
+            "message": format!("IP {ip_address} 已从黑名单移除"),
+        }))
+        .into_response(),
+        "admin_security_blacklist_removed",
+        "remove_security_blacklist_entry",
+        "security_blacklist_entry",
+        &ip_address,
+    ))
 }
 
 async fn build_admin_security_blacklist_stats_response(
@@ -172,7 +186,13 @@ async fn build_admin_security_blacklist_stats_response(
     if let Some(error) = error {
         payload["error"] = json!(error);
     }
-    Ok(Json(payload).into_response())
+    Ok(attach_admin_audit_response(
+        Json(payload).into_response(),
+        "admin_security_blacklist_stats_viewed",
+        "view_security_blacklist_stats",
+        "security_blacklist",
+        "global",
+    ))
 }
 
 async fn build_admin_security_blacklist_list_response(
@@ -180,7 +200,13 @@ async fn build_admin_security_blacklist_list_response(
 ) -> Result<Response<Body>, GatewayError> {
     let entries = state.list_admin_security_blacklist().await?;
     let total = entries.len();
-    Ok(Json(json!({ "items": entries, "total": total })).into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({ "items": entries, "total": total })).into_response(),
+        "admin_security_blacklist_viewed",
+        "view_security_blacklist",
+        "security_blacklist",
+        "global",
+    ))
 }
 
 async fn build_admin_security_whitelist_add_response(
@@ -209,11 +235,17 @@ async fn build_admin_security_whitelist_add_response(
         ));
     }
 
-    Ok(Json(json!({
-        "success": true,
-        "message": format!("IP {ip_address} 已加入白名单"),
-    }))
-    .into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({
+            "success": true,
+            "message": format!("IP {ip_address} 已加入白名单"),
+        }))
+        .into_response(),
+        "admin_security_whitelist_added",
+        "add_security_whitelist_entry",
+        "security_whitelist_entry",
+        ip_address,
+    ))
 }
 
 async fn build_admin_security_whitelist_remove_response(
@@ -231,11 +263,17 @@ async fn build_admin_security_whitelist_remove_response(
         )));
     }
 
-    Ok(Json(json!({
-        "success": true,
-        "message": format!("IP {ip_address} 已从白名单移除"),
-    }))
-    .into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({
+            "success": true,
+            "message": format!("IP {ip_address} 已从白名单移除"),
+        }))
+        .into_response(),
+        "admin_security_whitelist_removed",
+        "remove_security_whitelist_entry",
+        "security_whitelist_entry",
+        &ip_address,
+    ))
 }
 
 async fn build_admin_security_whitelist_list_response(
@@ -243,11 +281,17 @@ async fn build_admin_security_whitelist_list_response(
 ) -> Result<Response<Body>, GatewayError> {
     let whitelist = state.list_admin_security_whitelist().await?;
     let total = whitelist.len();
-    Ok(Json(json!({
-        "whitelist": whitelist,
-        "total": total,
-    }))
-    .into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({
+            "whitelist": whitelist,
+            "total": total,
+        }))
+        .into_response(),
+        "admin_security_whitelist_viewed",
+        "view_security_whitelist",
+        "security_whitelist",
+        "global",
+    ))
 }
 
 pub(crate) async fn maybe_build_local_admin_security_response(

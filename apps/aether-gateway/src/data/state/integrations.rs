@@ -1,0 +1,257 @@
+use aether_billing::enrich_usage_event_with_billing;
+use aether_billing::BillingModelContextLookup;
+use aether_data::redis::RedisStreamRunner;
+use aether_data::repository::audit::RequestAuditReader;
+use aether_data::repository::auth::{
+    AuthApiKeyLookupKey, ResolvedAuthApiKeySnapshotReader, StoredAuthApiKeySnapshot,
+};
+use aether_data::repository::billing::StoredBillingModelContext;
+use aether_data::repository::candidate_selection::StoredMinimalCandidateSelectionRow;
+use aether_data::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
+};
+use aether_data::repository::settlement::{StoredUsageSettlement, UsageSettlementInput};
+use aether_data::repository::usage::{StoredRequestUsageAudit, UpsertUsageRecord};
+use aether_data::repository::video_tasks::{StoredVideoTask, VideoTaskLookupKey};
+use aether_data::DataLayerError;
+use aether_usage_runtime::{
+    UsageBillingEventEnricher, UsageEvent, UsageRecordWriter, UsageRuntimeAccess,
+    UsageSettlementWriter,
+};
+use aether_video_tasks_core::StoredVideoTaskReadSide;
+use async_trait::async_trait;
+
+use super::GatewayDataState;
+use crate::provider_transport::ProviderTransportSnapshotSource;
+use crate::scheduler::SchedulerCandidateSelectionRowSource;
+
+#[async_trait]
+impl RequestAuditReader for GatewayDataState {
+    async fn find_request_usage_audit_by_request_id(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<StoredRequestUsageAudit>, DataLayerError> {
+        GatewayDataState::find_request_usage_by_request_id(self, request_id).await
+    }
+
+    async fn read_request_decision_trace(
+        &self,
+        request_id: &str,
+        attempted_only: bool,
+    ) -> Result<Option<aether_data::repository::candidates::DecisionTrace>, DataLayerError> {
+        GatewayDataState::read_decision_trace(self, request_id, attempted_only).await
+    }
+
+    async fn read_resolved_auth_api_key_snapshot(
+        &self,
+        user_id: &str,
+        api_key_id: &str,
+        now_unix_secs: u64,
+    ) -> Result<Option<aether_data::repository::auth::ResolvedAuthApiKeySnapshot>, DataLayerError>
+    {
+        GatewayDataState::read_auth_api_key_snapshot(self, user_id, api_key_id, now_unix_secs).await
+    }
+}
+
+#[async_trait]
+impl ResolvedAuthApiKeySnapshotReader for GatewayDataState {
+    async fn find_stored_auth_api_key_snapshot(
+        &self,
+        key: AuthApiKeyLookupKey<'_>,
+    ) -> Result<Option<StoredAuthApiKeySnapshot>, DataLayerError> {
+        GatewayDataState::find_auth_api_key_snapshot(self, key).await
+    }
+}
+
+#[async_trait]
+impl StoredVideoTaskReadSide for GatewayDataState {
+    async fn find_stored_video_task(
+        &self,
+        key: VideoTaskLookupKey<'_>,
+    ) -> Result<Option<StoredVideoTask>, DataLayerError> {
+        GatewayDataState::find_video_task(self, key).await
+    }
+}
+
+#[async_trait]
+impl ProviderTransportSnapshotSource for GatewayDataState {
+    fn encryption_key(&self) -> Option<&str> {
+        GatewayDataState::encryption_key(self)
+    }
+
+    async fn list_provider_catalog_providers_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<StoredProviderCatalogProvider>, DataLayerError> {
+        GatewayDataState::list_provider_catalog_providers_by_ids(self, ids).await
+    }
+
+    async fn list_provider_catalog_endpoints_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<StoredProviderCatalogEndpoint>, DataLayerError> {
+        GatewayDataState::list_provider_catalog_endpoints_by_ids(self, ids).await
+    }
+
+    async fn list_provider_catalog_keys_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<StoredProviderCatalogKey>, DataLayerError> {
+        GatewayDataState::list_provider_catalog_keys_by_ids(self, ids).await
+    }
+}
+
+#[async_trait]
+impl SchedulerCandidateSelectionRowSource for GatewayDataState {
+    async fn read_minimal_candidate_selection_rows_for_api_format_and_global_model(
+        &self,
+        api_format: &str,
+        global_model_name: &str,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        self.list_minimal_candidate_selection_rows(api_format, global_model_name)
+            .await
+    }
+
+    async fn read_minimal_candidate_selection_rows_for_api_format(
+        &self,
+        api_format: &str,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        self.list_minimal_candidate_selection_rows_for_api_format(api_format)
+            .await
+    }
+}
+
+#[async_trait]
+impl BillingModelContextLookup for GatewayDataState {
+    async fn find_billing_model_context(
+        &self,
+        provider_id: &str,
+        provider_api_key_id: Option<&str>,
+        global_model_name: &str,
+    ) -> Result<Option<StoredBillingModelContext>, DataLayerError> {
+        GatewayDataState::find_billing_model_context(
+            self,
+            provider_id,
+            provider_api_key_id,
+            global_model_name,
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl UsageSettlementWriter for GatewayDataState {
+    fn has_usage_settlement_writer(&self) -> bool {
+        GatewayDataState::has_settlement_writer(self)
+    }
+
+    async fn settle_usage(
+        &self,
+        input: UsageSettlementInput,
+    ) -> Result<Option<StoredUsageSettlement>, DataLayerError> {
+        GatewayDataState::settle_usage(self, input).await
+    }
+}
+
+#[async_trait]
+impl UsageBillingEventEnricher for GatewayDataState {
+    async fn enrich_usage_event(&self, event: &mut UsageEvent) -> Result<(), DataLayerError> {
+        enrich_usage_event_with_billing(self, event).await
+    }
+}
+
+impl UsageRuntimeAccess for GatewayDataState {
+    fn has_usage_writer(&self) -> bool {
+        GatewayDataState::has_usage_writer(self)
+    }
+
+    fn has_usage_worker_runner(&self) -> bool {
+        GatewayDataState::has_usage_worker_runner(self)
+    }
+
+    fn usage_worker_runner(&self) -> Option<RedisStreamRunner> {
+        GatewayDataState::usage_worker_runner(self)
+    }
+}
+
+#[async_trait]
+impl UsageRecordWriter for GatewayDataState {
+    async fn upsert_usage_record(
+        &self,
+        record: UpsertUsageRecord,
+    ) -> Result<Option<StoredRequestUsageAudit>, DataLayerError> {
+        GatewayDataState::upsert_usage(self, record).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aether_billing::enrich_usage_event_with_billing;
+    use serde_json::Value;
+
+    use super::GatewayDataState;
+    use crate::usage::event::{UsageEvent, UsageEventData, UsageEventType};
+
+    #[tokio::test]
+    async fn enriches_completed_usage_event_with_billing_snapshot() {
+        let state = GatewayDataState::with_billing_reader_for_tests(
+            std::sync::Arc::new(
+                aether_data::repository::billing::InMemoryBillingReadRepository::seed(vec![
+                    aether_data::repository::billing::StoredBillingModelContext::new(
+                        "provider-1".to_string(),
+                        Some("pay_as_you_go".to_string()),
+                        Some("key-1".to_string()),
+                        Some(serde_json::json!({"openai:chat": 0.5})),
+                        Some(60),
+                        "global-model-1".to_string(),
+                        "gpt-5".to_string(),
+                        None,
+                        Some(0.02),
+                        Some(serde_json::json!({"tiers":[{"up_to":null,"input_price_per_1m":3.0,"output_price_per_1m":15.0,"cache_creation_price_per_1m":3.75,"cache_read_price_per_1m":0.30}]})),
+                        Some("model-1".to_string()),
+                        Some("gpt-5-upstream".to_string()),
+                        None,
+                        None,
+                        None,
+                    )
+                    .expect("billing context should build"),
+                ]),
+            ),
+        );
+        let mut event = UsageEvent::new(
+            UsageEventType::Completed,
+            "req-billing-1",
+            UsageEventData {
+                provider_name: "OpenAI".to_string(),
+                model: "gpt-5".to_string(),
+                provider_id: Some("provider-1".to_string()),
+                provider_api_key_id: Some("key-1".to_string()),
+                request_type: Some("chat".to_string()),
+                api_format: Some("openai:chat".to_string()),
+                endpoint_api_format: Some("openai:chat".to_string()),
+                input_tokens: Some(1_000),
+                output_tokens: Some(500),
+                cache_read_input_tokens: Some(100),
+                status_code: Some(200),
+                ..UsageEventData::default()
+            },
+        );
+
+        enrich_usage_event_with_billing(&state, &mut event)
+            .await
+            .expect("billing should succeed");
+
+        assert!(event.data.total_cost_usd.unwrap_or_default() > 0.0);
+        assert!(event.data.actual_total_cost_usd.unwrap_or_default() > 0.0);
+        assert_eq!(
+            event
+                .data
+                .request_metadata
+                .as_ref()
+                .and_then(|value| value.get("billing_snapshot"))
+                .and_then(|value| value.get("status"))
+                .and_then(Value::as_str),
+            Some("complete")
+        );
+    }
+}

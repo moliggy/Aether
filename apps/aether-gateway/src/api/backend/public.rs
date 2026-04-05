@@ -1,7 +1,7 @@
 use axum::routing::get;
 use axum::Router;
 
-use crate::gateway::{proxy_request, AppState};
+use crate::{handlers::proxy::proxy_request, state::AppState};
 
 pub(crate) fn mount_public_support_routes(router: Router<AppState>) -> Router<AppState> {
     router

@@ -1,7 +1,7 @@
 use axum::body::Bytes;
 use base64::Engine as _;
 
-pub(crate) use crate::gateway::ai_pipeline::contracts::{
+pub(crate) use crate::ai_pipeline::contracts::{
     CLAUDE_CHAT_STREAM_PLAN_KIND, CLAUDE_CHAT_SYNC_PLAN_KIND, CLAUDE_CLI_STREAM_PLAN_KIND,
     CLAUDE_CLI_SYNC_PLAN_KIND, EXECUTION_RUNTIME_STREAM_ACTION,
     EXECUTION_RUNTIME_STREAM_DECISION_ACTION, EXECUTION_RUNTIME_SYNC_ACTION,
@@ -15,7 +15,7 @@ pub(crate) use crate::gateway::ai_pipeline::contracts::{
     OPENAI_VIDEO_CONTENT_PLAN_KIND, OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND,
     OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND, OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
 };
-use crate::gateway::headers::is_json_request;
+use crate::headers::is_json_request;
 
 pub(crate) fn parse_direct_request_body(
     parts: &http::request::Parts,

@@ -1,4 +1,4 @@
-use crate::gateway::constants::{
+use crate::constants::{
     CONTROL_ACTION_HEADER, CONTROL_ACTION_PROXY_PUBLIC, CONTROL_EXECUTED_HEADER,
     CONTROL_EXECUTION_RUNTIME_CANDIDATE_KEY, EXECUTION_PATH_CONTROL_EXECUTE_STREAM,
     EXECUTION_PATH_CONTROL_EXECUTE_SYNC, EXECUTION_PATH_DISTRIBUTED_OVERLOADED,
@@ -6,14 +6,25 @@ use crate::gateway::constants::{
     EXECUTION_PATH_HEADER, EXECUTION_PATH_LOCAL_AUTH_DENIED, EXECUTION_PATH_LOCAL_OVERLOADED,
     EXECUTION_PATH_LOCAL_RATE_LIMITED, EXECUTION_PATH_PUBLIC_PROXY_PASSTHROUGH,
 };
-use crate::gateway::handlers::admin::build_internal_control_error_response;
-use crate::gateway::handlers::{
+use crate::control::GatewayControlDecision;
+use crate::execution_runtime::{
+    maybe_build_local_sync_finalize_response, maybe_build_local_video_error_response,
+    maybe_build_local_video_success_outcome, resolve_local_sync_error_background_report_kind,
+    resolve_local_sync_success_background_report_kind,
+};
+use crate::handlers::admin::provider_oauth_refresh::build_internal_control_error_response;
+use crate::handlers::{
     unix_secs_to_rfc3339, InternalTunnelHeartbeatRequest, InternalTunnelNodeStatusRequest,
 };
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError, StoredProxyNode};
+use crate::video_tasks::{
+    build_internal_finalize_video_plan, build_local_sync_finalize_request_path,
+};
+use crate::{AppState, GatewayError};
 use aether_data::repository::management_tokens::{
     StoredManagementToken, StoredManagementTokenUserSummary,
 };
+use aether_data::repository::proxy_nodes::StoredProxyNode;
+use aether_usage_runtime::{infer_internal_finalize_signature, resolve_internal_finalize_route};
 use axum::body::Body;
 use axum::http::{self, header::HeaderName, header::HeaderValue, Response};
 use axum::response::IntoResponse;
@@ -76,7 +87,7 @@ pub(crate) fn build_internal_gateway_resolve_payload(
 }
 
 pub(crate) fn build_internal_gateway_fallback_plan_payload(
-    auth_context: Option<&crate::gateway::GatewayControlAuthContext>,
+    auth_context: Option<&crate::control::GatewayControlAuthContext>,
 ) -> serde_json::Value {
     let mut payload = serde_json::Map::new();
     payload.insert("action".to_string(), json!("fallback_plan"));
@@ -212,225 +223,40 @@ pub(crate) fn build_internal_gateway_uri(
     })
 }
 
-fn infer_internal_finalize_signature(
-    payload: &crate::gateway::GatewaySyncReportRequest,
-) -> Option<String> {
-    let report_context = payload.report_context.as_ref()?;
-    let from_context = report_context
-        .get("client_api_format")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            report_context
-                .get("provider_api_format")
-                .and_then(Value::as_str)
-        })
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-    if from_context.is_some() {
-        return from_context;
-    }
-
-    let report_kind = payload.report_kind.trim().to_ascii_lowercase();
-    if report_kind.starts_with("openai_chat_") {
-        return Some("openai:chat".to_string());
-    }
-    if report_kind.starts_with("openai_compact_") {
-        return Some("openai:compact".to_string());
-    }
-    if report_kind.starts_with("openai_cli_") {
-        return Some("openai:cli".to_string());
-    }
-    if report_kind.starts_with("openai_video_") {
-        return Some("openai:video".to_string());
-    }
-    if report_kind.starts_with("claude_chat_") {
-        return Some("claude:chat".to_string());
-    }
-    if report_kind.starts_with("claude_cli_") {
-        return Some("claude:cli".to_string());
-    }
-    if report_kind.starts_with("gemini_chat_") {
-        return Some("gemini:chat".to_string());
-    }
-    if report_kind.starts_with("gemini_cli_") {
-        return Some("gemini:cli".to_string());
-    }
-    if report_kind.starts_with("gemini_video_") {
-        return Some("gemini:video".to_string());
-    }
-    None
-}
-
 pub(crate) fn build_internal_finalize_decision(
-    payload: &crate::gateway::GatewaySyncReportRequest,
+    payload: &crate::usage::GatewaySyncReportRequest,
 ) -> Option<GatewayControlDecision> {
     let signature = infer_internal_finalize_signature(payload)?;
-    let (public_path, route_family, route_kind) = match signature.as_str() {
-        "openai:chat" => ("/v1/chat/completions", "openai", "chat"),
-        "openai:cli" => ("/v1/responses", "openai", "cli"),
-        "openai:compact" => ("/v1/responses/compact", "openai", "compact"),
-        "openai:video" => ("/v1/videos", "openai", "video"),
-        "claude:chat" => ("/v1/messages", "claude", "chat"),
-        "claude:cli" => ("/v1/messages", "claude", "cli"),
-        "gemini:chat" => ("/v1beta/models", "gemini", "chat"),
-        "gemini:cli" => ("/v1beta/models", "gemini", "cli"),
-        "gemini:video" => ("/v1beta/models", "gemini", "video"),
-        _ => return None,
-    };
+    let route = resolve_internal_finalize_route(signature.as_str())?;
     Some(
         GatewayControlDecision::synthetic(
-            public_path,
+            route.public_path,
             Some("ai_public".to_string()),
-            Some(route_family.to_string()),
-            Some(route_kind.to_string()),
+            Some(route.route_family.to_string()),
+            Some(route.route_kind.to_string()),
             Some(signature),
         )
         .with_execution_runtime_candidate(true),
     )
 }
 
-fn build_internal_finalize_video_plan(
-    payload: &crate::gateway::GatewaySyncReportRequest,
-) -> Option<aether_contracts::ExecutionPlan> {
-    let signature = infer_internal_finalize_signature(payload)?;
-    if !matches!(signature.as_str(), "openai:video" | "gemini:video") {
-        return None;
-    }
-
-    let report_context = payload.report_context.as_ref().and_then(Value::as_object);
-    let context_text = |key: &str| {
-        report_context
-            .and_then(|value| value.get(key))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-    };
-
-    let provider_name = signature
-        .split(':')
-        .next()
-        .expect("video finalize signature should include provider name")
-        .to_string();
-    let model_name = context_text("model")
-        .or_else(|| context_text("model_name"))
-        .or_else(|| match signature.as_str() {
-            "openai:video" => Some("sora-2".to_string()),
-            "gemini:video" => Some("veo-3".to_string()),
-            _ => None,
-        });
-    let original_request_body = report_context
-        .and_then(|value| value.get("original_request_body"))
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let url = match signature.as_str() {
-        "openai:video" => "https://internal.gateway.invalid/v1/videos".to_string(),
-        "gemini:video" => format!(
-            "https://internal.gateway.invalid/v1beta/models/{}:predictLongRunning",
-            model_name.clone().unwrap_or_else(|| "veo-3".to_string())
-        ),
-        _ => return None,
-    };
-
-    Some(aether_contracts::ExecutionPlan {
-        request_id: context_text("request_id").unwrap_or_else(|| payload.trace_id.clone()),
-        candidate_id: None,
-        provider_name: Some(provider_name.clone()),
-        provider_id: context_text("provider_id")
-            .unwrap_or_else(|| format!("internal-{provider_name}-video-provider")),
-        endpoint_id: context_text("endpoint_id")
-            .unwrap_or_else(|| format!("internal-{provider_name}-video-endpoint")),
-        key_id: context_text("key_id")
-            .or_else(|| context_text("api_key_id"))
-            .unwrap_or_else(|| format!("internal-{provider_name}-video-key")),
-        method: "POST".to_string(),
-        url,
-        headers: std::collections::BTreeMap::from([(
-            "authorization".to_string(),
-            "Bearer internal-gateway".to_string(),
-        )]),
-        content_type: Some("application/json".to_string()),
-        content_encoding: None,
-        body: aether_contracts::RequestBody::from_json(original_request_body),
-        stream: false,
-        client_api_format: signature.clone(),
-        provider_api_format: signature,
-        model_name,
-        proxy: Some(aether_contracts::ProxySnapshot {
-            enabled: Some(false),
-            mode: Some("direct".to_string()),
-            node_id: None,
-            label: None,
-            url: None,
-            extra: None,
-        }),
-        tls_profile: None,
-        timeouts: None,
-    })
-}
-
-fn build_internal_finalize_video_request_path(
-    payload: &crate::gateway::GatewaySyncReportRequest,
-) -> Option<String> {
-    let signature = infer_internal_finalize_signature(payload)?;
-    let report_context = payload.report_context.as_ref().and_then(Value::as_object);
-    let context_text = |key: &str| {
-        report_context
-            .and_then(|value| value.get(key))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-    };
-
-    match payload.report_kind.as_str() {
-        "openai_video_delete_sync_finalize" => {
-            let task_id = context_text("task_id")?;
-            Some(format!("/v1/videos/{task_id}"))
-        }
-        "openai_video_cancel_sync_finalize" => {
-            let task_id = context_text("task_id")?;
-            Some(format!("/v1/videos/{task_id}/cancel"))
-        }
-        "gemini_video_cancel_sync_finalize" => {
-            let short_id = context_text("task_id")
-                .or_else(|| context_text("local_short_id"))
-                .or_else(|| {
-                    context_text("operation_name").and_then(|value| {
-                        value
-                            .rsplit('/')
-                            .next()
-                            .map(str::trim)
-                            .filter(|inner| !inner.is_empty())
-                            .map(ToOwned::to_owned)
-                    })
-                })?;
-            let model = context_text("model")
-                .or_else(|| context_text("model_name"))
-                .unwrap_or_else(|| match signature.as_str() {
-                    "gemini:video" => "veo-3".to_string(),
-                    _ => "unknown".to_string(),
-                });
-            Some(format!(
-                "/v1beta/models/{model}/operations/{short_id}:cancel"
-            ))
-        }
-        _ => None,
-    }
-}
-
 pub(crate) async fn maybe_build_internal_finalize_video_response(
     state: &AppState,
     trace_id: &str,
     decision: &GatewayControlDecision,
-    payload: &crate::gateway::GatewaySyncReportRequest,
+    payload: &crate::usage::GatewaySyncReportRequest,
 ) -> Result<Option<Response<Body>>, GatewayError> {
-    let Some(plan) = build_internal_finalize_video_plan(payload) else {
+    let Some(plan) = infer_internal_finalize_signature(payload).and_then(|signature| {
+        build_internal_finalize_video_plan(
+            payload.trace_id.as_str(),
+            signature.as_str(),
+            payload.report_context.as_ref(),
+        )
+    }) else {
         return Ok(None);
     };
 
-    if let Some(outcome) = crate::gateway::maybe_build_local_video_success_outcome(
+    if let Some(outcome) = maybe_build_local_video_success_outcome(
         trace_id,
         decision,
         payload,
@@ -442,12 +268,12 @@ pub(crate) async fn maybe_build_internal_finalize_video_response(
             let _ = state.upsert_video_task_snapshot(&snapshot).await?;
         }
         match outcome.report_mode {
-            crate::gateway::video_tasks::VideoTaskSyncReportMode::InlineSync => {
-                crate::gateway::usage::submit_sync_report(state, trace_id, outcome.report_payload)
+            crate::video_tasks::VideoTaskSyncReportMode::InlineSync => {
+                crate::usage::submit_sync_report(state, trace_id, outcome.report_payload)
                     .await?;
             }
-            crate::gateway::video_tasks::VideoTaskSyncReportMode::Background => {
-                crate::gateway::usage::spawn_sync_report(
+            crate::video_tasks::VideoTaskSyncReportMode::Background => {
+                crate::usage::spawn_sync_report(
                     state.clone(),
                     trace_id.to_string(),
                     outcome.report_payload,
@@ -463,9 +289,16 @@ pub(crate) async fn maybe_build_internal_finalize_video_response(
     }
 
     if let Some(mut response) =
-        crate::gateway::maybe_build_local_sync_finalize_response(trace_id, decision, payload)?
+        maybe_build_local_sync_finalize_response(trace_id, decision, payload)?
     {
-        if let Some(request_path) = build_internal_finalize_video_request_path(payload) {
+        let request_path = infer_internal_finalize_signature(payload).and_then(|signature| {
+            build_local_sync_finalize_request_path(
+                payload.report_kind.as_str(),
+                signature.as_str(),
+                payload.report_context.as_ref(),
+            )
+        });
+        if let Some(request_path) = request_path {
             state
                 .video_tasks
                 .apply_finalize_mutation(request_path.as_str(), payload.report_kind.as_str());
@@ -477,13 +310,11 @@ pub(crate) async fn maybe_build_internal_finalize_video_response(
             }
         }
         if let Some(success_report_kind) =
-            crate::gateway::resolve_local_sync_success_background_report_kind(
-                payload.report_kind.as_str(),
-            )
+            resolve_local_sync_success_background_report_kind(payload.report_kind.as_str())
         {
             let mut report_payload = payload.clone();
-            report_payload.report_kind = success_report_kind;
-            crate::gateway::usage::spawn_sync_report(
+            report_payload.report_kind = success_report_kind.to_string();
+            crate::usage::spawn_sync_report(
                 state.clone(),
                 trace_id.to_string(),
                 report_payload,
@@ -496,17 +327,14 @@ pub(crate) async fn maybe_build_internal_finalize_video_response(
         return Ok(Some(response));
     }
 
-    if let Some(mut response) =
-        crate::gateway::maybe_build_local_video_error_response(trace_id, decision, payload)?
+    if let Some(mut response) = maybe_build_local_video_error_response(trace_id, decision, payload)?
     {
         if let Some(error_report_kind) =
-            crate::gateway::resolve_local_sync_error_background_report_kind(
-                payload.report_kind.as_str(),
-            )
+            resolve_local_sync_error_background_report_kind(payload.report_kind.as_str())
         {
             let mut report_payload = payload.clone();
-            report_payload.report_kind = error_report_kind;
-            crate::gateway::usage::spawn_sync_report(
+            report_payload.report_kind = error_report_kind.to_string();
+            crate::usage::spawn_sync_report(
                 state.clone(),
                 trace_id.to_string(),
                 report_payload,

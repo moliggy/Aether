@@ -1,6 +1,6 @@
 use tracing::warn;
 
-use crate::gateway::gateway_data::GatewayDataState;
+use crate::data::GatewayDataState;
 
 use super::{system_config_bool, DB_MAINTENANCE_TABLES};
 

@@ -5,11 +5,11 @@ use super::{
     GatewayControlSyncDecisionResponse, GatewayError, LocalStreamPlanAndReport,
     LocalSyncPlanAndReport,
 };
-use crate::gateway::ai_pipeline::adaptation::surfaces::provider_adaptation_requires_eventstream_accept;
-use crate::gateway::provider_transport::{
-    build_openai_chat_url, build_openai_cli_url, build_openai_passthrough_headers,
-    ensure_upstream_auth_header,
+use crate::ai_pipeline::adaptation::surfaces::provider_adaptation_requires_eventstream_accept;
+use crate::provider_transport::auth::{
+    build_openai_passthrough_headers, ensure_upstream_auth_header,
 };
+use crate::provider_transport::url::{build_openai_chat_url, build_openai_cli_url};
 
 pub(crate) fn build_openai_chat_sync_plan_from_decision(
     parts: &http::request::Parts,

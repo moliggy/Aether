@@ -1,5 +1,5 @@
-use crate::gateway::handlers::{json_string_list, unix_secs_to_rfc3339};
-use crate::gateway::AppState;
+use crate::handlers::{json_string_list, unix_secs_to_rfc3339};
+use crate::AppState;
 #[cfg(test)]
 use aether_crypto::DEVELOPMENT_ENCRYPTION_KEY;
 use aether_crypto::{decrypt_python_fernet_ciphertext, encrypt_python_fernet_plaintext};

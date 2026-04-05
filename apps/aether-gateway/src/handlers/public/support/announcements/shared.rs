@@ -10,8 +10,8 @@ use aether_data::repository::announcements::{
     AnnouncementListQuery, StoredAnnouncement, StoredAnnouncementPage,
 };
 
-use crate::gateway::handlers::{query_param_optional_bool, query_param_value};
-use crate::gateway::GatewayError;
+use crate::handlers::{query_param_optional_bool, query_param_value};
+use crate::GatewayError;
 
 pub(super) fn parse_public_announcements_query(
     query: Option<&str>,

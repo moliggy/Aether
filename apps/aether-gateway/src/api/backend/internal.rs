@@ -1,9 +1,13 @@
 use axum::routing::{any, get, post};
 use axum::Router;
 
-use crate::gateway::{
-    proxy_request, proxy_tunnel, relay_request, AppState, PROXY_TUNNEL_PATH, TUNNEL_HEARTBEAT_PATH,
-    TUNNEL_NODE_STATUS_PATH, TUNNEL_RELAY_PATH_PATTERN,
+use crate::{
+    handlers::proxy::proxy_request,
+    state::AppState,
+    tunnel::{
+        proxy_tunnel, relay_request, PROXY_TUNNEL_PATH, TUNNEL_HEARTBEAT_PATH,
+        TUNNEL_NODE_STATUS_PATH, TUNNEL_RELAY_PATH_PATTERN,
+    },
 };
 
 pub(crate) fn mount_internal_routes(router: Router<AppState>) -> Router<AppState> {

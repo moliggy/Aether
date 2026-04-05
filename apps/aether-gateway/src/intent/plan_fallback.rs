@@ -1,13 +1,14 @@
 use axum::body::Body;
 use axum::http::Response;
 
-use crate::gateway::ai_pipeline::planner::{
+use crate::ai_pipeline::planner::{
     maybe_build_stream_plan_payload, maybe_build_sync_plan_payload,
 };
-use crate::gateway::{
-    execute_execution_runtime_stream, execute_execution_runtime_sync, AppState,
-    GatewayControlDecision, GatewayControlPlanResponse, GatewayError, GatewayFallbackReason,
+use crate::control::GatewayControlDecision;
+use crate::execution_runtime::{
+    execute_execution_runtime_stream, execute_execution_runtime_sync,
 };
+use crate::{AppState, GatewayControlPlanResponse, GatewayError, GatewayFallbackReason};
 
 pub(crate) async fn maybe_execute_sync_via_plan_fallback(
     state: &AppState,

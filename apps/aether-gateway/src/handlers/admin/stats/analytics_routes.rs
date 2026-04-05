@@ -6,8 +6,10 @@ use super::{
     pct_change_value, percentile_cont, round_to, AdminStatsComparisonType, AdminStatsGranularity,
     AdminStatsTimeRange, AdminStatsUsageFilter,
 };
-use crate::gateway::handlers::query_param_value;
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::query_param_value;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,

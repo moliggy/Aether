@@ -1,8 +1,8 @@
 use serde_json::{Map, Value};
 
 #[cfg(test)]
-use crate::gateway::ai_pipeline::contracts::core_success_background_report_kind as contract_core_success_background_report_kind;
-use crate::gateway::ai_pipeline::contracts::{
+use crate::ai_pipeline::contracts::core_success_background_report_kind as contract_core_success_background_report_kind;
+use crate::ai_pipeline::contracts::{
     core_error_background_report_kind as contract_core_error_background_report_kind,
     core_error_default_client_api_format as contract_core_error_default_client_api_format,
 };

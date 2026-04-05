@@ -6,11 +6,13 @@ use super::{
     admin_usage_bad_request_response, admin_usage_data_unavailable_response,
     admin_usage_matches_api_format, admin_usage_matches_eq, admin_usage_matches_search,
     admin_usage_matches_status, admin_usage_matches_username, admin_usage_parse_ids,
-    admin_usage_parse_limit, admin_usage_parse_offset, admin_usage_record_json,
-    admin_usage_total_tokens, ADMIN_USAGE_DATA_UNAVAILABLE_DETAIL,
+    admin_usage_parse_limit, admin_usage_parse_offset, admin_usage_provider_key_name,
+    admin_usage_provider_key_names, admin_usage_record_json, admin_usage_total_tokens,
+    ADMIN_USAGE_DATA_UNAVAILABLE_DETAIL,
 };
-use crate::gateway::handlers::query_param_value;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::query_param_value;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,
@@ -128,10 +130,13 @@ pub(super) async fn maybe_build_local_admin_usage_summary_response(
             if requested_ids.is_none() && items.len() > 50 {
                 items.truncate(50);
             }
+            let provider_key_names = admin_usage_provider_key_names(state, &items).await?;
 
             let payload: Vec<_> = items
                 .into_iter()
                 .map(|item| {
+                    let provider_key_name =
+                        admin_usage_provider_key_name(&item, &provider_key_names);
                     let mut value = json!({
                         "id": item.id,
                         "status": item.status,
@@ -145,6 +150,7 @@ pub(super) async fn maybe_build_local_admin_usage_summary_response(
                         "first_byte_time_ms": item.first_byte_time_ms,
                         "provider": item.provider_name,
                         "api_key_name": item.api_key_name,
+                        "provider_key_name": provider_key_name,
                     });
                     if let Some(api_format) = item.api_format {
                         value["api_format"] = json!(api_format);
@@ -240,11 +246,17 @@ pub(super) async fn maybe_build_local_admin_usage_summary_response(
                     BTreeMap::new()
                 };
 
+            let provider_key_names = admin_usage_provider_key_names(state, &usage).await?;
+
             let records: Vec<_> = usage
                 .into_iter()
                 .skip(offset)
                 .take(limit)
-                .map(|item| admin_usage_record_json(&item, &users_by_id))
+                .map(|item| {
+                    let provider_key_name =
+                        admin_usage_provider_key_name(&item, &provider_key_names);
+                    admin_usage_record_json(&item, &users_by_id, provider_key_name.as_deref())
+                })
                 .collect();
 
             return Ok(Some(

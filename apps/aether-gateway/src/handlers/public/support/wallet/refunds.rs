@@ -139,6 +139,31 @@ fn wallet_refund_payload_from_row(
     }))
 }
 
+fn wallet_refund_payload_from_record(
+    record: &aether_data::repository::wallet::StoredAdminWalletRefund,
+) -> serde_json::Value {
+    json!({
+        "id": record.id,
+        "refund_no": record.refund_no,
+        "payment_order_id": record.payment_order_id,
+        "source_type": record.source_type,
+        "source_id": record.source_id,
+        "refund_mode": record.refund_mode,
+        "amount_usd": record.amount_usd,
+        "status": record.status,
+        "reason": record.reason,
+        "failure_reason": record.failure_reason,
+        "gateway_refund_id": record.gateway_refund_id,
+        "payout_method": record.payout_method,
+        "payout_reference": record.payout_reference,
+        "payout_proof": record.payout_proof,
+        "created_at": unix_secs_to_rfc3339(record.created_at_unix_secs),
+        "updated_at": unix_secs_to_rfc3339(record.updated_at_unix_secs),
+        "processed_at": record.processed_at_unix_secs.and_then(unix_secs_to_rfc3339),
+        "completed_at": record.completed_at_unix_secs.and_then(unix_secs_to_rfc3339),
+    })
+}
+
 pub(super) async fn handle_wallet_refunds_list(
     state: &AppState,
     request_context: &GatewayPublicRequestContext,
@@ -191,102 +216,57 @@ pub(super) async fn handle_wallet_refunds_list(
         return build_auth_json_response(http::StatusCode::OK, payload, None);
     };
 
-    let mut total = 0_u64;
-    let mut items = Vec::new();
-    if let Some(pool) = state.postgres_pool() {
-        let count_row = match sqlx::query(
-            r#"
-SELECT COUNT(*) AS total
-FROM refund_requests
-WHERE wallet_id = $1
-            "#,
-        )
-        .bind(&wallet.id)
-        .fetch_one(&pool)
+    let (refunds, total) = match state
+        .list_admin_wallet_refunds(&wallet.id, limit, offset)
         .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                return build_auth_error_response(
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("wallet refund count failed: {err}"),
-                    false,
-                )
-            }
-        };
-        total = count_row
-            .try_get::<i64, _>("total")
-            .ok()
-            .unwrap_or_default()
-            .max(0) as u64;
-        let rows = match sqlx::query(
-            r#"
-SELECT
-  id,
-  refund_no,
-  payment_order_id,
-  source_type,
-  source_id,
-  refund_mode,
-  CAST(amount_usd AS DOUBLE PRECISION) AS amount_usd,
-  status,
-  reason,
-  failure_reason,
-  gateway_refund_id,
-  payout_method,
-  payout_reference,
-  payout_proof,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
-FROM refund_requests
-WHERE wallet_id = $1
-ORDER BY created_at DESC
-OFFSET $2
-LIMIT $3
-            "#,
-        )
-        .bind(&wallet.id)
-        .bind(i64::try_from(offset).ok().unwrap_or_default())
-        .bind(i64::try_from(limit).ok().unwrap_or_default())
-        .fetch_all(&pool)
-        .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                return build_auth_error_response(
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("wallet refund query failed: {err}"),
-                    false,
-                )
-            }
-        };
-        items = match rows
-            .iter()
-            .map(wallet_refund_payload_from_row)
-            .collect::<Result<Vec<_>, GatewayError>>()
-        {
-            Ok(value) => value,
-            Err(err) => {
-                return build_auth_error_response(
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("wallet refund payload failed: {err:?}"),
-                    false,
-                )
-            }
-        };
-    }
+    {
+        Ok(value) => value,
+        Err(err) => {
+            return build_auth_error_response(
+                http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("wallet refund lookup failed: {err:?}"),
+                false,
+            )
+        }
+    };
+    let items = refunds
+        .iter()
+        .map(|record| {
+            json!({
+                "id": record.id,
+                "refund_no": record.refund_no,
+                "payment_order_id": record.payment_order_id,
+                "source_type": record.source_type,
+                "source_id": record.source_id,
+                "refund_mode": record.refund_mode,
+                "amount_usd": record.amount_usd,
+                "status": record.status,
+                "reason": record.reason,
+                "failure_reason": record.failure_reason,
+                "gateway_refund_id": record.gateway_refund_id,
+                "payout_method": record.payout_method,
+                "payout_reference": record.payout_reference,
+                "payout_proof": record.payout_proof,
+                "created_at": unix_secs_to_rfc3339(record.created_at_unix_secs),
+                "updated_at": unix_secs_to_rfc3339(record.updated_at_unix_secs),
+                "processed_at": record.processed_at_unix_secs.and_then(unix_secs_to_rfc3339),
+                "completed_at": record.completed_at_unix_secs.and_then(unix_secs_to_rfc3339),
+            })
+        })
+        .collect::<Vec<_>>();
     #[cfg(test)]
-    if state.postgres_pool().is_none() {
+    let (items, total) = if state.postgres_pool().is_none() && items.is_empty() && total == 0 {
         let all_items = wallet_test_refunds_for_wallet(&wallet.id);
-        total = all_items.len() as u64;
-        items = all_items
+        let total = all_items.len() as u64;
+        let items = all_items
             .into_iter()
             .skip(offset)
             .take(limit)
             .collect::<Vec<_>>();
-    }
+        (items, total)
+    } else {
+        (items, total)
+    };
 
     let mut payload = json!({
         "items": items,
@@ -340,75 +320,29 @@ pub(super) async fn handle_wallet_refund_detail(
             false,
         );
     };
-    let Some(pool) = state.postgres_pool() else {
-        #[cfg(test)]
-        if let Some(payload) = wallet_test_refund_by_id(&wallet.id, &refund_id) {
-            return build_auth_json_response(http::StatusCode::OK, payload, None);
-        }
-        return build_auth_error_response(
-            http::StatusCode::NOT_FOUND,
-            "Refund request not found",
-            false,
-        );
-    };
-    let row = match sqlx::query(
-        r#"
-SELECT
-  id,
-  refund_no,
-  payment_order_id,
-  source_type,
-  source_id,
-  refund_mode,
-  CAST(amount_usd AS DOUBLE PRECISION) AS amount_usd,
-  status,
-  reason,
-  failure_reason,
-  gateway_refund_id,
-  payout_method,
-  payout_reference,
-  payout_proof,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
-FROM refund_requests
-WHERE wallet_id = $1 AND id = $2
-LIMIT 1
-        "#,
-    )
-    .bind(&wallet.id)
-    .bind(&refund_id)
-    .fetch_optional(&pool)
-    .await
-    {
-        Ok(value) => value,
-        Err(err) => {
-            return build_auth_error_response(
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("wallet refund detail query failed: {err}"),
+    match state.find_wallet_refund(&wallet.id, &refund_id).await {
+        Ok(Some(refund)) => build_auth_json_response(
+            http::StatusCode::OK,
+            wallet_refund_payload_from_record(&refund),
+            None,
+        ),
+        Ok(None) => {
+            #[cfg(test)]
+            if let Some(payload) = wallet_test_refund_by_id(&wallet.id, &refund_id) {
+                return build_auth_json_response(http::StatusCode::OK, payload, None);
+            }
+            build_auth_error_response(
+                http::StatusCode::NOT_FOUND,
+                "Refund request not found",
                 false,
             )
         }
-    };
-    let Some(row) = row else {
-        return build_auth_error_response(
-            http::StatusCode::NOT_FOUND,
-            "Refund request not found",
+        Err(err) => build_auth_error_response(
+            http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("wallet refund detail lookup failed: {err:?}"),
             false,
-        );
-    };
-    let payload = match wallet_refund_payload_from_row(&row) {
-        Ok(value) => value,
-        Err(err) => {
-            return build_auth_error_response(
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("wallet refund detail payload failed: {err:?}"),
-                false,
-            )
-        }
-    };
-    build_auth_json_response(http::StatusCode::OK, payload, None)
+        ),
+    }
 }
 
 pub(super) async fn handle_wallet_create_refund(
@@ -460,7 +394,7 @@ pub(super) async fn handle_wallet_create_refund(
         );
     };
 
-    let Some(pool) = state.postgres_pool() else {
+    if state.postgres_pool().is_none() {
         #[cfg(test)]
         {
             if let Some(idempotency_key) = payload.idempotency_key.as_deref() {
@@ -509,377 +443,86 @@ pub(super) async fn handle_wallet_create_refund(
         }
         #[cfg(not(test))]
         return build_wallet_refund_storage_unavailable_response();
-    };
+    }
 
-    let mut tx = match pool.begin().await {
-        Ok(value) => value,
+    let outcome = match state
+        .create_wallet_refund_request(
+            aether_data::repository::wallet::CreateWalletRefundRequestInput {
+                wallet_id: wallet.id.clone(),
+                user_id: auth.user.id.clone(),
+                amount_usd: payload.amount_usd,
+                payment_order_id: payload.payment_order_id.clone(),
+                source_type: payload.source_type.clone(),
+                source_id: payload.source_id.clone(),
+                refund_mode: payload.refund_mode.clone(),
+                reason: payload.reason.clone(),
+                idempotency_key: payload.idempotency_key.clone(),
+                refund_no: wallet_build_refund_no(Utc::now()),
+            },
+        )
+        .await
+    {
+        Ok(Some(value)) => value,
+        Ok(None) => return build_wallet_refund_storage_unavailable_response(),
         Err(err) => {
             return build_auth_error_response(
                 http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("wallet refund transaction failed: {err}"),
+                format!("wallet refund create failed: {err:?}"),
                 false,
             )
         }
     };
 
-    let locked_wallet_row = match sqlx::query(
-        r#"
-SELECT
-  id,
-  CAST(balance AS DOUBLE PRECISION) AS balance
-FROM wallets
-WHERE id = $1
-LIMIT 1
-FOR UPDATE
-        "#,
-    )
-    .bind(&wallet.id)
-    .fetch_optional(&mut *tx)
-    .await
-    {
-        Ok(value) => value,
-        Err(err) => {
-            let _ = tx.rollback().await;
-            return build_auth_error_response(
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("wallet refund wallet lock failed: {err}"),
-                false,
-            );
+    match outcome {
+        aether_data::repository::wallet::CreateWalletRefundRequestOutcome::Created(refund)
+        | aether_data::repository::wallet::CreateWalletRefundRequestOutcome::Duplicate(refund) => {
+            build_auth_json_response(
+                http::StatusCode::OK,
+                wallet_refund_payload_from_record(&refund),
+                None,
+            )
         }
-    };
-    let Some(locked_wallet_row) = locked_wallet_row else {
-        let _ = tx.rollback().await;
-        return build_auth_error_response(
-            http::StatusCode::BAD_REQUEST,
-            "当前账户尚未开通钱包，无法申请退款",
-            false,
-        );
-    };
-    let wallet_recharge_balance = locked_wallet_row
-        .try_get::<f64, _>("balance")
-        .ok()
-        .unwrap_or_default();
-    let wallet_reserved_row = match sqlx::query(
-        r#"
-SELECT COALESCE(CAST(SUM(amount_usd) AS DOUBLE PRECISION), 0) AS total
-FROM refund_requests
-WHERE wallet_id = $1
-  AND status IN ('pending_approval', 'approved')
-        "#,
-    )
-    .bind(&wallet.id)
-    .fetch_one(&mut *tx)
-    .await
-    {
-        Ok(value) => value,
-        Err(err) => {
-            let _ = tx.rollback().await;
-            return build_auth_error_response(
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("wallet refund reserved amount lookup failed: {err}"),
+        aether_data::repository::wallet::CreateWalletRefundRequestOutcome::WalletMissing => {
+            build_auth_error_response(
+                http::StatusCode::BAD_REQUEST,
+                "当前账户尚未开通钱包，无法申请退款",
                 false,
-            );
+            )
         }
-    };
-    let wallet_reserved_amount = wallet_reserved_row
-        .try_get::<f64, _>("total")
-        .ok()
-        .unwrap_or_default();
-    if payload.amount_usd > (wallet_recharge_balance - wallet_reserved_amount) {
-        let _ = tx.rollback().await;
-        return build_auth_error_response(
-            http::StatusCode::BAD_REQUEST,
-            "refund amount exceeds available refundable recharge balance",
-            false,
-        );
-    }
-
-    let mut payment_order_id = None;
-    let mut source_type = payload
-        .source_type
-        .clone()
-        .unwrap_or_else(|| "wallet_balance".to_string());
-    let mut source_id = payload.source_id.clone();
-    let mut refund_mode = payload
-        .refund_mode
-        .clone()
-        .unwrap_or_else(|| "offline_payout".to_string());
-    if let Some(order_id) = payload.payment_order_id.as_deref() {
-        let order_row = match sqlx::query(
-            r#"
-SELECT
-  id,
-  wallet_id,
-  status,
-  payment_method,
-  CAST(refundable_amount_usd AS DOUBLE PRECISION) AS refundable_amount_usd
-FROM payment_orders
-WHERE id = $1
-  AND wallet_id = $2
-LIMIT 1
-FOR UPDATE
-            "#,
-        )
-        .bind(order_id)
-        .bind(&wallet.id)
-        .fetch_optional(&mut *tx)
-        .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                let _ = tx.rollback().await;
-                return build_auth_error_response(
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("wallet refund payment order lookup failed: {err}"),
-                    false,
-                );
-            }
-        };
-        let Some(order_row) = order_row else {
-            let _ = tx.rollback().await;
-            return build_auth_error_response(
+        aether_data::repository::wallet::CreateWalletRefundRequestOutcome::RefundAmountExceedsAvailableBalance => {
+            build_auth_error_response(
+                http::StatusCode::BAD_REQUEST,
+                "refund amount exceeds available refundable recharge balance",
+                false,
+            )
+        }
+        aether_data::repository::wallet::CreateWalletRefundRequestOutcome::PaymentOrderNotFound => {
+            build_auth_error_response(
                 http::StatusCode::NOT_FOUND,
                 "Payment order not found",
                 false,
-            );
-        };
-        let status = order_row
-            .try_get::<String, _>("status")
-            .ok()
-            .unwrap_or_default();
-        if status != "credited" {
-            let _ = tx.rollback().await;
-            return build_auth_error_response(
+            )
+        }
+        aether_data::repository::wallet::CreateWalletRefundRequestOutcome::PaymentOrderNotRefundable => {
+            build_auth_error_response(
                 http::StatusCode::BAD_REQUEST,
                 "payment order is not refundable",
                 false,
-            );
+            )
         }
-
-        let order_reserved_row = match sqlx::query(
-            r#"
-SELECT COALESCE(CAST(SUM(amount_usd) AS DOUBLE PRECISION), 0) AS total
-FROM refund_requests
-WHERE payment_order_id = $1
-  AND status IN ('pending_approval', 'approved')
-            "#,
-        )
-        .bind(order_id)
-        .fetch_one(&mut *tx)
-        .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                let _ = tx.rollback().await;
-                return build_auth_error_response(
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("wallet refund payment order reserve lookup failed: {err}"),
-                    false,
-                );
-            }
-        };
-        let refundable_amount = order_row
-            .try_get::<f64, _>("refundable_amount_usd")
-            .ok()
-            .unwrap_or_default();
-        let reserved_amount = order_reserved_row
-            .try_get::<f64, _>("total")
-            .ok()
-            .unwrap_or_default();
-        if payload.amount_usd > (refundable_amount - reserved_amount) {
-            let _ = tx.rollback().await;
-            return build_auth_error_response(
+        aether_data::repository::wallet::CreateWalletRefundRequestOutcome::RefundAmountExceedsAvailableOrderAmount => {
+            build_auth_error_response(
                 http::StatusCode::BAD_REQUEST,
                 "refund amount exceeds available refundable amount",
                 false,
-            );
+            )
         }
-
-        payment_order_id = Some(order_id.to_string());
-        source_type = "payment_order".to_string();
-        source_id = Some(order_id.to_string());
-        if payload.refund_mode.is_none() {
-            let payment_method = order_row
-                .try_get::<String, _>("payment_method")
-                .ok()
-                .unwrap_or_default();
-            refund_mode =
-                wallet_default_refund_mode_for_payment_method(&payment_method).to_string();
+        aether_data::repository::wallet::CreateWalletRefundRequestOutcome::DuplicateRejected => {
+            build_auth_error_response(
+                http::StatusCode::BAD_REQUEST,
+                "退款申请重复，请勿重复提交",
+                false,
+            )
         }
     }
-
-    let now = Utc::now();
-    let refund_id = Uuid::new_v4().to_string();
-    let refund_no = wallet_build_refund_no(now);
-    let insert_result = sqlx::query(
-        r#"
-INSERT INTO refund_requests (
-  id,
-  refund_no,
-  wallet_id,
-  user_id,
-  payment_order_id,
-  source_type,
-  source_id,
-  refund_mode,
-  amount_usd,
-  status,
-  reason,
-  requested_by,
-  idempotency_key,
-  created_at,
-  updated_at
-)
-VALUES (
-  $1,
-  $2,
-  $3,
-  $4,
-  $5,
-  $6,
-  $7,
-  $8,
-  $9,
-  'pending_approval',
-  $10,
-  $11,
-  $12,
-  NOW(),
-  NOW()
-)
-RETURNING
-  id,
-  refund_no,
-  payment_order_id,
-  source_type,
-  source_id,
-  refund_mode,
-  CAST(amount_usd AS DOUBLE PRECISION) AS amount_usd,
-  status,
-  reason,
-  failure_reason,
-  gateway_refund_id,
-  payout_method,
-  payout_reference,
-  payout_proof,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
-        "#,
-    )
-    .bind(&refund_id)
-    .bind(&refund_no)
-    .bind(&wallet.id)
-    .bind(&auth.user.id)
-    .bind(payment_order_id.as_deref())
-    .bind(&source_type)
-    .bind(source_id.as_deref())
-    .bind(&refund_mode)
-    .bind(payload.amount_usd)
-    .bind(payload.reason.as_deref())
-    .bind(&auth.user.id)
-    .bind(payload.idempotency_key.as_deref())
-    .fetch_one(&mut *tx)
-    .await;
-
-    let row = match insert_result {
-        Ok(value) => value,
-        Err(err) => {
-            let _ = tx.rollback().await;
-            if let Some(idempotency_key) = payload.idempotency_key.as_deref() {
-                let existing = match sqlx::query(
-                    r#"
-SELECT
-  id,
-  refund_no,
-  payment_order_id,
-  source_type,
-  source_id,
-  refund_mode,
-  CAST(amount_usd AS DOUBLE PRECISION) AS amount_usd,
-  status,
-  reason,
-  failure_reason,
-  gateway_refund_id,
-  payout_method,
-  payout_reference,
-  payout_proof,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
-FROM refund_requests
-WHERE user_id = $1
-  AND idempotency_key = $2
-LIMIT 1
-                    "#,
-                )
-                .bind(&auth.user.id)
-                .bind(idempotency_key)
-                .fetch_optional(&pool)
-                .await
-                {
-                    Ok(value) => value,
-                    Err(read_err) => {
-                        return build_auth_error_response(
-                            http::StatusCode::INTERNAL_SERVER_ERROR,
-                            format!("wallet refund idempotency lookup failed: {read_err}"),
-                            false,
-                        );
-                    }
-                };
-                if let Some(existing) = existing {
-                    let payload = match wallet_refund_payload_from_row(&existing) {
-                        Ok(value) => value,
-                        Err(payload_err) => {
-                            return build_auth_error_response(
-                                http::StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("wallet refund payload failed: {payload_err:?}"),
-                                false,
-                            );
-                        }
-                    };
-                    return build_auth_json_response(http::StatusCode::OK, payload, None);
-                }
-            }
-            if err
-                .as_database_error()
-                .and_then(|value| value.code())
-                .as_deref()
-                == Some("23505")
-            {
-                return build_auth_error_response(
-                    http::StatusCode::BAD_REQUEST,
-                    "退款申请重复，请勿重复提交",
-                    false,
-                );
-            }
-            return build_auth_error_response(
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("wallet refund create failed: {err}"),
-                false,
-            );
-        }
-    };
-
-    if let Err(err) = tx.commit().await {
-        return build_auth_error_response(
-            http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("wallet refund commit failed: {err}"),
-            false,
-        );
-    }
-
-    let payload = match wallet_refund_payload_from_row(&row) {
-        Ok(value) => value,
-        Err(err) => {
-            return build_auth_error_response(
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("wallet refund payload failed: {err:?}"),
-                false,
-            );
-        }
-    };
-    build_auth_json_response(http::StatusCode::OK, payload, None)
 }

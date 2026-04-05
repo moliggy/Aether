@@ -6,7 +6,8 @@ use super::admin_api_keys_read_routes::{
     build_admin_api_key_detail_response, build_admin_list_api_keys_response,
 };
 use super::admin_api_keys_shared::build_admin_api_keys_data_unavailable_response;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::{AppState, GatewayError};
 use axum::{body::Body, http, response::Response};
 
 pub(super) async fn maybe_build_local_admin_api_keys_routes_response(

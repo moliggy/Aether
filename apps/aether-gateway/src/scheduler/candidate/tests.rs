@@ -18,11 +18,12 @@ use super::{
     build_scheduler_affinity_cache_key, candidate_affinity_hash, candidate_model_names,
     matches_model_mapping, read_minimal_candidate_selection, resolve_provider_model_name,
     resolve_requested_global_model_name, select_minimal_candidate, select_provider_model_name,
-    should_skip_provider_quota, GatewayMinimalCandidateSelectionCandidate,
-    StoredGatewayAuthApiKeySnapshot,
+    should_skip_provider_quota, GatewayAuthApiKeySnapshot,
+    GatewayMinimalCandidateSelectionCandidate,
 };
-use crate::gateway::gateway_cache::SchedulerAffinityTarget;
-use crate::gateway::{AppState, GatewayDataState};
+use crate::cache::SchedulerAffinityTarget;
+use crate::data::GatewayDataState;
+use crate::AppState;
 
 fn sample_row() -> StoredMinimalCandidateSelectionRow {
     StoredMinimalCandidateSelectionRow {
@@ -457,7 +458,7 @@ async fn same_priority_candidates_are_distributed_by_affinity_key() {
     let quotas = Arc::new(InMemoryProviderQuotaRepository::seed(vec![]));
     let state = GatewayDataState::with_candidate_selection_and_quota_for_tests(candidates, quotas);
 
-    let auth_snapshot = StoredGatewayAuthApiKeySnapshot {
+    let auth_snapshot = GatewayAuthApiKeySnapshot {
         user_id: "user-1".to_string(),
         username: "alice".to_string(),
         email: None,
@@ -546,7 +547,7 @@ async fn read_minimal_candidate_selection_allows_resolved_global_model_in_auth_s
     ]));
     let quotas = Arc::new(InMemoryProviderQuotaRepository::seed(vec![]));
     let state = GatewayDataState::with_candidate_selection_and_quota_for_tests(candidates, quotas);
-    let auth_snapshot = StoredGatewayAuthApiKeySnapshot {
+    let auth_snapshot = GatewayAuthApiKeySnapshot {
         user_id: "user-1".to_string(),
         username: "alice".to_string(),
         email: None,
@@ -614,7 +615,7 @@ async fn reuses_cached_scheduler_affinity_candidate_before_sorted_fallback() {
             GatewayDataState::with_candidate_selection_and_quota_for_tests(candidates, quotas),
         );
 
-    let auth_snapshot = StoredGatewayAuthApiKeySnapshot {
+    let auth_snapshot = GatewayAuthApiKeySnapshot {
         user_id: "user-1".to_string(),
         username: "alice".to_string(),
         email: None,
@@ -799,7 +800,7 @@ async fn returns_none_when_auth_api_key_concurrent_limit_is_reached() {
                 ),
             );
 
-    let auth_snapshot = StoredGatewayAuthApiKeySnapshot {
+    let auth_snapshot = GatewayAuthApiKeySnapshot {
         user_id: "user-1".to_string(),
         username: "alice".to_string(),
         email: None,
@@ -912,7 +913,7 @@ async fn selects_next_candidate_when_first_provider_key_rpm_slots_are_reserved_f
                 ),
             );
 
-    let auth_snapshot = StoredGatewayAuthApiKeySnapshot {
+    let auth_snapshot = GatewayAuthApiKeySnapshot {
         user_id: "user-1".to_string(),
         username: "alice".to_string(),
         email: None,
@@ -1027,7 +1028,7 @@ async fn cached_affinity_candidate_can_use_reserved_provider_key_rpm_capacity() 
                 ),
             );
 
-    let auth_snapshot = StoredGatewayAuthApiKeySnapshot {
+    let auth_snapshot = GatewayAuthApiKeySnapshot {
         user_id: "user-1".to_string(),
         username: "alice".to_string(),
         email: None,

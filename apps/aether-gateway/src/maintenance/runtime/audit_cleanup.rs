@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::gateway::gateway_data::GatewayDataState;
+use crate::data::GatewayDataState;
 
 use super::{
     system_config_bool, system_config_u64, system_config_usize, DELETE_AUDIT_LOGS_BEFORE_SQL,

@@ -1,27 +1,28 @@
 use axum::body::Body;
 use axum::http::Response;
 
-use crate::gateway::ai_pipeline::planner::passthrough::provider::plans::{
+use crate::ai_pipeline::planner::common::{
+    parse_direct_request_body, EXECUTION_RUNTIME_STREAM_DECISION_ACTION,
+    EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
+};
+use crate::ai_pipeline::planner::passthrough::provider::plans::{
     build_local_stream_plan_and_reports as build_same_format_stream_plan_and_reports,
     build_local_sync_plan_and_reports as build_same_format_sync_plan_and_reports,
     resolve_stream_spec as resolve_same_format_stream_spec,
     resolve_sync_spec as resolve_same_format_sync_spec,
 };
-use crate::gateway::ai_pipeline::planner::standard::family::{
+use crate::ai_pipeline::planner::standard::family::{
     build_local_stream_plan_and_reports as build_standard_stream_plan_and_reports,
     build_local_sync_plan_and_reports as build_standard_sync_plan_and_reports, LocalStandardSpec,
 };
-use crate::gateway::ai_pipeline::planner::standard::{claude, gemini, openai_chat, openai_cli};
-use crate::gateway::ai_pipeline::planner::{
-    parse_direct_request_body, GatewayControlSyncDecisionResponse,
-    EXECUTION_RUNTIME_STREAM_DECISION_ACTION, EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
-};
-use crate::gateway::ai_pipeline::{planner, runtime};
-use crate::gateway::executor::candidate_loop::{
+use crate::ai_pipeline::planner::standard::{claude, gemini, openai};
+use crate::ai_pipeline::{planner, runtime};
+use crate::control::GatewayControlDecision;
+use crate::executor::candidate_loop::{
     execute_stream_plan_and_reports, execute_sync_plan_and_reports,
 };
-use crate::gateway::intent;
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError};
+use crate::intent;
+use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};
 
 pub(crate) async fn maybe_execute_sync_local_path(
     state: &AppState,
@@ -51,7 +52,7 @@ pub(crate) async fn maybe_execute_sync_via_local_decision(
     body_json: &serde_json::Value,
     plan_kind: &str,
 ) -> Result<Option<Response<Body>>, GatewayError> {
-    let plan_and_reports = openai_chat::build_local_openai_chat_sync_plan_and_reports_for_kind(
+    let plan_and_reports = openai::chat::build_local_openai_chat_sync_plan_and_reports_for_kind(
         state, parts, trace_id, decision, body_json, plan_kind,
     )
     .await?;
@@ -73,7 +74,7 @@ pub(crate) async fn maybe_execute_sync_via_local_decision(
         return Ok(Some(response));
     }
 
-    openai_chat::set_local_openai_chat_execution_exhausted_diagnostic(
+    openai::chat::set_local_openai_chat_execution_exhausted_diagnostic(
         state, trace_id, decision, plan_kind, body_json, plan_count,
     );
     Ok(None)
@@ -87,7 +88,7 @@ pub(crate) async fn maybe_execute_stream_via_local_decision(
     body_json: &serde_json::Value,
     plan_kind: &str,
 ) -> Result<Option<Response<Body>>, GatewayError> {
-    let plan_and_reports = openai_chat::build_local_openai_chat_stream_plan_and_reports_for_kind(
+    let plan_and_reports = openai::chat::build_local_openai_chat_stream_plan_and_reports_for_kind(
         state, parts, trace_id, decision, body_json, plan_kind,
     )
     .await?;
@@ -103,7 +104,7 @@ pub(crate) async fn maybe_execute_stream_via_local_decision(
         return Ok(Some(response));
     }
 
-    openai_chat::set_local_openai_chat_execution_exhausted_diagnostic(
+    openai::chat::set_local_openai_chat_execution_exhausted_diagnostic(
         state, trace_id, decision, plan_kind, body_json, plan_count,
     );
     Ok(None)
@@ -117,7 +118,7 @@ pub(crate) async fn maybe_execute_sync_via_local_openai_cli_decision(
     body_json: &serde_json::Value,
     plan_kind: &str,
 ) -> Result<Option<Response<Body>>, GatewayError> {
-    let plan_and_reports = openai_cli::build_local_openai_cli_sync_plan_and_reports_for_kind(
+    let plan_and_reports = openai::cli::build_local_openai_cli_sync_plan_and_reports_for_kind(
         state, parts, trace_id, decision, body_json, plan_kind,
     )
     .await?;
@@ -144,7 +145,7 @@ pub(crate) async fn maybe_execute_stream_via_local_openai_cli_decision(
     body_json: &serde_json::Value,
     plan_kind: &str,
 ) -> Result<Option<Response<Body>>, GatewayError> {
-    let plan_and_reports = openai_cli::build_local_openai_cli_stream_plan_and_reports_for_kind(
+    let plan_and_reports = openai::cli::build_local_openai_cli_stream_plan_and_reports_for_kind(
         state, parts, trace_id, decision, body_json, plan_kind,
     )
     .await?;

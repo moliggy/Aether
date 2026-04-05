@@ -538,6 +538,7 @@ const loadingKeys = ref(false)
 const saving = ref(false)
 
 const SAVE_CONCURRENCY = 6
+const PRIORITY_REQUEST_TIMEOUT_MS = 5 * 60 * 1000
 
 let originalProviderPriorityById = new Map<string, number>()
 let originalPoolPriorityByProviderId = new Map<string, number | null>()
@@ -759,6 +760,11 @@ function snapshotKeyBaseline() {
       { ...priorityMap },
     ])
   )
+}
+
+function snapshotCurrentPriorityBaseline() {
+  snapshotProviderBaseline(sortedProviders.value)
+  snapshotKeyBaseline()
 }
 
 function arePriorityMapsEqual(
@@ -1035,7 +1041,9 @@ async function loadKeysByFormat() {
   try {
     loadingKeys.value = true
     const { default: client } = await import('@/api/client')
-    const response = await client.get('/api/admin/endpoints/keys/grouped-by-format')
+    const response = await client.get('/api/admin/endpoints/keys/grouped-by-format', {
+      timeout: PRIORITY_REQUEST_TIMEOUT_MS,
+    })
 
     // 每个格式独立管理优先级，额外做一次前端归一化兜底，避免历史数据导致重复格式/脏键
     const data: Record<string, KeyWithMeta[]> = {}
@@ -1475,7 +1483,11 @@ async function save() {
       }
 
       if (Object.keys(payload).length > 0) {
-        providerTasks.push(() => updateProvider(provider.id, payload))
+        providerTasks.push(() => updateProvider(
+          provider.id,
+          payload,
+          { timeout: PRIORITY_REQUEST_TIMEOUT_MS },
+        ))
       }
     })
 
@@ -1487,7 +1499,11 @@ async function save() {
         priorityByFormat,
       ))
       .map(([keyId, priorityByFormat]) => () =>
-        updateProviderKey(keyId, { global_priority_by_format: priorityByFormat })
+        updateProviderKey(
+          keyId,
+          { global_priority_by_format: priorityByFormat },
+          { timeout: PRIORITY_REQUEST_TIMEOUT_MS },
+        )
       )
 
     await runTasksWithConcurrency([...providerTasks, ...keyTasks])
@@ -1497,16 +1513,16 @@ async function save() {
     await adminApi.updateSystemConfig(
       'provider_priority_mode',
       newMode,
-      'Provider/Key 优先级策略：provider(提供商优先模式) 或 global_key(全局Key优先模式)'
+      'Provider/Key 优先级策略：provider(提供商优先模式) 或 global_key(全局Key优先模式)',
+      { timeout: PRIORITY_REQUEST_TIMEOUT_MS },
     )
     await adminApi.updateSystemConfig(
       'scheduling_mode',
       schedulingMode.value,
-      '调度模式：cache_affinity(缓存亲和模式) 或 load_balance(负载均衡模式) 或 fixed_order(固定顺序模式)'
+      '调度模式：cache_affinity(缓存亲和模式) 或 load_balance(负载均衡模式) 或 fixed_order(固定顺序模式)',
+      { timeout: PRIORITY_REQUEST_TIMEOUT_MS },
     )
-
-    await loadAllProviders()
-    await loadKeysByFormat()
+    snapshotCurrentPriorityBaseline()
 
     success('优先级已保存')
     emit('saved')

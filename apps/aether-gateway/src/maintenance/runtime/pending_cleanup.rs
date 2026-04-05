@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use chrono::Utc;
 use sqlx::Row;
 
-use crate::gateway::gateway_data::GatewayDataState;
+use crate::data::GatewayDataState;
 
 use super::{
     pending_cleanup_batch_size, pending_cleanup_timeout_minutes,

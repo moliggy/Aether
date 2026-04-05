@@ -17,8 +17,8 @@ use serde_json::Value;
 use thiserror::Error;
 
 #[cfg(test)]
-use crate::gateway::execution_runtime::remote_compat::execute_sync_plan_via_remote_execution_runtime;
-use crate::gateway::{AppState, GatewayError};
+use crate::execution_runtime::remote_compat::execute_sync_plan_via_remote_execution_runtime;
+use crate::{AppState, GatewayError};
 
 const HUB_RELAY_CONTENT_TYPE: &str = "application/vnd.aether.tunnel-envelope";
 const HUB_RELAY_ERROR_HEADER: &str = "x-aether-tunnel-error";
@@ -138,6 +138,7 @@ impl DirectSyncExecutionRuntime {
 
         let started_at = Instant::now();
         let response = send_request(&plan, body_bytes).await?;
+        let ttfb_ms = started_at.elapsed().as_millis() as u64;
         let status_code = response.status().as_u16();
         let headers = collect_response_headers(response.headers());
         let body_bytes = response.bytes().await.map_err(|err| {
@@ -174,7 +175,7 @@ impl DirectSyncExecutionRuntime {
             headers,
             body,
             telemetry: Some(ExecutionTelemetry {
-                ttfb_ms: None,
+                ttfb_ms: Some(ttfb_ms),
                 elapsed_ms: Some(elapsed_ms),
                 upstream_bytes: Some(upstream_bytes),
             }),
@@ -933,5 +934,69 @@ mod tests {
                 "body": {"model": "gpt-4.1"},
             }))
         );
+    }
+
+    #[tokio::test]
+    async fn direct_sync_execution_runtime_reports_ttfb_once_upstream_response_starts() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should resolve");
+        let app = Router::new().route(
+            "/chat",
+            post(|| async {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                (axum::http::StatusCode::OK, Json(json!({"ok": true})))
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("test server should run");
+        });
+
+        let execution_runtime = DirectSyncExecutionRuntime::new();
+        let result = execution_runtime
+            .execute_sync(ExecutionPlan {
+                request_id: "req-ttfb-1".into(),
+                candidate_id: Some("cand-1".into()),
+                provider_name: Some("openai".into()),
+                provider_id: "prov-1".into(),
+                endpoint_id: "ep-1".into(),
+                key_id: "key-1".into(),
+                method: "POST".into(),
+                url: format!("http://{addr}/chat"),
+                headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
+                content_type: Some("application/json".into()),
+                content_encoding: None,
+                body: RequestBody::from_json(json!({"model": "gpt-4.1"})),
+                stream: false,
+                client_api_format: "openai:chat".into(),
+                provider_api_format: "openai:chat".into(),
+                model_name: Some("gpt-4.1".into()),
+                proxy: None,
+                tls_profile: None,
+                timeouts: Some(ExecutionTimeouts {
+                    connect_ms: Some(5_000),
+                    total_ms: Some(5_000),
+                    ..ExecutionTimeouts::default()
+                }),
+            })
+            .await
+            .expect("sync execution should succeed");
+
+        server.abort();
+
+        let telemetry = result
+            .telemetry
+            .expect("sync execution should include telemetry");
+        let ttfb_ms = telemetry
+            .ttfb_ms
+            .expect("sync execution should include ttfb");
+        let elapsed_ms = telemetry
+            .elapsed_ms
+            .expect("sync execution should include elapsed time");
+        assert!(ttfb_ms > 0);
+        assert!(elapsed_ms >= ttfb_ms);
     }
 }

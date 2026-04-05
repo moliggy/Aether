@@ -5,11 +5,11 @@ use super::{
     normalize_optional_price, normalize_required_trimmed_string,
     resolve_admin_global_model_by_id_or_err,
 };
-use crate::gateway::handlers::{
+use crate::handlers::{
     AdminGlobalModelCreateRequest, AdminGlobalModelUpdateRequest, AdminImportProviderModelsRequest,
     AdminProviderModelCreateRequest, AdminProviderModelUpdateRequest,
 };
-use crate::gateway::AppState;
+use crate::AppState;
 use aether_data::repository::global_models::{
     AdminProviderModelListQuery, CreateAdminGlobalModelRecord, StoredAdminGlobalModel,
     StoredAdminProviderModel, UpdateAdminGlobalModelRecord, UpsertAdminProviderModelRecord,

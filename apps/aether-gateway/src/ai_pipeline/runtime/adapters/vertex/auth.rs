@@ -1,4 +1,4 @@
-use crate::gateway::provider_transport::snapshot::GatewayProviderTransportSnapshot;
+use crate::provider_transport::snapshot::GatewayProviderTransportSnapshot;
 
 pub(crate) const VERTEX_API_KEY_QUERY_PARAM: &str = "key";
 
@@ -46,7 +46,7 @@ pub(crate) fn resolve_local_vertex_api_key_query_auth(
 
 #[cfg(test)]
 mod tests {
-    use crate::gateway::provider_transport::snapshot::{
+    use crate::provider_transport::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
     };

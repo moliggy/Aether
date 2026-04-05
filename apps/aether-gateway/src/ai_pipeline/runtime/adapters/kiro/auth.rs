@@ -1,4 +1,4 @@
-use crate::gateway::provider_transport::snapshot::GatewayProviderTransportSnapshot;
+use crate::provider_transport::snapshot::GatewayProviderTransportSnapshot;
 
 use super::credentials::{generate_machine_id, KiroAuthConfig};
 
@@ -154,7 +154,7 @@ mod tests {
         supports_local_kiro_auth_prerequisites, supports_local_kiro_request_auth_resolution,
         KIRO_AUTH_HEADER,
     };
-    use crate::gateway::provider_transport::snapshot::{
+    use crate::provider_transport::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
     };

@@ -1,6 +1,8 @@
 use super::super::build_proxy_error_response;
 use super::ADMIN_AWS_REGIONS;
-use crate::gateway::handlers::public::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::public::{
     apply_admin_email_template_update, apply_admin_system_config_update,
     apply_admin_system_settings_update, build_admin_api_formats_payload,
     build_admin_email_template_payload, build_admin_email_templates_payload,
@@ -10,12 +12,12 @@ use crate::gateway::handlers::public::{
     build_admin_system_users_export_payload, current_aether_version, delete_admin_system_config,
     preview_admin_email_template, reset_admin_email_template,
 };
-use crate::gateway::handlers::{
+use crate::handlers::{
     admin_system_config_key_from_path, admin_system_email_template_preview_type_from_path,
     admin_system_email_template_reset_type_from_path, admin_system_email_template_type_from_path,
     is_admin_system_configs_root, is_admin_system_email_templates_root,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,
@@ -85,18 +87,26 @@ pub(super) async fn maybe_build_local_admin_core_system_response(
         && request_context.request_method == http::Method::GET
         && request_context.request_path == "/api/admin/system/config/export"
     {
-        return Ok(Some(
+        return Ok(Some(attach_admin_audit_response(
             Json(build_admin_system_config_export_payload(state).await?).into_response(),
-        ));
+            "admin_system_config_exported",
+            "export_system_config",
+            "system_config_export",
+            "global",
+        )));
     }
 
     if decision.route_kind.as_deref() == Some("users_export")
         && request_context.request_method == http::Method::GET
         && request_context.request_path == "/api/admin/system/users/export"
     {
-        return Ok(Some(
+        return Ok(Some(attach_admin_audit_response(
             Json(build_admin_system_users_export_payload(state).await?).into_response(),
-        ));
+            "admin_system_users_exported",
+            "export_system_users",
+            "user_export",
+            "all_users",
+        )));
     }
 
     if matches!(
@@ -139,7 +149,13 @@ pub(super) async fn maybe_build_local_admin_core_system_response(
         };
         return Ok(Some(
             match apply_admin_system_settings_update(state, request_body).await? {
-                Ok(payload) => Json(payload).into_response(),
+                Ok(payload) => attach_admin_audit_response(
+                    Json(payload).into_response(),
+                    "admin_system_settings_updated",
+                    "update_system_settings",
+                    "system_settings",
+                    "global",
+                ),
                 Err((status, payload)) => (status, Json(payload)).into_response(),
             },
         ));
@@ -197,7 +213,13 @@ pub(super) async fn maybe_build_local_admin_core_system_response(
         };
         return Ok(Some(
             match apply_admin_system_config_update(state, &config_key, request_body).await? {
-                Ok(payload) => Json(payload).into_response(),
+                Ok(payload) => attach_admin_audit_response(
+                    Json(payload).into_response(),
+                    "admin_system_config_updated",
+                    "update_system_config",
+                    "system_config",
+                    &config_key,
+                ),
                 Err((status, payload)) => (status, Json(payload)).into_response(),
             },
         ));
@@ -217,7 +239,13 @@ pub(super) async fn maybe_build_local_admin_core_system_response(
         };
         return Ok(Some(
             match delete_admin_system_config(state, &config_key).await? {
-                Ok(payload) => Json(payload).into_response(),
+                Ok(payload) => attach_admin_audit_response(
+                    Json(payload).into_response(),
+                    "admin_system_config_deleted",
+                    "delete_system_config",
+                    "system_config",
+                    &config_key,
+                ),
                 Err((status, payload)) => (status, Json(payload)).into_response(),
             },
         ));

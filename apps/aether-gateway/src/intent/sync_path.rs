@@ -2,27 +2,31 @@ use axum::body::{Body, Bytes};
 use axum::http::Response;
 use std::collections::BTreeMap;
 
-use crate::gateway::ai_pipeline::planner::{
-    maybe_build_sync_decision_payload, EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
-    GEMINI_VIDEO_CANCEL_SYNC_PLAN_KIND, OPENAI_VIDEO_CANCEL_SYNC_PLAN_KIND,
-    OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND, OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
+use crate::ai_pipeline::planner::common::{
+    EXECUTION_RUNTIME_SYNC_DECISION_ACTION, GEMINI_VIDEO_CANCEL_SYNC_PLAN_KIND,
+    OPENAI_VIDEO_CANCEL_SYNC_PLAN_KIND, OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND,
+    OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
 };
-use crate::gateway::api::response::build_client_response_from_parts;
-use crate::gateway::executor::maybe_execute_sync_via_local_standard_decision;
-use crate::gateway::executor::{
+use crate::ai_pipeline::planner::maybe_build_sync_decision_payload;
+use crate::api::response::build_client_response_from_parts;
+use crate::control::resolve_execution_runtime_auth_context;
+use crate::control::GatewayControlDecision;
+use crate::execution_runtime::{
+    execute_execution_runtime_sync, ConversionMode, ExecutionStrategy,
+};
+use crate::executor::maybe_execute_sync_via_local_standard_decision;
+use crate::executor::{
     maybe_execute_sync_via_local_decision, maybe_execute_sync_via_local_gemini_files_decision,
     maybe_execute_sync_via_local_openai_cli_decision,
     maybe_execute_sync_via_local_same_format_provider_decision,
     maybe_execute_sync_via_local_video_decision, parse_local_request_body,
 };
-use crate::gateway::scheduler::{
+use crate::scheduler::{
     is_matching_stream_request, resolve_execution_runtime_stream_plan_kind,
     resolve_execution_runtime_sync_plan_kind, supports_sync_scheduler_decision_kind,
 };
-use crate::gateway::{
-    execute_execution_runtime_sync, resolve_execution_runtime_auth_context, AppState,
-    GatewayControlDecision, GatewayControlSyncDecisionResponse, GatewayError,
-    GatewayFallbackReason,
+use crate::{
+    AppState, GatewayControlSyncDecisionResponse, GatewayError, GatewayFallbackReason,
 };
 use url::Url;
 
@@ -327,15 +331,15 @@ async fn maybe_build_local_video_task_follow_up_sync_decision_payload(
     let auth_pair = extract_auth_header_pair(&follow_up.plan.headers);
     let execution_strategy =
         if follow_up.plan.provider_api_format == follow_up.plan.client_api_format {
-            crate::gateway::ExecutionStrategy::LocalSameFormat
+            ExecutionStrategy::LocalSameFormat
         } else {
-            crate::gateway::ExecutionStrategy::LocalCrossFormat
+            ExecutionStrategy::LocalCrossFormat
         };
     let conversion_mode = if follow_up.plan.provider_api_format == follow_up.plan.client_api_format
     {
-        crate::gateway::ConversionMode::None
+        ConversionMode::None
     } else {
-        crate::gateway::ConversionMode::Bidirectional
+        ConversionMode::Bidirectional
     };
 
     Ok(Some(GatewayControlSyncDecisionResponse {

@@ -7,8 +7,10 @@ use super::{
     normalize_admin_payment_positive_number, parse_admin_payments_limit,
     parse_admin_payments_offset, AdminPaymentOrderCreditRequest,
 };
-use crate::gateway::handlers::query_param_value;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::query_param_value;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     response::{IntoResponse, Response},
@@ -90,17 +92,17 @@ async fn build_admin_payment_get_order_response(
         return Ok(build_admin_payment_order_not_found_response());
     };
     match state.read_admin_payment_order(&order_id).await? {
-        crate::gateway::AdminWalletMutationOutcome::Applied(order) => Ok(Json(json!({
+        crate::AdminWalletMutationOutcome::Applied(order) => Ok(Json(json!({
             "order": build_admin_payment_order_payload(&order),
         }))
         .into_response()),
-        crate::gateway::AdminWalletMutationOutcome::NotFound => {
+        crate::AdminWalletMutationOutcome::NotFound => {
             Ok(build_admin_payment_order_not_found_response())
         }
-        crate::gateway::AdminWalletMutationOutcome::Invalid(detail) => {
+        crate::AdminWalletMutationOutcome::Invalid(detail) => {
             Ok(build_admin_payments_bad_request_response(detail))
         }
-        crate::gateway::AdminWalletMutationOutcome::Unavailable => {
+        crate::AdminWalletMutationOutcome::Unavailable => {
             Ok(build_admin_payments_backend_unavailable_response(
                 "Payment order read backend unavailable",
             ))
@@ -118,18 +120,26 @@ async fn build_admin_payment_expire_order_response(
         return Ok(build_admin_payment_order_not_found_response());
     };
     match state.admin_expire_payment_order(&order_id).await? {
-        crate::gateway::AdminWalletMutationOutcome::Applied((order, expired)) => Ok(Json(json!({
-            "order": build_admin_payment_order_payload(&order),
-            "expired": expired,
-        }))
-        .into_response()),
-        crate::gateway::AdminWalletMutationOutcome::NotFound => {
+        crate::AdminWalletMutationOutcome::Applied((order, expired)) => {
+            Ok(attach_admin_audit_response(
+                Json(json!({
+                    "order": build_admin_payment_order_payload(&order),
+                    "expired": expired,
+                }))
+                .into_response(),
+                "admin_payment_order_expired",
+                "expire_payment_order",
+                "payment_order",
+                &order_id,
+            ))
+        }
+        crate::AdminWalletMutationOutcome::NotFound => {
             Ok(build_admin_payment_order_not_found_response())
         }
-        crate::gateway::AdminWalletMutationOutcome::Invalid(detail) => {
+        crate::AdminWalletMutationOutcome::Invalid(detail) => {
             Ok(build_admin_payments_bad_request_response(detail))
         }
-        crate::gateway::AdminWalletMutationOutcome::Unavailable => {
+        crate::AdminWalletMutationOutcome::Unavailable => {
             Ok(build_admin_payments_backend_unavailable_response(
                 "Payment order write backend unavailable",
             ))
@@ -204,18 +214,26 @@ async fn build_admin_payment_credit_order_response(
         )
         .await?
     {
-        crate::gateway::AdminWalletMutationOutcome::Applied((order, credited)) => Ok(Json(json!({
-            "order": build_admin_payment_order_payload(&order),
-            "credited": credited,
-        }))
-        .into_response()),
-        crate::gateway::AdminWalletMutationOutcome::NotFound => {
+        crate::AdminWalletMutationOutcome::Applied((order, credited)) => {
+            Ok(attach_admin_audit_response(
+                Json(json!({
+                    "order": build_admin_payment_order_payload(&order),
+                    "credited": credited,
+                }))
+                .into_response(),
+                "admin_payment_order_credited",
+                "credit_payment_order",
+                "payment_order",
+                &order_id,
+            ))
+        }
+        crate::AdminWalletMutationOutcome::NotFound => {
             Ok(build_admin_payment_order_not_found_response())
         }
-        crate::gateway::AdminWalletMutationOutcome::Invalid(detail) => {
+        crate::AdminWalletMutationOutcome::Invalid(detail) => {
             Ok(build_admin_payments_bad_request_response(detail))
         }
-        crate::gateway::AdminWalletMutationOutcome::Unavailable => {
+        crate::AdminWalletMutationOutcome::Unavailable => {
             Ok(build_admin_payments_backend_unavailable_response(
                 "Payment order write backend unavailable",
             ))
@@ -233,17 +251,25 @@ async fn build_admin_payment_fail_order_response(
         return Ok(build_admin_payment_order_not_found_response());
     };
     match state.admin_fail_payment_order(&order_id).await? {
-        crate::gateway::AdminWalletMutationOutcome::Applied(order) => Ok(Json(json!({
-            "order": build_admin_payment_order_payload(&order),
-        }))
-        .into_response()),
-        crate::gateway::AdminWalletMutationOutcome::NotFound => {
+        crate::AdminWalletMutationOutcome::Applied(order) => {
+            Ok(attach_admin_audit_response(
+                Json(json!({
+                    "order": build_admin_payment_order_payload(&order),
+                }))
+                .into_response(),
+                "admin_payment_order_failed",
+                "fail_payment_order",
+                "payment_order",
+                &order_id,
+            ))
+        }
+        crate::AdminWalletMutationOutcome::NotFound => {
             Ok(build_admin_payment_order_not_found_response())
         }
-        crate::gateway::AdminWalletMutationOutcome::Invalid(detail) => {
+        crate::AdminWalletMutationOutcome::Invalid(detail) => {
             Ok(build_admin_payments_bad_request_response(detail))
         }
-        crate::gateway::AdminWalletMutationOutcome::Unavailable => {
+        crate::AdminWalletMutationOutcome::Unavailable => {
             Ok(build_admin_payments_backend_unavailable_response(
                 "Payment order write backend unavailable",
             ))

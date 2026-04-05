@@ -5,38 +5,45 @@ use serde_json::{json, Value};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::gateway::ai_pipeline::conversion::{
+use crate::ai_pipeline::conversion::{
     request_conversion_direct_auth, request_conversion_kind, request_conversion_transport_supported,
 };
-use crate::gateway::ai_pipeline::planner::plan_builders::{
+use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::ai_pipeline::planner::common::{
+    EXECUTION_RUNTIME_STREAM_DECISION_ACTION, EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
+};
+use crate::ai_pipeline::planner::plan_builders::{
     LocalStreamPlanAndReport, LocalSyncPlanAndReport,
 };
-use crate::gateway::ai_pipeline::planner::prefer_local_tunnel_owner_candidates;
-use crate::gateway::ai_pipeline::planner::standard::{
+use crate::ai_pipeline::planner::standard::{
     build_cross_format_openai_cli_request_body, build_cross_format_openai_cli_upstream_url,
     build_local_openai_cli_request_body, build_local_openai_cli_upstream_url,
 };
-use crate::gateway::ai_pipeline::planner::{
-    EXECUTION_RUNTIME_STREAM_DECISION_ACTION, EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
-};
-use crate::gateway::headers::collect_control_headers;
-use crate::gateway::provider_transport::{
-    apply_local_body_rules, apply_local_header_rules, build_antigravity_safe_v1internal_request,
-    build_antigravity_static_identity_headers, build_openai_passthrough_headers,
-    classify_local_antigravity_request_support, ensure_upstream_auth_header,
-    resolve_local_gemini_auth, resolve_local_standard_auth, resolve_transport_execution_timeouts,
-    resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
-    supports_local_standard_transport_with_network, AntigravityEnvelopeRequestType,
+use crate::control::GatewayControlDecision;
+use crate::execution_runtime::{ConversionMode, ExecutionStrategy};
+use crate::headers::collect_control_headers;
+use crate::provider_transport::antigravity::{
+    build_antigravity_safe_v1internal_request, build_antigravity_static_identity_headers,
+    classify_local_antigravity_request_support, AntigravityEnvelopeRequestType,
     AntigravityRequestEnvelopeSupport, AntigravityRequestSideSupport,
+};
+use crate::provider_transport::auth::{
+    build_openai_passthrough_headers, ensure_upstream_auth_header, resolve_local_gemini_auth,
+    resolve_local_standard_auth,
+};
+use crate::provider_transport::policy::supports_local_standard_transport_with_network;
+use crate::provider_transport::{
+    apply_local_body_rules, apply_local_header_rules, resolve_transport_execution_timeouts,
+    resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
     LocalResolvedOAuthRequestAuth,
 };
-use crate::gateway::scheduler::{
+use crate::scheduler::{
     current_unix_secs, list_selectable_candidates, record_local_request_candidate_status,
     GatewayMinimalCandidateSelectionCandidate,
 };
-use crate::gateway::{
-    append_execution_contract_fields_to_value, AppState, ConversionMode, ExecutionStrategy,
-    GatewayControlDecision, GatewayControlSyncDecisionResponse, GatewayError,
+use crate::{
+    append_execution_contract_fields_to_value, AppState, GatewayControlSyncDecisionResponse,
+    GatewayError,
 };
 
 const ANTIGRAVITY_ENVELOPE_NAME: &str = "antigravity:v1internal";
@@ -52,9 +59,9 @@ pub(super) struct LocalOpenAiCliSpec {
 
 #[derive(Debug, Clone)]
 pub(super) struct LocalOpenAiCliDecisionInput {
-    pub(super) auth_context: crate::gateway::GatewayControlAuthContext,
+    pub(super) auth_context: crate::control::GatewayControlAuthContext,
     pub(super) requested_model: String,
-    pub(super) auth_snapshot: crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot,
+    pub(super) auth_snapshot: crate::data::auth::GatewayAuthApiKeySnapshot,
 }
 
 #[derive(Debug, Clone)]
@@ -247,7 +254,7 @@ pub(super) async fn materialize_local_openai_cli_candidate_attempts(
 }
 
 fn auth_snapshot_allows_cross_format_openai_cli_candidate(
-    auth_snapshot: &crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot,
+    auth_snapshot: &crate::data::auth::GatewayAuthApiKeySnapshot,
     requested_model: &str,
     candidate: &GatewayMinimalCandidateSelectionCandidate,
 ) -> bool {
@@ -639,6 +646,7 @@ pub(super) async fn maybe_build_local_openai_cli_decision_payload_for_candidate(
                 "provider_id": candidate.provider_id,
                 "endpoint_id": candidate.endpoint_id,
                 "key_id": candidate.key_id,
+                "key_name": candidate.key_name,
                 "provider_api_format": provider_api_format,
                 "client_api_format": spec.api_format,
                 "mapped_model": mapped_model,

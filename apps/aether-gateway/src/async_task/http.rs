@@ -19,7 +19,7 @@ use super::{
     read_video_task_detail, read_video_task_page, read_video_task_stats,
     read_video_task_video_source,
 };
-use crate::gateway::{AppState, GatewayError};
+use crate::{AppState, GatewayError};
 
 pub(crate) use self::cancel::{cancel_video_task_record, CancelVideoTaskError};
 

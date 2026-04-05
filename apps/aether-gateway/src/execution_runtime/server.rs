@@ -17,7 +17,7 @@ use axum::{Json, Router};
 use serde_json::json;
 use thiserror::Error;
 
-use crate::gateway::execution_runtime::{
+use crate::execution_runtime::{
     build_direct_execution_frame_stream, DirectSyncExecutionRuntime, ExecutionRuntimeTransportError,
 };
 

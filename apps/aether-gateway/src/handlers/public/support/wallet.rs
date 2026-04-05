@@ -30,7 +30,7 @@ use self::reads::{
     build_wallet_daily_usage_payload, build_wallet_payload, build_wallet_zero_today_entry,
     handle_wallet_balance, handle_wallet_today_cost, handle_wallet_transactions,
     parse_wallet_limit, parse_wallet_offset, wallet_fixed_offset, wallet_today_billing_date_string,
-    wallet_transaction_payload_from_row,
+    wallet_transaction_payload_from_record,
 };
 use self::recharge::{
     handle_wallet_create_recharge, handle_wallet_recharge_detail, handle_wallet_recharge_list,

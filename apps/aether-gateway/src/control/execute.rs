@@ -1,8 +1,9 @@
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderName, HeaderValue, Response};
 
-use crate::gateway::constants::CONTROL_EXECUTED_HEADER;
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError};
+use crate::constants::CONTROL_EXECUTED_HEADER;
+use crate::control::GatewayControlDecision;
+use crate::{AppState, GatewayError};
 
 use super::resolve_execution_runtime_auth_context;
 
@@ -37,7 +38,7 @@ pub(crate) async fn maybe_execute_via_control(
     }
 
     let response = if require_stream {
-        crate::gateway::maybe_execute_via_execution_runtime_stream(
+        crate::execution_runtime::maybe_execute_via_execution_runtime_stream(
             state,
             parts,
             &body_bytes,
@@ -46,7 +47,7 @@ pub(crate) async fn maybe_execute_via_control(
         )
         .await?
     } else {
-        crate::gateway::maybe_execute_via_execution_runtime_sync(
+        crate::execution_runtime::maybe_execute_via_execution_runtime_sync(
             state,
             parts,
             &body_bytes,

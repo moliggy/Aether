@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use aether_contracts::ExecutionResult;
 use base64::Engine as _;
 
-use crate::gateway::GatewayError;
+use crate::GatewayError;
 
 type DecodedBody = (Vec<u8>, Option<serde_json::Value>, Option<String>);
 

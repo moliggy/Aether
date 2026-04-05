@@ -4,7 +4,17 @@ use std::sync::RwLock;
 use async_trait::async_trait;
 
 use super::types::{
-    StoredUsageSettlement, StoredWalletSnapshot, UsageSettlementInput, WalletLookupKey,
+    AdjustWalletBalanceInput, AdminPaymentOrderListQuery, AdminWalletLedgerQuery,
+    AdminWalletListQuery, AdminWalletRefundRequestListQuery, CompleteAdminWalletRefundInput,
+    CreateManualWalletRechargeInput, CreateWalletRechargeOrderInput,
+    CreateWalletRechargeOrderOutcome, CreateWalletRefundRequestInput,
+    CreateWalletRefundRequestOutcome, CreditAdminPaymentOrderInput, FailAdminWalletRefundInput,
+    ProcessAdminWalletRefundInput, ProcessPaymentCallbackInput, ProcessPaymentCallbackOutcome,
+    StoredAdminPaymentCallbackPage, StoredAdminPaymentOrder, StoredAdminPaymentOrderPage,
+    StoredAdminWalletLedgerPage, StoredAdminWalletListItem, StoredAdminWalletListPage,
+    StoredAdminWalletRefundPage, StoredAdminWalletRefundRequestPage,
+    StoredAdminWalletTransactionPage, StoredWalletDailyUsageLedger,
+    StoredWalletDailyUsageLedgerPage, StoredWalletSnapshot, WalletLookupKey, WalletMutationOutcome,
     WalletReadRepository, WalletWriteRepository,
 };
 use crate::DataLayerError;
@@ -12,7 +22,6 @@ use crate::DataLayerError;
 #[derive(Debug, Default)]
 pub struct InMemoryWalletRepository {
     wallets_by_id: RwLock<BTreeMap<String, StoredWalletSnapshot>>,
-    provider_monthly_used: RwLock<BTreeMap<String, f64>>,
 }
 
 impl InMemoryWalletRepository {
@@ -26,8 +35,15 @@ impl InMemoryWalletRepository {
         }
         Self {
             wallets_by_id: RwLock::new(wallets_by_id),
-            provider_monthly_used: RwLock::new(BTreeMap::new()),
         }
+    }
+
+    pub(crate) fn with_wallets_mut<R>(
+        &self,
+        f: impl FnOnce(&mut BTreeMap<String, StoredWalletSnapshot>) -> R,
+    ) -> R {
+        let mut wallets = self.wallets_by_id.write().expect("wallet repo lock");
+        f(&mut wallets)
     }
 }
 
@@ -96,112 +112,329 @@ impl WalletReadRepository for InMemoryWalletRepository {
             .cloned()
             .collect())
     }
+
+    async fn list_admin_wallets(
+        &self,
+        query: &AdminWalletListQuery,
+    ) -> Result<StoredAdminWalletListPage, DataLayerError> {
+        let wallets = self.wallets_by_id.read().expect("wallet repo lock");
+        let mut items = wallets
+            .values()
+            .filter(|wallet| {
+                query
+                    .status
+                    .as_deref()
+                    .is_none_or(|expected| wallet.status == expected)
+            })
+            .filter(|wallet| match query.owner_type.as_deref() {
+                Some("user") => wallet.user_id.is_some(),
+                Some("api_key") => wallet.api_key_id.is_some(),
+                _ => true,
+            })
+            .map(|wallet| StoredAdminWalletListItem {
+                id: wallet.id.clone(),
+                user_id: wallet.user_id.clone(),
+                api_key_id: wallet.api_key_id.clone(),
+                balance: wallet.balance,
+                gift_balance: wallet.gift_balance,
+                limit_mode: wallet.limit_mode.clone(),
+                currency: wallet.currency.clone(),
+                status: wallet.status.clone(),
+                total_recharged: wallet.total_recharged,
+                total_consumed: wallet.total_consumed,
+                total_refunded: wallet.total_refunded,
+                total_adjusted: wallet.total_adjusted,
+                user_name: None,
+                api_key_name: None,
+                created_at_unix_secs: None,
+                updated_at_unix_secs: Some(wallet.updated_at_unix_secs),
+            })
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            right
+                .updated_at_unix_secs
+                .cmp(&left.updated_at_unix_secs)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        let total = items.len() as u64;
+        let items = items
+            .into_iter()
+            .skip(query.offset)
+            .take(query.limit)
+            .collect::<Vec<_>>();
+        Ok(StoredAdminWalletListPage { items, total })
+    }
+
+    async fn list_admin_wallet_ledger(
+        &self,
+        _query: &AdminWalletLedgerQuery,
+    ) -> Result<StoredAdminWalletLedgerPage, DataLayerError> {
+        Ok(StoredAdminWalletLedgerPage::default())
+    }
+
+    async fn list_admin_wallet_refund_requests(
+        &self,
+        _query: &AdminWalletRefundRequestListQuery,
+    ) -> Result<StoredAdminWalletRefundRequestPage, DataLayerError> {
+        Ok(StoredAdminWalletRefundRequestPage::default())
+    }
+
+    async fn list_admin_wallet_transactions(
+        &self,
+        _wallet_id: &str,
+        _limit: usize,
+        _offset: usize,
+    ) -> Result<StoredAdminWalletTransactionPage, DataLayerError> {
+        Ok(StoredAdminWalletTransactionPage::default())
+    }
+
+    async fn find_wallet_today_usage(
+        &self,
+        _wallet_id: &str,
+        _billing_timezone: &str,
+    ) -> Result<Option<StoredWalletDailyUsageLedger>, DataLayerError> {
+        Ok(None)
+    }
+
+    async fn list_wallet_daily_usage_history(
+        &self,
+        _wallet_id: &str,
+        _billing_timezone: &str,
+        _limit: usize,
+    ) -> Result<StoredWalletDailyUsageLedgerPage, DataLayerError> {
+        Ok(StoredWalletDailyUsageLedgerPage::default())
+    }
+
+    async fn list_admin_wallet_refunds(
+        &self,
+        _wallet_id: &str,
+        _limit: usize,
+        _offset: usize,
+    ) -> Result<StoredAdminWalletRefundPage, DataLayerError> {
+        Ok(StoredAdminWalletRefundPage::default())
+    }
+
+    async fn list_admin_payment_orders(
+        &self,
+        _query: &AdminPaymentOrderListQuery,
+    ) -> Result<StoredAdminPaymentOrderPage, DataLayerError> {
+        Ok(StoredAdminPaymentOrderPage::default())
+    }
+
+    async fn find_admin_payment_order(
+        &self,
+        _order_id: &str,
+    ) -> Result<Option<StoredAdminPaymentOrder>, DataLayerError> {
+        Ok(None)
+    }
+
+    async fn list_wallet_payment_orders_by_user_id(
+        &self,
+        _user_id: &str,
+        _limit: usize,
+        _offset: usize,
+    ) -> Result<StoredAdminPaymentOrderPage, DataLayerError> {
+        Ok(StoredAdminPaymentOrderPage::default())
+    }
+
+    async fn find_wallet_payment_order_by_user_id(
+        &self,
+        _user_id: &str,
+        _order_id: &str,
+    ) -> Result<Option<StoredAdminPaymentOrder>, DataLayerError> {
+        Ok(None)
+    }
+
+    async fn find_wallet_refund(
+        &self,
+        _wallet_id: &str,
+        _refund_id: &str,
+    ) -> Result<Option<super::types::StoredAdminWalletRefund>, DataLayerError> {
+        Ok(None)
+    }
+
+    async fn list_admin_payment_callbacks(
+        &self,
+        _payment_method: Option<&str>,
+        _limit: usize,
+        _offset: usize,
+    ) -> Result<StoredAdminPaymentCallbackPage, DataLayerError> {
+        Ok(StoredAdminPaymentCallbackPage::default())
+    }
 }
 
 #[async_trait]
 impl WalletWriteRepository for InMemoryWalletRepository {
-    async fn settle_usage(
+    async fn create_wallet_recharge_order(
         &self,
-        input: UsageSettlementInput,
-    ) -> Result<Option<StoredUsageSettlement>, DataLayerError> {
-        input.validate()?;
-        if input.billing_status != "pending" {
-            return Ok(Some(StoredUsageSettlement {
-                request_id: input.request_id,
-                wallet_id: None,
-                billing_status: input.billing_status,
-                wallet_balance_before: None,
-                wallet_balance_after: None,
-                wallet_recharge_balance_before: None,
-                wallet_recharge_balance_after: None,
-                wallet_gift_balance_before: None,
-                wallet_gift_balance_after: None,
-                provider_monthly_used_usd: None,
-                finalized_at_unix_secs: input.finalized_at_unix_secs,
-            }));
-        }
-
+        input: CreateWalletRechargeOrderInput,
+    ) -> Result<CreateWalletRechargeOrderOutcome, DataLayerError> {
         let mut wallets = self.wallets_by_id.write().expect("wallet repo lock");
-        let wallet_id = input
-            .api_key_id
-            .as_deref()
-            .and_then(|api_key_id| {
-                wallets
-                    .values()
-                    .find(|wallet| wallet.api_key_id.as_deref() == Some(api_key_id))
-                    .map(|wallet| wallet.id.clone())
-            })
-            .or_else(|| {
-                input.user_id.as_deref().and_then(|user_id| {
-                    wallets
-                        .values()
-                        .find(|wallet| wallet.user_id.as_deref() == Some(user_id))
-                        .map(|wallet| wallet.id.clone())
-                })
-            });
-        let wallet = wallet_id
-            .as_deref()
-            .and_then(|wallet_id| wallets.get_mut(wallet_id));
-
-        let final_billing_status = if input.status == "completed" {
-            "settled"
-        } else {
-            "void"
-        };
-
-        let mut settlement = StoredUsageSettlement {
-            request_id: input.request_id,
-            wallet_id: None,
-            billing_status: final_billing_status.to_string(),
-            wallet_balance_before: None,
-            wallet_balance_after: None,
-            wallet_recharge_balance_before: None,
-            wallet_recharge_balance_after: None,
-            wallet_gift_balance_before: None,
-            wallet_gift_balance_after: None,
-            provider_monthly_used_usd: None,
-            finalized_at_unix_secs: input.finalized_at_unix_secs,
-        };
-
-        if let Some(wallet) = wallet {
-            let before_recharge = wallet.balance;
-            let before_gift = wallet.gift_balance;
-            let before_total = before_recharge + before_gift;
-            settlement.wallet_id = Some(wallet.id.clone());
-            settlement.wallet_balance_before = Some(before_total);
-            settlement.wallet_recharge_balance_before = Some(before_recharge);
-            settlement.wallet_gift_balance_before = Some(before_gift);
-
-            if final_billing_status == "settled" {
-                if wallet.limit_mode.eq_ignore_ascii_case("unlimited") {
-                    wallet.total_consumed += input.total_cost_usd;
-                } else {
-                    let gift_deduction = before_gift.max(0.0).min(input.total_cost_usd);
-                    let recharge_deduction = input.total_cost_usd - gift_deduction;
-                    wallet.gift_balance = before_gift - gift_deduction;
-                    wallet.balance = before_recharge - recharge_deduction;
-                    wallet.total_consumed += input.total_cost_usd;
-                }
-            }
-
-            settlement.wallet_recharge_balance_after = Some(wallet.balance);
-            settlement.wallet_gift_balance_after = Some(wallet.gift_balance);
-            settlement.wallet_balance_after = Some(wallet.balance + wallet.gift_balance);
+        let wallet = wallets
+            .values_mut()
+            .find(|wallet| wallet.user_id.as_deref() == Some(input.user_id.as_str()));
+        if wallet
+            .as_ref()
+            .is_some_and(|wallet| wallet.status != "active")
+        {
+            return Ok(CreateWalletRechargeOrderOutcome::WalletInactive);
         }
+        let wallet_id = wallet
+            .map(|wallet| wallet.id.clone())
+            .or(input.preferred_wallet_id)
+            .unwrap_or_else(|| "wallet-memory".to_string());
+        Ok(CreateWalletRechargeOrderOutcome::Created(
+            StoredAdminPaymentOrder {
+                id: "payment-order-memory".to_string(),
+                order_no: input.order_no,
+                wallet_id,
+                user_id: Some(input.user_id),
+                amount_usd: input.amount_usd,
+                pay_amount: input.pay_amount,
+                pay_currency: input.pay_currency,
+                exchange_rate: input.exchange_rate,
+                refunded_amount_usd: 0.0,
+                refundable_amount_usd: 0.0,
+                payment_method: input.payment_method,
+                gateway_order_id: Some(input.gateway_order_id),
+                gateway_response: Some(input.gateway_response),
+                status: "pending".to_string(),
+                created_at_unix_secs: 0,
+                paid_at_unix_secs: None,
+                credited_at_unix_secs: None,
+                expires_at_unix_secs: Some(input.expires_at_unix_secs),
+            },
+        ))
+    }
 
-        if final_billing_status == "settled" {
-            if let Some(provider_id) = input.provider_id {
-                let mut quotas = self
-                    .provider_monthly_used
-                    .write()
-                    .expect("provider quota lock");
-                let value = quotas.entry(provider_id).or_insert(0.0);
-                *value += input.actual_total_cost_usd;
-                settlement.provider_monthly_used_usd = Some(*value);
-            }
+    async fn create_wallet_refund_request(
+        &self,
+        input: CreateWalletRefundRequestInput,
+    ) -> Result<CreateWalletRefundRequestOutcome, DataLayerError> {
+        let wallets = self.wallets_by_id.read().expect("wallet repo lock");
+        let Some(wallet) = wallets.get(&input.wallet_id) else {
+            return Ok(CreateWalletRefundRequestOutcome::WalletMissing);
+        };
+        if input.amount_usd > wallet.balance {
+            return Ok(CreateWalletRefundRequestOutcome::RefundAmountExceedsAvailableBalance);
         }
+        Ok(CreateWalletRefundRequestOutcome::Created(
+            super::types::StoredAdminWalletRefund {
+                id: "refund-memory".to_string(),
+                refund_no: input.refund_no,
+                wallet_id: input.wallet_id,
+                user_id: Some(input.user_id),
+                payment_order_id: input.payment_order_id,
+                source_type: input
+                    .source_type
+                    .unwrap_or_else(|| "wallet_balance".to_string()),
+                source_id: input.source_id,
+                refund_mode: input
+                    .refund_mode
+                    .unwrap_or_else(|| "offline_payout".to_string()),
+                amount_usd: input.amount_usd,
+                status: "pending_approval".to_string(),
+                reason: input.reason,
+                failure_reason: None,
+                gateway_refund_id: None,
+                payout_method: None,
+                payout_reference: None,
+                payout_proof: None,
+                requested_by: None,
+                approved_by: None,
+                processed_by: None,
+                created_at_unix_secs: 0,
+                updated_at_unix_secs: 0,
+                processed_at_unix_secs: None,
+                completed_at_unix_secs: None,
+            },
+        ))
+    }
 
-        Ok(Some(settlement))
+    async fn process_payment_callback(
+        &self,
+        _input: ProcessPaymentCallbackInput,
+    ) -> Result<ProcessPaymentCallbackOutcome, DataLayerError> {
+        Ok(ProcessPaymentCallbackOutcome::Failed {
+            duplicate: false,
+            error: "payment callback is not supported in memory wallet repository".to_string(),
+        })
+    }
+
+    async fn adjust_wallet_balance(
+        &self,
+        _input: AdjustWalletBalanceInput,
+    ) -> Result<
+        Option<(
+            StoredWalletSnapshot,
+            super::types::StoredAdminWalletTransaction,
+        )>,
+        DataLayerError,
+    > {
+        Ok(None)
+    }
+
+    async fn create_manual_wallet_recharge(
+        &self,
+        _input: CreateManualWalletRechargeInput,
+    ) -> Result<Option<(StoredWalletSnapshot, StoredAdminPaymentOrder)>, DataLayerError> {
+        Ok(None)
+    }
+
+    async fn process_admin_wallet_refund(
+        &self,
+        _input: ProcessAdminWalletRefundInput,
+    ) -> Result<
+        WalletMutationOutcome<(
+            StoredWalletSnapshot,
+            super::types::StoredAdminWalletRefund,
+            super::types::StoredAdminWalletTransaction,
+        )>,
+        DataLayerError,
+    > {
+        Ok(WalletMutationOutcome::NotFound)
+    }
+
+    async fn complete_admin_wallet_refund(
+        &self,
+        _input: CompleteAdminWalletRefundInput,
+    ) -> Result<WalletMutationOutcome<super::types::StoredAdminWalletRefund>, DataLayerError> {
+        Ok(WalletMutationOutcome::NotFound)
+    }
+
+    async fn fail_admin_wallet_refund(
+        &self,
+        _input: FailAdminWalletRefundInput,
+    ) -> Result<
+        WalletMutationOutcome<(
+            StoredWalletSnapshot,
+            super::types::StoredAdminWalletRefund,
+            Option<super::types::StoredAdminWalletTransaction>,
+        )>,
+        DataLayerError,
+    > {
+        Ok(WalletMutationOutcome::NotFound)
+    }
+
+    async fn expire_admin_payment_order(
+        &self,
+        _order_id: &str,
+    ) -> Result<WalletMutationOutcome<(StoredAdminPaymentOrder, bool)>, DataLayerError> {
+        Ok(WalletMutationOutcome::NotFound)
+    }
+
+    async fn fail_admin_payment_order(
+        &self,
+        _order_id: &str,
+    ) -> Result<WalletMutationOutcome<StoredAdminPaymentOrder>, DataLayerError> {
+        Ok(WalletMutationOutcome::NotFound)
+    }
+
+    async fn credit_admin_payment_order(
+        &self,
+        _input: CreditAdminPaymentOrderInput,
+    ) -> Result<WalletMutationOutcome<(StoredAdminPaymentOrder, bool)>, DataLayerError> {
+        Ok(WalletMutationOutcome::NotFound)
     }
 }
 
@@ -209,8 +442,7 @@ impl WalletWriteRepository for InMemoryWalletRepository {
 mod tests {
     use super::InMemoryWalletRepository;
     use crate::repository::wallet::{
-        StoredWalletSnapshot, UsageSettlementInput, WalletLookupKey, WalletReadRepository,
-        WalletWriteRepository,
+        AdminWalletListQuery, StoredWalletSnapshot, WalletLookupKey, WalletReadRepository,
     };
 
     fn sample_wallet() -> StoredWalletSnapshot {
@@ -244,27 +476,73 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn settles_usage_against_wallet_and_provider_quota() {
-        let repository = InMemoryWalletRepository::seed(vec![sample_wallet()]);
-        let settlement = repository
-            .settle_usage(UsageSettlementInput {
-                request_id: "req-1".to_string(),
-                user_id: Some("user-1".to_string()),
-                api_key_id: Some("key-1".to_string()),
-                provider_id: Some("provider-1".to_string()),
-                status: "completed".to_string(),
-                billing_status: "pending".to_string(),
-                total_cost_usd: 3.0,
-                actual_total_cost_usd: 1.5,
-                finalized_at_unix_secs: Some(200),
+    async fn lists_admin_wallets_with_filters_and_pagination() {
+        let repository = InMemoryWalletRepository::seed(vec![
+            sample_wallet(),
+            StoredWalletSnapshot::new(
+                "wallet-2".to_string(),
+                Some("user-2".to_string()),
+                None,
+                3.0,
+                1.0,
+                "finite".to_string(),
+                "USD".to_string(),
+                "inactive".to_string(),
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                90,
+            )
+            .expect("wallet should build"),
+            StoredWalletSnapshot::new(
+                "wallet-3".to_string(),
+                None,
+                Some("key-3".to_string()),
+                5.0,
+                0.0,
+                "unlimited".to_string(),
+                "USD".to_string(),
+                "active".to_string(),
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                110,
+            )
+            .expect("wallet should build"),
+        ]);
+
+        let page = repository
+            .list_admin_wallets(&AdminWalletListQuery {
+                status: Some("active".to_string()),
+                owner_type: Some("api_key".to_string()),
+                limit: 1,
+                offset: 0,
             })
             .await
-            .expect("settlement should succeed")
-            .expect("settlement should exist");
+            .expect("list should succeed");
 
-        assert_eq!(settlement.billing_status, "settled");
-        assert_eq!(settlement.wallet_balance_before, Some(12.0));
-        assert_eq!(settlement.wallet_balance_after, Some(9.0));
-        assert_eq!(settlement.provider_monthly_used_usd, Some(1.5));
+        assert_eq!(page.total, 2);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, "wallet-3");
+        assert_eq!(page.items[0].updated_at_unix_secs, Some(110));
+    }
+
+    #[tokio::test]
+    async fn daily_usage_queries_default_to_empty_in_memory() {
+        let repository = InMemoryWalletRepository::seed(vec![sample_wallet()]);
+        let today = repository
+            .find_wallet_today_usage("wallet-1", "Asia/Shanghai")
+            .await
+            .expect("lookup should succeed");
+        let history = repository
+            .list_wallet_daily_usage_history("wallet-1", "Asia/Shanghai", 20)
+            .await
+            .expect("history should succeed");
+
+        assert!(today.is_none());
+        assert_eq!(history.total, 0);
+        assert!(history.items.is_empty());
     }
 }

@@ -2,7 +2,9 @@ use super::{
     build_admin_billing_bad_request_response, build_admin_billing_not_found_response,
     build_admin_billing_read_only_response, normalize_admin_billing_required_text,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     response::{IntoResponse, Response},
@@ -36,9 +38,9 @@ fn build_admin_billing_presets_payload() -> serde_json::Value {
 }
 
 fn build_admin_billing_aether_core_collectors(
-) -> Vec<crate::gateway::AdminBillingCollectorWriteInput> {
+) -> Vec<crate::AdminBillingCollectorWriteInput> {
     vec![
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "OPENAI:CHAT".to_string(),
             task_type: "chat".to_string(),
             dimension_name: "input_tokens".to_string(),
@@ -50,7 +52,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 10,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "OPENAI:CHAT".to_string(),
             task_type: "chat".to_string(),
             dimension_name: "output_tokens".to_string(),
@@ -62,7 +64,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 10,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "CLAUDE:CHAT".to_string(),
             task_type: "chat".to_string(),
             dimension_name: "input_tokens".to_string(),
@@ -74,7 +76,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 10,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "CLAUDE:CHAT".to_string(),
             task_type: "chat".to_string(),
             dimension_name: "output_tokens".to_string(),
@@ -86,7 +88,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 10,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "GEMINI:CHAT".to_string(),
             task_type: "chat".to_string(),
             dimension_name: "input_tokens".to_string(),
@@ -98,7 +100,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 10,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "GEMINI:CHAT".to_string(),
             task_type: "chat".to_string(),
             dimension_name: "output_tokens".to_string(),
@@ -110,7 +112,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 10,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "OPENAI:CHAT".to_string(),
             task_type: "video".to_string(),
             dimension_name: "video_resolution_key".to_string(),
@@ -122,7 +124,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 10,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "OPENAI:CHAT".to_string(),
             task_type: "video".to_string(),
             dimension_name: "video_resolution_key".to_string(),
@@ -134,7 +136,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 0,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "OPENAI:CHAT".to_string(),
             task_type: "video".to_string(),
             dimension_name: "video_size_bytes".to_string(),
@@ -146,7 +148,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 0,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "OPENAI:CHAT".to_string(),
             task_type: "video".to_string(),
             dimension_name: "video_duration_seconds".to_string(),
@@ -158,7 +160,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 10,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "OPENAI:CHAT".to_string(),
             task_type: "video".to_string(),
             dimension_name: "video_duration_seconds".to_string(),
@@ -170,7 +172,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 0,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "GEMINI:CHAT".to_string(),
             task_type: "video".to_string(),
             dimension_name: "video_resolution_key".to_string(),
@@ -182,7 +184,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 10,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "GEMINI:CHAT".to_string(),
             task_type: "video".to_string(),
             dimension_name: "video_resolution_key".to_string(),
@@ -194,7 +196,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 0,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "GEMINI:CHAT".to_string(),
             task_type: "video".to_string(),
             dimension_name: "video_size_bytes".to_string(),
@@ -206,7 +208,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 0,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "GEMINI:CHAT".to_string(),
             task_type: "video".to_string(),
             dimension_name: "video_duration_seconds".to_string(),
@@ -218,7 +220,7 @@ fn build_admin_billing_aether_core_collectors(
             priority: 10,
             is_enabled: true,
         },
-        crate::gateway::AdminBillingCollectorWriteInput {
+        crate::AdminBillingCollectorWriteInput {
             api_format: "GEMINI:CHAT".to_string(),
             task_type: "video".to_string(),
             dimension_name: "video_duration_seconds".to_string(),
@@ -237,7 +239,7 @@ fn resolve_admin_billing_preset_collectors(
     preset: &str,
 ) -> Option<(
     &'static str,
-    Vec<crate::gateway::AdminBillingCollectorWriteInput>,
+    Vec<crate::AdminBillingCollectorWriteInput>,
 )> {
     let normalized = preset.trim().to_ascii_lowercase();
     match normalized.as_str() {
@@ -277,6 +279,7 @@ fn parse_admin_billing_preset_apply_request(
 
 async fn build_admin_apply_billing_preset_response(
     state: &AppState,
+    request_context: &GatewayPublicRequestContext,
     request_body: Option<&Bytes>,
 ) -> Result<Response<Body>, GatewayError> {
     let (preset, mode) = match parse_admin_billing_preset_apply_request(request_body) {
@@ -301,23 +304,32 @@ async fn build_admin_apply_billing_preset_response(
         .apply_admin_billing_preset(resolved_preset, &mode, &collectors)
         .await?
     {
-        crate::gateway::LocalMutationOutcome::Applied(result) => Ok(Json(json!({
-            "ok": result.errors.is_empty(),
-            "preset": result.preset,
-            "mode": result.mode,
-            "created": result.created,
-            "updated": result.updated,
-            "skipped": result.skipped,
-            "errors": result.errors,
-        }))
-        .into_response()),
-        crate::gateway::LocalMutationOutcome::Unavailable => Ok(
+        crate::LocalMutationOutcome::Applied(result) => {
+            let response = Json(json!({
+                "ok": result.errors.is_empty(),
+                "preset": result.preset,
+                "mode": result.mode,
+                "created": result.created,
+                "updated": result.updated,
+                "skipped": result.skipped,
+                "errors": result.errors,
+            }))
+            .into_response();
+            Ok(attach_admin_audit_response(
+                response,
+                "admin_billing_preset_applied",
+                "apply_billing_preset",
+                "billing_preset",
+                resolved_preset,
+            ))
+        }
+        crate::LocalMutationOutcome::Unavailable => Ok(
             build_admin_billing_read_only_response("当前为只读模式，无法应用计费预设"),
         ),
-        crate::gateway::LocalMutationOutcome::Invalid(detail) => {
+        crate::LocalMutationOutcome::Invalid(detail) => {
             Ok(build_admin_billing_bad_request_response(detail))
         }
-        crate::gateway::LocalMutationOutcome::NotFound => Ok(
+        crate::LocalMutationOutcome::NotFound => Ok(
             build_admin_billing_not_found_response("Billing preset not found"),
         ),
     }
@@ -353,7 +365,8 @@ pub(super) async fn maybe_build_local_admin_billing_presets_response(
                 ) =>
         {
             Ok(Some(
-                build_admin_apply_billing_preset_response(state, request_body).await?,
+                build_admin_apply_billing_preset_response(state, request_context, request_body)
+                    .await?,
             ))
         }
         _ => Ok(None),

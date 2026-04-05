@@ -3,7 +3,8 @@ use super::super::{
     read_admin_external_models_cache,
 };
 use super::build_admin_model_catalog_data_unavailable_response;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,

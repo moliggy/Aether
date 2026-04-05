@@ -5,11 +5,12 @@ use super::super::{
     build_admin_update_provider_endpoint_record, endpoint_key_counts_by_format,
     key_api_formats_without_entry,
 };
-use crate::gateway::api::ai::admin_default_body_rules_for_signature;
-use crate::gateway::handlers::{
+use crate::api::ai::admin_default_body_rules_for_signature;
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     query_param_value, AdminProviderEndpointCreateRequest, AdminProviderEndpointUpdateRequest,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,

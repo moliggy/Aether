@@ -1,6 +1,6 @@
 use super::super::{
-    admin_provider_pool_config, read_admin_provider_pool_cooldown_count,
-    read_admin_provider_pool_cooldown_key_ids, read_admin_provider_pool_runtime_state,
+    admin_provider_pool_config, read_admin_provider_pool_cooldown_key_ids,
+    read_admin_provider_pool_runtime_state,
 };
 use super::{
     admin_pool_provider_id_from_path, build_admin_pool_error_response, parse_admin_pool_page,
@@ -8,8 +8,9 @@ use super::{
     AdminPoolResolveSelectionRequest, ADMIN_POOL_PROVIDER_CATALOG_READER_UNAVAILABLE_DETAIL,
 };
 use super::{pool_payloads, pool_selection};
-use crate::gateway::handlers::AdminProviderPoolRuntimeState;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::AdminProviderPoolRuntimeState;
+use crate::{AppState, GatewayError};
 use aether_data::repository::provider_catalog::ProviderCatalogKeyListQuery;
 use axum::{
     body::{Body, Bytes},
@@ -46,17 +47,22 @@ async fn build_admin_pool_overview_payload(
         .map(|item| (item.provider_id.clone(), item))
         .collect::<BTreeMap<_, _>>();
     let redis_runner = state.redis_kv_runner();
+    let cooldown_counts_by_provider = match redis_runner.as_ref() {
+        Some(runner) if !provider_ids.is_empty() => {
+            super::super::read_admin_provider_pool_cooldown_counts(runner, &provider_ids).await
+        }
+        _ => BTreeMap::new(),
+    };
 
     let mut items = Vec::with_capacity(pool_enabled_providers.len());
     for (provider, _pool_config) in pool_enabled_providers {
         let stats = key_stats_by_provider.get(&provider.id);
         let total_keys = stats.map(|item| item.total_keys as usize).unwrap_or(0);
         let active_keys = stats.map(|item| item.active_keys as usize).unwrap_or(0);
-        let cooldown_count = if let Some(runner) = redis_runner.as_ref() {
-            read_admin_provider_pool_cooldown_count(runner, &provider.id).await
-        } else {
-            0
-        };
+        let cooldown_count = cooldown_counts_by_provider
+            .get(&provider.id)
+            .copied()
+            .unwrap_or(0);
 
         items.push(json!({
             "provider_id": provider.id,

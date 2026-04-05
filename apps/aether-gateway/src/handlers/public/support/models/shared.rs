@@ -28,12 +28,12 @@ pub(super) fn models_detail_id(request_path: &str) -> Option<String> {
 }
 
 fn auth_snapshot_allows_provider_for_models(
-    auth_snapshot: Option<&crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot>,
+    auth_snapshot: Option<&crate::data::auth::GatewayAuthApiKeySnapshot>,
     provider_id: &str,
     provider_name: &str,
 ) -> bool {
     let Some(allowed) = auth_snapshot.and_then(
-        crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot::effective_allowed_providers,
+        crate::data::auth::GatewayAuthApiKeySnapshot::effective_allowed_providers,
     ) else {
         return true;
     };
@@ -45,11 +45,11 @@ fn auth_snapshot_allows_provider_for_models(
 }
 
 fn auth_snapshot_allows_model_for_models(
-    auth_snapshot: Option<&crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot>,
+    auth_snapshot: Option<&crate::data::auth::GatewayAuthApiKeySnapshot>,
     global_model_name: &str,
 ) -> bool {
     let Some(allowed) = auth_snapshot.and_then(
-        crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot::effective_allowed_models,
+        crate::data::auth::GatewayAuthApiKeySnapshot::effective_allowed_models,
     ) else {
         return true;
     };
@@ -130,7 +130,7 @@ fn row_exposes_global_model_for_models(
 
 pub(super) fn filter_rows_for_models(
     rows: Vec<StoredMinimalCandidateSelectionRow>,
-    auth_snapshot: Option<&crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot>,
+    auth_snapshot: Option<&crate::data::auth::GatewayAuthApiKeySnapshot>,
     api_format: &str,
 ) -> Vec<StoredMinimalCandidateSelectionRow> {
     let mut filtered = rows

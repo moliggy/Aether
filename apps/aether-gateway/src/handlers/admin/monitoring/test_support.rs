@@ -1,4 +1,4 @@
-use crate::gateway::GatewayPublicRequestContext;
+use crate::control::GatewayPublicRequestContext;
 use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY};
 use axum::http::{self, Uri};
 use serde_json::json;

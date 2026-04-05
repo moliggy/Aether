@@ -4,8 +4,8 @@ use super::{
     augment_sync_report_context, generic_decision_missing_exact_provider_request,
     LocalStreamPlanAndReport, LocalSyncPlanAndReport,
 };
-use crate::gateway::provider_transport::ensure_upstream_auth_header;
-use crate::gateway::{GatewayControlSyncDecisionResponse, GatewayError};
+use crate::provider_transport::ensure_upstream_auth_header;
+use crate::{GatewayControlSyncDecisionResponse, GatewayError};
 
 pub(crate) fn build_gemini_sync_plan_from_decision(
     _parts: &http::request::Parts,

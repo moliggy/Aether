@@ -8,7 +8,8 @@ use redis::Script;
 use tokio::sync::Mutex;
 use tracing::warn;
 
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError};
+use crate::control::GatewayControlDecision;
+use crate::{AppState, GatewayError};
 
 const RPM_CHECK_AND_CONSUME_SCRIPT: &str = r#"
 local user_key = KEYS[1]
@@ -62,6 +63,7 @@ pub struct FrontdoorUserRpmConfig {
     bucket_seconds: u64,
     key_ttl_seconds: u64,
     fail_open: bool,
+    allow_local_fallback: bool,
 }
 
 impl Default for FrontdoorUserRpmConfig {
@@ -70,6 +72,7 @@ impl Default for FrontdoorUserRpmConfig {
             bucket_seconds: 60,
             key_ttl_seconds: 120,
             fail_open: true,
+            allow_local_fallback: true,
         }
     }
 }
@@ -80,6 +83,7 @@ impl FrontdoorUserRpmConfig {
             bucket_seconds: bucket_seconds.max(1),
             key_ttl_seconds: key_ttl_seconds.max(1),
             fail_open,
+            allow_local_fallback: true,
         }
     }
 
@@ -93,6 +97,15 @@ impl FrontdoorUserRpmConfig {
 
     pub(crate) fn fail_open(&self) -> bool {
         self.fail_open
+    }
+
+    pub fn allow_local_fallback(&self) -> bool {
+        self.allow_local_fallback
+    }
+
+    pub fn with_local_fallback(mut self, allow_local_fallback: bool) -> Self {
+        self.allow_local_fallback = allow_local_fallback;
+        self
     }
 
     fn current_bucket(&self, now_ts: u64) -> u64 {
@@ -234,8 +247,22 @@ impl FrontdoorUserRpmLimiter {
                     if self.config.fail_open() {
                         return Ok(FrontdoorUserRpmOutcome::NotApplicable);
                     }
+                    if !self.config.allow_local_fallback() {
+                        return Err(GatewayError::Internal(
+                            "frontdoor user rpm redis backend is unavailable and local fallback is disabled for the current deployment mode".to_string(),
+                        ));
+                    }
                 }
             }
+        }
+
+        if !self.config.allow_local_fallback() {
+            if self.config.fail_open() {
+                return Ok(FrontdoorUserRpmOutcome::NotApplicable);
+            }
+            return Err(GatewayError::Internal(
+                "frontdoor user rpm requires redis in the current deployment mode".to_string(),
+            ));
         }
 
         Ok(self.check_and_consume_memory(&plan).await)
@@ -498,7 +525,9 @@ fn parse_system_default_limit(value: Option<serde_json::Value>) -> Result<u32, G
 #[cfg(test)]
 mod tests {
     use super::{FrontdoorUserRpmConfig, FrontdoorUserRpmLimiter, FrontdoorUserRpmOutcome};
-    use crate::gateway::{AppState, GatewayControlAuthContext, GatewayControlDecision};
+    use crate::control::GatewayControlAuthContext;
+    use crate::control::GatewayControlDecision;
+    use crate::AppState;
 
     fn sample_decision(auth_context: GatewayControlAuthContext) -> GatewayControlDecision {
         GatewayControlDecision {
@@ -592,5 +621,36 @@ mod tests {
         assert_eq!(config.bucket_seconds(), 1);
         assert_eq!(config.key_ttl_seconds(), 1);
         assert!(config.fail_open());
+        assert!(config.allow_local_fallback());
+    }
+
+    #[tokio::test]
+    async fn limiter_rejects_missing_redis_when_local_fallback_disabled() {
+        let limiter = FrontdoorUserRpmLimiter::new(
+            FrontdoorUserRpmConfig::new(60, 120, false).with_local_fallback(false),
+        );
+        let decision = sample_decision(GatewayControlAuthContext {
+            user_id: "user-1".to_string(),
+            api_key_id: "key-1".to_string(),
+            balance_remaining: Some(10.0),
+            access_allowed: true,
+            user_rate_limit: Some(1),
+            api_key_rate_limit: Some(10),
+            api_key_is_standalone: false,
+            local_rejection: None,
+            allowed_models: None,
+        });
+        let state = AppState::new().expect("state should build for tests");
+
+        let err = limiter
+            .check_and_consume(&state, Some(&decision))
+            .await
+            .expect_err("missing redis should fail in strict mode");
+        match err {
+            crate::GatewayError::Internal(message) => {
+                assert!(message.contains("requires redis"));
+            }
+            other => panic!("expected internal error, got {other:?}"),
+        }
     }
 }

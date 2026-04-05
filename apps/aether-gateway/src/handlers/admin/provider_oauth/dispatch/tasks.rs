@@ -1,7 +1,9 @@
 use super::super::provider_oauth_refresh::build_internal_control_error_response;
 use super::super::provider_oauth_state::read_provider_oauth_batch_task_payload;
-use crate::gateway::handlers::admin_provider_oauth_batch_import_task_path;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::admin_provider_oauth_batch_import_task_path;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,
@@ -37,5 +39,27 @@ pub(super) async fn handle_admin_provider_oauth_batch_import_task_status(
             ));
         }
     };
-    Ok(Json(payload).into_response())
+    let status = payload
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .unwrap_or_default();
+    let response = Json(payload).into_response();
+    Ok(match status.as_str() {
+        "completed" => attach_admin_audit_response(
+            response,
+            "admin_provider_oauth_batch_task_completed_viewed",
+            "view_provider_oauth_batch_task_terminal_state",
+            "provider_oauth_batch_task",
+            &format!("{provider_id}:{task_id}"),
+        ),
+        "failed" => attach_admin_audit_response(
+            response,
+            "admin_provider_oauth_batch_task_failed_viewed",
+            "view_provider_oauth_batch_task_terminal_state",
+            "provider_oauth_batch_task",
+            &format!("{provider_id}:{task_id}"),
+        ),
+        _ => response,
+    })
 }

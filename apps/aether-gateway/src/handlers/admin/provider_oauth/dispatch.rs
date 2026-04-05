@@ -2,7 +2,16 @@ use super::provider_oauth_state::{
     build_admin_provider_oauth_backend_unavailable_response,
     build_admin_provider_oauth_supported_types_payload,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::{
+    admin_provider_oauth_batch_import_provider_id,
+    admin_provider_oauth_batch_import_task_provider_id, admin_provider_oauth_complete_key_id,
+    admin_provider_oauth_complete_provider_id, admin_provider_oauth_device_authorize_provider_id,
+    admin_provider_oauth_import_provider_id, admin_provider_oauth_refresh_key_id,
+    admin_provider_oauth_start_key_id, admin_provider_oauth_start_provider_id,
+};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,
@@ -50,16 +59,28 @@ pub(crate) async fn maybe_build_local_admin_provider_oauth_response(
     }
 
     if route_kind == Some("start_key_oauth") && *method == http::Method::POST {
-        return Ok(Some(
-            dispatch_start::handle_admin_provider_oauth_start_key(state, request_context).await?,
-        ));
+        let response =
+            dispatch_start::handle_admin_provider_oauth_start_key(state, request_context).await?;
+        return Ok(Some(attach_admin_provider_oauth_audit_response(
+            response,
+            "admin_provider_oauth_authorization_started",
+            "start_provider_oauth_for_key",
+            "provider_key",
+            admin_provider_oauth_start_key_id(&request_context.request_path),
+        )));
     }
 
     if route_kind == Some("start_provider_oauth") && *method == http::Method::POST {
-        return Ok(Some(
+        let response =
             dispatch_start::handle_admin_provider_oauth_start_provider(state, request_context)
-                .await?,
-        ));
+                .await?;
+        return Ok(Some(attach_admin_provider_oauth_audit_response(
+            response,
+            "admin_provider_oauth_authorization_started",
+            "start_provider_oauth_for_provider",
+            "provider",
+            admin_provider_oauth_start_provider_id(&request_context.request_path),
+        )));
     }
 
     if route_kind == Some("get_batch_import_task_status") && *method == http::Method::GET {
@@ -73,76 +94,112 @@ pub(crate) async fn maybe_build_local_admin_provider_oauth_response(
     }
 
     if route_kind == Some("complete_key_oauth") && *method == http::Method::POST {
-        return Ok(Some(
-            dispatch_complete::handle_admin_provider_oauth_complete_key(
-                state,
-                request_context,
-                request_body,
-            )
-            .await?,
-        ));
+        let response = dispatch_complete::handle_admin_provider_oauth_complete_key(
+            state,
+            request_context,
+            request_body,
+        )
+        .await?;
+        return Ok(Some(attach_admin_provider_oauth_audit_response(
+            response,
+            "admin_provider_oauth_completed",
+            "complete_provider_oauth_for_key",
+            "provider_key",
+            admin_provider_oauth_complete_key_id(&request_context.request_path),
+        )));
     }
 
     if route_kind == Some("refresh_key_oauth") && *method == http::Method::POST {
-        return Ok(Some(
+        let response =
             dispatch_refresh::handle_admin_provider_oauth_refresh_key(state, request_context)
-                .await?,
-        ));
+                .await?;
+        return Ok(Some(attach_admin_provider_oauth_audit_response(
+            response,
+            "admin_provider_oauth_refreshed",
+            "refresh_provider_oauth_for_key",
+            "provider_key",
+            admin_provider_oauth_refresh_key_id(&request_context.request_path),
+        )));
     }
 
     if route_kind == Some("complete_provider_oauth") && *method == http::Method::POST {
-        return Ok(Some(
-            dispatch_complete::handle_admin_provider_oauth_complete_provider(
-                state,
-                request_context,
-                request_body,
-            )
-            .await?,
-        ));
+        let response = dispatch_complete::handle_admin_provider_oauth_complete_provider(
+            state,
+            request_context,
+            request_body,
+        )
+        .await?;
+        return Ok(Some(attach_admin_provider_oauth_audit_response(
+            response,
+            "admin_provider_oauth_completed",
+            "complete_provider_oauth_for_provider",
+            "provider",
+            admin_provider_oauth_complete_provider_id(&request_context.request_path),
+        )));
     }
 
     if route_kind == Some("import_refresh_token") && *method == http::Method::POST {
-        return Ok(Some(
-            dispatch_import::handle_admin_provider_oauth_import_refresh_token(
-                state,
-                request_context,
-                request_body,
-            )
-            .await?,
-        ));
+        let response = dispatch_import::handle_admin_provider_oauth_import_refresh_token(
+            state,
+            request_context,
+            request_body,
+        )
+        .await?;
+        return Ok(Some(attach_admin_provider_oauth_audit_response(
+            response,
+            "admin_provider_oauth_refresh_token_imported",
+            "import_provider_oauth_refresh_token",
+            "provider",
+            admin_provider_oauth_import_provider_id(&request_context.request_path),
+        )));
     }
 
     if route_kind == Some("batch_import_oauth") && *method == http::Method::POST {
-        return Ok(Some(
-            dispatch_batch::handle_admin_provider_oauth_batch_import(
-                state,
-                request_context,
-                request_body,
-            )
-            .await?,
-        ));
+        let response = dispatch_batch::handle_admin_provider_oauth_batch_import(
+            state,
+            request_context,
+            request_body,
+        )
+        .await?;
+        return Ok(Some(attach_admin_provider_oauth_audit_response(
+            response,
+            "admin_provider_oauth_batch_import_completed",
+            "batch_import_provider_oauth",
+            "provider",
+            admin_provider_oauth_batch_import_provider_id(&request_context.request_path),
+        )));
     }
 
     if route_kind == Some("start_batch_import_oauth_task") && *method == http::Method::POST {
-        return Ok(Some(
-            dispatch_batch::handle_admin_provider_oauth_start_batch_import_task(
-                state,
-                request_context,
-                request_body,
-            )
-            .await?,
-        ));
+        let response = dispatch_batch::handle_admin_provider_oauth_start_batch_import_task(
+            state,
+            request_context,
+            request_body,
+        )
+        .await?;
+        return Ok(Some(attach_admin_provider_oauth_audit_response(
+            response,
+            "admin_provider_oauth_batch_import_started",
+            "start_provider_oauth_batch_import",
+            "provider",
+            admin_provider_oauth_batch_import_task_provider_id(&request_context.request_path),
+        )));
     }
 
     if route_kind == Some("device_authorize") && *method == http::Method::POST {
-        return Ok(Some(
-            dispatch_device::handle_admin_provider_oauth_device_authorize(
-                state,
-                request_context,
-                request_body,
-            )
-            .await?,
-        ));
+        let response = dispatch_device::handle_admin_provider_oauth_device_authorize(
+            state,
+            request_context,
+            request_body,
+        )
+        .await?;
+        return Ok(Some(attach_admin_provider_oauth_audit_response(
+            response,
+            "admin_provider_oauth_device_authorization_started",
+            "start_provider_oauth_device_authorization",
+            "provider",
+            admin_provider_oauth_device_authorize_provider_id(&request_context.request_path),
+        )));
     }
 
     if route_kind == Some("device_poll") && *method == http::Method::POST {
@@ -166,4 +223,20 @@ pub(crate) async fn maybe_build_local_admin_provider_oauth_response(
     }
 
     Ok(None)
+}
+
+fn attach_admin_provider_oauth_audit_response(
+    response: Response<Body>,
+    event_name: &'static str,
+    action: &'static str,
+    target_type: &'static str,
+    target_id: Option<String>,
+) -> Response<Body> {
+    if !response.status().is_success() {
+        return response;
+    }
+    let Some(target_id) = target_id else {
+        return response;
+    };
+    attach_admin_audit_response(response, event_name, action, target_type, &target_id)
 }

@@ -1,8 +1,10 @@
 use super::super::build_admin_batch_assign_global_models_payload;
-use crate::gateway::handlers::{
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     admin_provider_assign_global_models_path, AdminBatchAssignGlobalModelsRequest,
 };
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,

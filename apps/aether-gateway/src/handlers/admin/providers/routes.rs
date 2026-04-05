@@ -7,7 +7,9 @@ use super::super::{
     reset_admin_provider_pool_cost, run_admin_provider_delete_task,
 };
 use super::providers_shared::build_admin_providers_data_unavailable_response;
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::{
     admin_provider_clear_pool_cooldown_parts, admin_provider_delete_task_parts,
     admin_provider_id_for_health_monitor, admin_provider_id_for_manage_path,
     admin_provider_id_for_mapping_preview, admin_provider_id_for_pool_status,
@@ -16,10 +18,8 @@ use crate::gateway::handlers::{
     put_admin_provider_delete_task, query_param_optional_bool, query_param_value,
     AdminProviderCreateRequest, AdminProviderUpdateRequest,
 };
-use crate::gateway::provider_transport::fixed_provider_template;
-use crate::gateway::{
-    AppState, GatewayError, GatewayPublicRequestContext, LocalProviderDeleteTaskState,
-};
+use crate::provider_transport::provider_types::fixed_provider_template;
+use crate::{AppState, GatewayError, LocalProviderDeleteTaskState};
 use axum::{
     body::{Body, Bytes},
     http,
@@ -29,6 +29,31 @@ use axum::{
 use serde_json::json;
 use tracing::warn;
 use uuid::Uuid;
+
+fn attach_admin_provider_delete_task_terminal_audit(
+    provider_id: &str,
+    task_id: &str,
+    task_status: &str,
+    response: Response<Body>,
+) -> Response<Body> {
+    match task_status {
+        "completed" => attach_admin_audit_response(
+            response,
+            "admin_provider_delete_task_completed_viewed",
+            "view_provider_delete_task_terminal_state",
+            "provider_delete_task",
+            &format!("{provider_id}:{task_id}"),
+        ),
+        "failed" => attach_admin_audit_response(
+            response,
+            "admin_provider_delete_task_failed_viewed",
+            "view_provider_delete_task_terminal_state",
+            "provider_delete_task",
+            &format!("{provider_id}:{task_id}"),
+        ),
+        _ => response,
+    }
+}
 
 pub(crate) async fn maybe_build_local_admin_providers_response(
     state: &AppState,
@@ -117,14 +142,18 @@ pub(crate) async fn maybe_build_local_admin_providers_response(
             }
         }
 
-        return Ok(Some(
+        return Ok(Some(attach_admin_audit_response(
             Json(json!({
                 "id": created_provider.id,
                 "name": created_provider.name,
                 "message": "提供商创建成功",
             }))
             .into_response(),
-        ));
+            "admin_provider_created",
+            "create_provider",
+            "provider",
+            &created_provider.id,
+        )));
     }
 
     if decision.route_family.as_deref() == Some("providers_manage")
@@ -253,7 +282,13 @@ pub(crate) async fn maybe_build_local_admin_providers_response(
         };
         return Ok(Some(
             match build_admin_provider_summary_payload(state, &provider_id).await {
-                Some(payload) => Json(payload).into_response(),
+                Some(payload) => attach_admin_audit_response(
+                    Json(payload).into_response(),
+                    "admin_provider_updated",
+                    "update_provider",
+                    "provider",
+                    &provider_id,
+                ),
                 None => (
                     http::StatusCode::NOT_FOUND,
                     Json(json!({ "detail": format!("Provider {provider_id} 不存在") })),
@@ -324,14 +359,18 @@ pub(crate) async fn maybe_build_local_admin_providers_response(
                 },
             );
         }
-        return Ok(Some(
+        return Ok(Some(attach_admin_audit_response(
             Json(json!({
                 "task_id": task_id,
                 "status": "pending",
                 "message": "删除任务已提交，提供商已进入后台删除队列",
             }))
             .into_response(),
-        ));
+            "admin_provider_delete_queued",
+            "delete_provider",
+            "provider",
+            &provider.id,
+        )));
     }
 
     if decision.route_family.as_deref() == Some("providers_manage")
@@ -442,9 +481,12 @@ pub(crate) async fn maybe_build_local_admin_providers_response(
                     .into_response(),
             ));
         }
-        return Ok(Some(
+        return Ok(Some(attach_admin_provider_delete_task_terminal_audit(
+            &provider_id,
+            &task_id,
+            task.status.as_str(),
             Json(build_admin_provider_delete_task_payload(&task)).into_response(),
-        ));
+        )));
     }
 
     if decision.route_family.as_deref() == Some("providers_manage")
@@ -599,12 +641,16 @@ pub(crate) async fn maybe_build_local_admin_providers_response(
             ));
         };
         clear_admin_provider_pool_cooldown(state, &provider_id, &key_id).await;
-        return Ok(Some(
+        return Ok(Some(attach_admin_audit_response(
             Json(json!({
                 "message": format!("已清除 Key {} 的冷却状态", key.name),
             }))
             .into_response(),
-        ));
+            "admin_provider_pool_cooldown_cleared",
+            "clear_provider_pool_cooldown",
+            "provider_key",
+            &key_id,
+        )));
     }
 
     if decision.route_family.as_deref() == Some("providers_manage")
@@ -652,12 +698,16 @@ pub(crate) async fn maybe_build_local_admin_providers_response(
             ));
         };
         reset_admin_provider_pool_cost(state, &provider_id, &key_id).await;
-        return Ok(Some(
+        return Ok(Some(attach_admin_audit_response(
             Json(json!({
                 "message": format!("已重置 Key {} 的成本窗口", key.name),
             }))
             .into_response(),
-        ));
+            "admin_provider_pool_cost_reset",
+            "reset_provider_pool_cost",
+            "provider_key",
+            &key_id,
+        )));
     }
 
     Ok(None)

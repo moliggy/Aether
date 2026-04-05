@@ -5,7 +5,9 @@ use super::admin_api_keys_shared::{
     build_admin_api_keys_data_unavailable_response, build_admin_api_keys_not_found_response,
 };
 use super::{decrypt_catalog_secret_with_fallbacks, query_param_bool, query_param_optional_bool};
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,
@@ -119,7 +121,13 @@ pub(super) async fn build_admin_api_key_detail_response(
             )
                 .into_response());
         };
-        return Ok(Json(json!({ "key": key })).into_response());
+        return Ok(attach_admin_audit_response(
+            Json(json!({ "key": key })).into_response(),
+            "admin_standalone_api_key_revealed",
+            "reveal_standalone_api_key",
+            "api_key",
+            &api_key_id,
+        ));
     }
 
     let wallet = state

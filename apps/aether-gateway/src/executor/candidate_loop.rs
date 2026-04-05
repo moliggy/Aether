@@ -1,14 +1,15 @@
 use axum::body::Body;
 use axum::http::Response;
 
-use crate::gateway::ai_pipeline::planner::plan_builders::{
+use crate::ai_pipeline::planner::plan_builders::{
     LocalStreamPlanAndReport, LocalSyncPlanAndReport,
 };
-use crate::gateway::scheduler::record_local_request_candidate_status;
-use crate::gateway::{
-    execute_execution_runtime_stream, execute_execution_runtime_sync, AppState,
-    GatewayControlDecision, GatewayError,
+use crate::control::GatewayControlDecision;
+use crate::execution_runtime::{
+    execute_execution_runtime_stream, execute_execution_runtime_sync,
 };
+use crate::scheduler::record_local_request_candidate_status;
+use crate::{AppState, GatewayError};
 
 pub(crate) trait LocalPlanAndReport {
     fn plan(&self) -> &aether_contracts::ExecutionPlan;

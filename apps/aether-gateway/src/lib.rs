@@ -24,13 +24,91 @@
     clippy::useless_concat
 )]
 
-mod gateway;
+pub(crate) mod ai_pipeline;
+mod api;
+mod async_task;
+mod audit;
+mod auth;
+mod cache;
+mod constants;
+mod control;
+mod data;
+mod error;
+mod execution_runtime;
+mod executor;
+mod fallback_metrics;
+mod handlers;
+mod headers;
+mod hooks;
+mod intent;
+mod maintenance;
+pub(crate) mod middleware;
+mod model_fetch;
+pub(crate) use aether_provider_transport as provider_transport;
+mod query;
+mod rate_limit;
+mod router;
+mod scheduler;
+mod state;
+mod tunnel;
+mod usage;
+mod video_tasks;
+mod wallet_runtime;
 
-pub use gateway::exports::{
-    build_execution_runtime_router, build_execution_runtime_router_with_request_concurrency_limit,
-    build_execution_runtime_router_with_request_gates, build_router, build_router_with_state,
-    build_tunnel_runtime_router_with_state, serve_execution_runtime_tcp,
-    serve_execution_runtime_unix, serve_tcp, strip_cf_headers_middleware, tunnel_protocol,
-    AppState, FrontdoorCorsConfig, FrontdoorUserRpmConfig, GatewayDataConfig, TunnelConnConfig,
-    TunnelControlPlaneClient, TunnelRuntimeState, UsageRuntimeConfig, VideoTaskTruthSourceMode,
+pub(crate) use self::ai_pipeline::contracts::{
+    GatewayControlPlanRequest, GatewayControlPlanResponse, GatewayControlSyncDecisionResponse,
+    EXECUTION_RUNTIME_STREAM_DECISION_ACTION, EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
+    GEMINI_FILES_DOWNLOAD_PLAN_KIND, OPENAI_VIDEO_CONTENT_PLAN_KIND,
 };
+pub use self::async_task::VideoTaskTruthSourceMode;
+pub(crate) use self::error::GatewayError;
+pub(crate) use self::execution_runtime::{
+    append_execution_contract_fields_to_value, MAX_ERROR_BODY_BYTES, MAX_STREAM_PREFETCH_FRAMES,
+};
+pub use self::execution_runtime::{
+    build_execution_runtime_router, build_execution_runtime_router_with_request_concurrency_limit,
+    build_execution_runtime_router_with_request_gates, serve_execution_runtime_tcp,
+    serve_execution_runtime_unix,
+};
+pub(crate) use self::fallback_metrics::{GatewayFallbackMetricKind, GatewayFallbackReason};
+pub use self::data::GatewayDataConfig;
+pub use self::middleware::strip_cf_headers_middleware;
+pub use self::rate_limit::FrontdoorUserRpmConfig;
+pub(crate) use self::rate_limit::FrontdoorUserRpmOutcome;
+pub use self::router::{build_router, build_router_with_state, serve_tcp};
+pub(crate) use self::state::{
+    AdminBillingCollectorRecord, AdminBillingCollectorWriteInput, AdminBillingRuleRecord,
+    AdminBillingRuleWriteInput, AdminWalletMutationOutcome, AdminWalletPaymentOrderRecord,
+    AdminWalletRefundRecord, AdminWalletTransactionRecord, LocalExecutionRuntimeMissDiagnostic,
+    LocalMutationOutcome, LocalProviderDeleteTaskState,
+};
+pub use self::state::{AppState, FrontdoorCorsConfig};
+pub use self::tunnel::{
+    build_tunnel_runtime_router_with_state, tunnel_protocol, TunnelConnConfig,
+    TunnelControlPlaneClient, TunnelRuntimeState,
+};
+pub use self::usage::UsageRuntimeConfig;
+
+use axum::http::header::{HeaderName, HeaderValue};
+
+fn insert_header_if_missing(
+    headers: &mut http::HeaderMap,
+    key: &'static str,
+    value: &str,
+) -> Result<(), GatewayError> {
+    if headers.contains_key(key) {
+        return Ok(());
+    }
+    let name = HeaderName::from_static(key);
+    let value =
+        HeaderValue::from_str(value).map_err(|err| GatewayError::Internal(err.to_string()))?;
+    headers.insert(name, value);
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "execution_runtime/tests.rs"]
+mod execution_runtime_contract_tests;
+
+#[cfg(test)]
+mod tests;

@@ -19,7 +19,7 @@ use super::{
     query_param_value, resolve_authenticated_local_user, AppState, AuthenticatedLocalUserContext,
     GatewayPublicRequestContext,
 };
-use crate::gateway::LocalMutationOutcome;
+use crate::LocalMutationOutcome;
 
 const USERS_ME_MANAGEMENT_TOKEN_PREFIX: &str = "ae_";
 const USERS_ME_MANAGEMENT_TOKEN_RANDOM_LENGTH: usize = 40;

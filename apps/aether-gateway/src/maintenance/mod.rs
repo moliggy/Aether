@@ -1,4 +1,6 @@
 mod runtime;
+#[cfg(test)]
+mod tests;
 
 pub(crate) use runtime::{
     perform_provider_checkin_once, spawn_audit_cleanup_worker, spawn_db_maintenance_worker,

@@ -6,7 +6,7 @@ use serde_json::Value;
 use sqlx::Row;
 use tracing::warn;
 
-use crate::gateway::gateway_data::GatewayDataState;
+use crate::data::GatewayDataState;
 
 use super::{
     system_config_bool, usage_cleanup_settings, usage_cleanup_window, ExpiredApiKeyRow,

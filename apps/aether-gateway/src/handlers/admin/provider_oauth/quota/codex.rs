@@ -4,11 +4,11 @@ use super::{
     persist_provider_quota_refresh_state, provider_auto_remove_banned_keys,
     quota_refresh_success_invalid_state, should_auto_remove_structured_reason,
 };
-use crate::gateway::handlers::{
+use crate::handlers::{
     CODEX_WHAM_USAGE_URL, OAUTH_ACCOUNT_BLOCK_PREFIX, OAUTH_EXPIRED_PREFIX,
     OAUTH_REQUEST_FAILED_PREFIX,
 };
-use crate::gateway::{AppState, GatewayError};
+use crate::{AppState, GatewayError};
 use aether_contracts::{ExecutionPlan, ExecutionResult, ExecutionTimeouts, RequestBody};
 use aether_data::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
@@ -331,7 +331,7 @@ fn codex_soft_request_failure_reason(status_code: u16, upstream_message: Option<
 }
 
 fn build_codex_refresh_headers(
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
     resolved_oauth_auth: Option<(String, String)>,
 ) -> Result<BTreeMap<String, String>, String> {
     let mut headers = BTreeMap::new();
@@ -379,7 +379,7 @@ fn build_codex_refresh_headers(
 
 async fn execute_codex_quota_plan(
     state: &AppState,
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
     headers: BTreeMap<String, String>,
 ) -> Result<Option<ExecutionResult>, GatewayError> {
     let plan = ExecutionPlan {
@@ -403,9 +403,9 @@ async fn execute_codex_quota_plan(
         client_api_format: "openai:cli".to_string(),
         provider_api_format: "openai:cli".to_string(),
         model_name: Some("codex-wham-usage".to_string()),
-        proxy: crate::gateway::provider_transport::resolve_transport_proxy_snapshot_with_tunnel_affinity(state, transport).await,
-        tls_profile: crate::gateway::provider_transport::resolve_transport_tls_profile(transport),
-        timeouts: crate::gateway::provider_transport::resolve_transport_execution_timeouts(
+        proxy: crate::provider_transport::resolve_transport_proxy_snapshot_with_tunnel_affinity(state, transport).await,
+        tls_profile: crate::provider_transport::resolve_transport_tls_profile(transport),
+        timeouts: crate::provider_transport::resolve_transport_execution_timeouts(
             transport,
         )
         .or(Some(ExecutionTimeouts {
@@ -453,7 +453,7 @@ pub(crate) async fn refresh_codex_provider_quota_locally(
         let resolved_oauth_auth = if key.auth_type.trim().eq_ignore_ascii_case("oauth") {
             match state.resolve_local_oauth_request_auth(&transport).await? {
                 Some(
-                    crate::gateway::provider_transport::LocalResolvedOAuthRequestAuth::Header {
+                    crate::provider_transport::LocalResolvedOAuthRequestAuth::Header {
                         name,
                         value,
                     },

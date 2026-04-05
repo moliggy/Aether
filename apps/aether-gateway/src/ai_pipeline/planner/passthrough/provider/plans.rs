@@ -7,14 +7,14 @@ use super::{
     GatewayError, LocalSameFormatProviderFamily, LocalSameFormatProviderSpec,
     LocalStreamPlanAndReport, LocalSyncPlanAndReport,
 };
-use crate::gateway::ai_pipeline::planner::plan_builders::{
-    build_gemini_stream_plan_from_decision, build_gemini_sync_plan_from_decision,
-    build_standard_stream_plan_from_decision, build_standard_sync_plan_from_decision,
-};
-use crate::gateway::ai_pipeline::planner::{
+use crate::ai_pipeline::planner::common::{
     CLAUDE_CHAT_STREAM_PLAN_KIND, CLAUDE_CHAT_SYNC_PLAN_KIND, CLAUDE_CLI_STREAM_PLAN_KIND,
     CLAUDE_CLI_SYNC_PLAN_KIND, GEMINI_CHAT_STREAM_PLAN_KIND, GEMINI_CHAT_SYNC_PLAN_KIND,
     GEMINI_CLI_STREAM_PLAN_KIND, GEMINI_CLI_SYNC_PLAN_KIND,
+};
+use crate::ai_pipeline::planner::plan_builders::{
+    build_gemini_stream_plan_from_decision, build_gemini_sync_plan_from_decision,
+    build_standard_stream_plan_from_decision, build_standard_sync_plan_from_decision,
 };
 
 pub(crate) fn resolve_sync_spec(plan_kind: &str) -> Option<LocalSameFormatProviderSpec> {

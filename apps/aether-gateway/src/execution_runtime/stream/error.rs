@@ -9,11 +9,12 @@ use serde_json::json;
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tracing::warn;
 
-use crate::gateway::api::response::build_client_response_from_parts;
-use crate::gateway::execution_runtime::ndjson::decode_stream_frame_ndjson;
-use crate::gateway::execution_runtime::submission::{has_nested_error, strip_utf8_bom_and_ws};
-use crate::gateway::{GatewayControlDecision, GatewayError};
-use crate::gateway::{
+use crate::api::response::build_client_response_from_parts;
+use crate::control::GatewayControlDecision;
+use crate::execution_runtime::ndjson::decode_stream_frame_ndjson;
+use crate::execution_runtime::submission::{has_nested_error, strip_utf8_bom_and_ws};
+use crate::GatewayError;
+use crate::{
     GEMINI_FILES_DOWNLOAD_PLAN_KIND, MAX_ERROR_BODY_BYTES, MAX_STREAM_PREFETCH_FRAMES,
     OPENAI_VIDEO_CONTENT_PLAN_KIND,
 };

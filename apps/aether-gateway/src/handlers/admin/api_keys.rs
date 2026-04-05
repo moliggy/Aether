@@ -1,15 +1,16 @@
-use crate::gateway::handlers::admin::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::{
     default_admin_user_api_key_name, format_optional_unix_secs_iso8601,
     generate_admin_user_api_key_plaintext, hash_admin_user_api_key, masked_user_api_key_display,
     normalize_admin_optional_api_key_name, normalize_admin_user_api_formats,
     normalize_admin_user_string_list,
 };
-use crate::gateway::handlers::public::serialize_admin_system_users_export_wallet;
-use crate::gateway::handlers::{
+use crate::handlers::public::serialize_admin_system_users_export_wallet;
+use crate::handlers::{
     decrypt_catalog_secret_with_fallbacks, encrypt_catalog_secret_with_fallbacks, query_param_bool,
     query_param_optional_bool, query_param_value,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,

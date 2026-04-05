@@ -74,6 +74,74 @@ impl StoredBillingModelContext {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AdminBillingRuleRecord {
+    pub id: String,
+    pub name: String,
+    pub task_type: String,
+    pub global_model_id: Option<String>,
+    pub model_id: Option<String>,
+    pub expression: String,
+    pub variables: Value,
+    pub dimension_mappings: Value,
+    pub is_enabled: bool,
+    pub created_at_unix_secs: u64,
+    pub updated_at_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdminBillingRuleWriteInput {
+    pub name: String,
+    pub task_type: String,
+    pub global_model_id: Option<String>,
+    pub model_id: Option<String>,
+    pub expression: String,
+    pub variables: Value,
+    pub dimension_mappings: Value,
+    pub is_enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AdminBillingCollectorRecord {
+    pub id: String,
+    pub api_format: String,
+    pub task_type: String,
+    pub dimension_name: String,
+    pub source_type: String,
+    pub source_path: Option<String>,
+    pub value_type: String,
+    pub transform_expression: Option<String>,
+    pub default_value: Option<String>,
+    pub priority: i32,
+    pub is_enabled: bool,
+    pub created_at_unix_secs: u64,
+    pub updated_at_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdminBillingCollectorWriteInput {
+    pub api_format: String,
+    pub task_type: String,
+    pub dimension_name: String,
+    pub source_type: String,
+    pub source_path: Option<String>,
+    pub value_type: String,
+    pub transform_expression: Option<String>,
+    pub default_value: Option<String>,
+    pub priority: i32,
+    pub is_enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AdminBillingPresetApplyResult {
+    pub preset: String,
+    pub mode: String,
+    pub created: u64,
+    pub updated: u64,
+    pub skipped: u64,
+    pub errors: Vec<String>,
+}
+
 #[async_trait]
 pub trait BillingReadRepository: Send + Sync {
     async fn find_model_context(

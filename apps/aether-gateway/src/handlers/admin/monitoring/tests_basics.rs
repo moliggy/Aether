@@ -3,7 +3,7 @@ use super::super::{
     match_admin_monitoring_route, maybe_build_local_admin_monitoring_response,
     AdminMonitoringRoute, ADMIN_MONITORING_REDIS_REQUIRED_DETAIL,
 };
-use crate::gateway::AppState;
+use crate::AppState;
 use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
 use aether_data::repository::usage::InMemoryUsageReadRepository;
 use axum::body::to_bytes;
@@ -217,7 +217,7 @@ async fn admin_monitoring_resilience_status_returns_local_payload() {
     let state = AppState::new()
         .expect("state should build")
         .with_data_state_for_tests(
-            crate::gateway::gateway_data::GatewayDataState::with_provider_catalog_and_usage_reader_for_tests(
+            crate::data::GatewayDataState::with_provider_catalog_and_usage_reader_for_tests(
                 provider_catalog,
                 usage_repository,
             ),
@@ -288,7 +288,7 @@ async fn admin_monitoring_cache_stats_returns_local_payload() {
     let state = AppState::new()
         .expect("state should build")
         .with_data_state_for_tests(
-            crate::gateway::gateway_data::GatewayDataState::with_usage_reader_for_tests(
+            crate::data::GatewayDataState::with_usage_reader_for_tests(
                 usage_repository,
             )
             .with_system_config_values_for_tests([

@@ -1,18 +1,19 @@
-use crate::gateway::constants::{
-    CONTROL_ENDPOINT_SIGNATURE_HEADER, CONTROL_EXECUTION_RUNTIME_HEADER,
+use crate::audit::{emit_admin_audit, record_shadow_result_non_blocking};
+use crate::constants::{
+    CONTROL_ENDPOINT_SIGNATURE_HEADER, CONTROL_EXECUTION_RUNTIME_HEADER, CONTROL_REQUEST_ID_HEADER,
     CONTROL_ROUTE_CLASS_HEADER, CONTROL_ROUTE_FAMILY_HEADER, CONTROL_ROUTE_KIND_HEADER,
     DEPENDENCY_REASON_HEADER, EXECUTION_PATH_HEADER, LOCAL_EXECUTION_RUNTIME_MISS_REASON_HEADER,
     TRACE_ID_HEADER,
 };
-use crate::gateway::{
-    record_shadow_result_non_blocking, AppState, GatewayControlDecision,
-    GatewayPublicRequestContext,
-};
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayPublicRequestContext;
+use crate::middleware::RequestLogEmitted;
+use crate::AppState;
 use aether_runtime::{maybe_hold_axum_response_permit, AdmissionPermit};
 use axum::body::{Body, Bytes};
 use axum::http::{self, header::HeaderName, header::HeaderValue, Response};
 use std::time::Instant;
-use tracing::info;
+use tracing::{info, warn};
 
 pub(super) fn request_wants_stream(
     request_context: &GatewayPublicRequestContext,
@@ -68,27 +69,70 @@ pub(super) fn finalize_gateway_response(
         .headers()
         .get(DEPENDENCY_REASON_HEADER)
         .and_then(|value| value.to_str().ok())
-        .unwrap_or("none");
+        .unwrap_or("none")
+        .to_string();
     let local_execution_runtime_miss_reason = response
         .headers()
         .get(LOCAL_EXECUTION_RUNTIME_MISS_REASON_HEADER)
         .and_then(|value| value.to_str().ok())
-        .unwrap_or("none");
-    info!(
-        trace_id = %trace_id,
-        remote_addr = %remote_addr,
-        method = %method,
-        path = %path_and_query,
-        route_class = control_decision
-            .and_then(|decision| decision.route_class.as_deref())
-            .unwrap_or("passthrough"),
-        execution_path,
-        dependency_reason,
-        local_execution_runtime_miss_reason,
-        status = response.status().as_u16(),
-        elapsed_ms,
-        "gateway completed request"
+        .unwrap_or("none")
+        .to_string();
+    let route_class = control_decision
+        .and_then(|decision| decision.route_class.as_deref())
+        .unwrap_or("passthrough");
+    let request_id = response
+        .headers()
+        .get(CONTROL_REQUEST_ID_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("-")
+        .to_string();
+    let status_code = response.status().as_u16();
+    emit_admin_audit(
+        &mut response,
+        trace_id,
+        method,
+        path_and_query,
+        control_decision,
     );
+    if response.status().is_server_error() {
+        warn!(
+            event_name = "http_request_failed",
+            log_type = "access",
+            status = "failed",
+            status_code,
+            trace_id = %trace_id,
+            request_id,
+            remote_addr = %remote_addr,
+            method = %method,
+            path = %path_and_query,
+            route_class,
+            execution_path,
+            dependency_reason = dependency_reason.as_str(),
+            local_execution_runtime_miss_reason = local_execution_runtime_miss_reason.as_str(),
+            elapsed_ms,
+            "gateway request failed"
+        );
+    } else {
+        info!(
+            event_name = "http_request_completed",
+            log_type = "access",
+            status = "completed",
+            status_code,
+            trace_id = %trace_id,
+            request_id,
+            remote_addr = %remote_addr,
+            method = %method,
+            path = %path_and_query,
+            route_class,
+            execution_path,
+            dependency_reason = dependency_reason.as_str(),
+            local_execution_runtime_miss_reason = local_execution_runtime_miss_reason.as_str(),
+            elapsed_ms,
+            "gateway completed request"
+        );
+    }
+    response.extensions_mut().insert(RequestLogEmitted);
 
     record_shadow_result_non_blocking(
         state.clone(),

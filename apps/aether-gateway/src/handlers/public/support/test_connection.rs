@@ -1,7 +1,7 @@
 use axum::{body::Body, response::Response};
 
 pub(super) use super::{query_param_value, AppState, GatewayPublicRequestContext};
-use crate::gateway::handlers::admin::provider_catalog_key_supports_format;
+use crate::handlers::admin::misc_helpers::provider_catalog_key_supports_format;
 
 #[path = "test_connection/route.rs"]
 mod test_connection_route;

@@ -1,5 +1,6 @@
-use crate::gateway::handlers::{query_param_value, unix_secs_to_rfc3339};
-use crate::gateway::{GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{query_param_value, unix_secs_to_rfc3339};
+use crate::GatewayError;
 use axum::{
     body::Body,
     http,
@@ -196,7 +197,7 @@ pub(super) fn admin_payment_effective_status(
 }
 
 pub(super) fn build_admin_payment_order_payload(
-    record: &crate::gateway::AdminWalletPaymentOrderRecord,
+    record: &crate::AdminWalletPaymentOrderRecord,
 ) -> serde_json::Value {
     json!({
         "id": record.id,
@@ -249,7 +250,7 @@ pub(super) fn build_admin_payment_callback_payload(
 }
 
 pub(super) fn build_admin_payment_callback_payload_from_record(
-    record: &crate::gateway::state::AdminPaymentCallbackRecord,
+    record: &crate::state::AdminPaymentCallbackRecord,
 ) -> serde_json::Value {
     json!({
         "id": record.id,

@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::gateway::GatewayError;
+use crate::GatewayError;
 
 pub(crate) fn map_claude_stop_reason(
     stop_reason: Option<&str>,

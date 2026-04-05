@@ -24,7 +24,7 @@ use self::embedded::{AppState as TunnelAppState, ConnConfig, ControlPlaneClient}
 use super::api::response::{build_client_response, build_local_http_error_response};
 use super::constants::TRACE_ID_HEADER;
 use super::error::GatewayError;
-use super::gateway_data::GatewayDataState;
+use super::data::GatewayDataState;
 use super::headers::{extract_or_generate_trace_id, should_skip_request_header};
 use super::AppState;
 
@@ -801,8 +801,7 @@ fn parse_embedded_tunnel_heartbeat_request(
 mod tests {
     use super::{
         apply_embedded_tunnel_heartbeat, apply_embedded_tunnel_node_status, current_unix_secs,
-        tunnel_attachment_key, TunnelAttachmentDirectory, TunnelAttachmentRecord,
-        GatewayDataState,
+        tunnel_attachment_key, GatewayDataState, TunnelAttachmentDirectory, TunnelAttachmentRecord,
     };
     use aether_data::repository::proxy_nodes::{
         InMemoryProxyNodeRepository, ProxyNodeReadRepository, StoredProxyNode,

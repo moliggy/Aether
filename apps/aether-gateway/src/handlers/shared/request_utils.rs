@@ -1,10 +1,12 @@
-use crate::gateway::constants::{
+use crate::constants::{
     CONTROL_EXECUTE_FALLBACK_HEADER, TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER,
     TRUSTED_ADMIN_SESSION_ID_HEADER, TRUSTED_ADMIN_USER_ID_HEADER, TRUSTED_ADMIN_USER_ROLE_HEADER,
 };
-use crate::gateway::handlers::OFFICIAL_EXTERNAL_MODEL_PROVIDERS;
-use crate::gateway::headers::header_value_str;
-use crate::gateway::{GatewayControlDecision, GatewayPublicRequestContext};
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::OFFICIAL_EXTERNAL_MODEL_PROVIDERS;
+use crate::headers::header_value_str;
+use crate::tunnel::TUNNEL_ROUTE_FAMILY;
 use axum::http::{self, HeaderName};
 use chrono::{SecondsFormat, Utc};
 use url::form_urlencoded;
@@ -347,25 +349,23 @@ pub(crate) fn internal_proxy_local_requires_buffered_body(
                     decision.route_family.as_deref(),
                     decision.route_kind.as_deref()
                 ),
-                (
-                    Some(crate::gateway::TUNNEL_ROUTE_FAMILY),
-                    Some("heartbeat" | "node_status")
-                ) | (
-                    Some("internal_gateway"),
-                    Some(
-                        "resolve"
-                            | "auth_context"
-                            | "decision_sync"
-                            | "decision_stream"
-                            | "execute_sync"
-                            | "execute_stream"
-                            | "plan_sync"
-                            | "plan_stream"
-                            | "report_sync"
-                            | "report_stream"
-                            | "finalize_sync"
+                (Some(TUNNEL_ROUTE_FAMILY), Some("heartbeat" | "node_status"))
+                    | (
+                        Some("internal_gateway"),
+                        Some(
+                            "resolve"
+                                | "auth_context"
+                                | "decision_sync"
+                                | "decision_stream"
+                                | "execute_sync"
+                                | "execute_stream"
+                                | "plan_sync"
+                                | "plan_stream"
+                                | "report_sync"
+                                | "report_stream"
+                                | "finalize_sync"
+                        )
                     )
-                )
             )
         })
 }

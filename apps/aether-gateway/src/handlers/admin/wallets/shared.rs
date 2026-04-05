@@ -1,5 +1,6 @@
-use crate::gateway::handlers::{query_param_value, unix_secs_to_rfc3339};
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{query_param_value, unix_secs_to_rfc3339};
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,
@@ -544,7 +545,7 @@ pub(super) fn build_admin_wallet_summary_payload(
 pub(super) fn build_admin_wallet_refund_payload(
     wallet: &aether_data::repository::wallet::StoredWalletSnapshot,
     owner: &AdminWalletOwnerSummary,
-    refund: &crate::gateway::AdminWalletRefundRecord,
+    refund: &crate::AdminWalletRefundRecord,
 ) -> serde_json::Value {
     json!({
         "id": refund.id.clone(),

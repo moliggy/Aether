@@ -1,11 +1,10 @@
-use crate::gateway::{
-    AppState, GatewayControlDecision, GatewayControlSyncDecisionResponse, GatewayError,
-};
+use crate::control::GatewayControlDecision;
+use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};
 
 use super::family::{
     maybe_build_stream_via_standard_family_payload, maybe_build_sync_via_standard_family_payload,
 };
-pub(crate) use crate::gateway::ai_pipeline::conversion::request::normalize_gemini_request_to_openai_chat_request;
+pub(crate) use crate::ai_pipeline::conversion::request::normalize_gemini_request_to_openai_chat_request;
 
 pub(crate) mod chat;
 pub(crate) mod cli;

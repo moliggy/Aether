@@ -358,8 +358,7 @@ mod tests {
     async fn start_gateway_on_port(
         port: u16,
     ) -> Result<(GatewayAppState, tokio::task::JoinHandle<()>), std::io::Error> {
-        let state =
-            GatewayAppState::new("http://127.0.0.1:9").expect("gateway test state should build");
+        let state = GatewayAppState::new().expect("gateway test state should build");
         let router = build_router_with_state(state.clone());
         let handle = spawn_router_on_port(port, router).await?;
         Ok((state, handle))
@@ -475,6 +474,11 @@ mod tests {
             upstream_tcp_nodelay: true,
             log_level: "info".to_string(),
             log_json: false,
+            log_destination: crate::config::ProxyLogDestinationArg::Stdout,
+            log_dir: None,
+            log_rotation: crate::config::ProxyLogRotationArg::Daily,
+            log_retention_days: 7,
+            log_max_files: 30,
             tunnel_reconnect_base_ms: 50,
             tunnel_reconnect_max_ms: 250,
             tunnel_ping_interval_secs: 1,

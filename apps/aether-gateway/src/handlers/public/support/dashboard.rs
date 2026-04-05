@@ -48,10 +48,8 @@ pub(super) async fn maybe_build_local_dashboard_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        maybe_build_local_dashboard_response, AppState, GatewayPublicRequestContext,
-    };
-    use crate::gateway::GatewayControlDecision;
+    use super::{maybe_build_local_dashboard_response, AppState, GatewayPublicRequestContext};
+    use crate::control::GatewayControlDecision;
     use axum::body::to_bytes;
     use axum::http::{HeaderMap, Method, StatusCode, Uri};
 

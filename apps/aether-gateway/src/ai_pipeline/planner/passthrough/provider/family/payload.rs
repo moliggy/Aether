@@ -4,28 +4,39 @@ use aether_data::repository::candidates::{RequestCandidateStatus, UpsertRequestC
 use serde_json::json;
 use tracing::warn;
 
-use crate::gateway::headers::collect_control_headers;
-use crate::gateway::provider_transport::{
-    apply_local_header_rules, build_antigravity_safe_v1internal_request,
-    build_antigravity_static_identity_headers, build_claude_code_passthrough_headers,
-    build_openai_passthrough_headers, build_passthrough_headers,
-    classify_local_antigravity_request_support, ensure_upstream_auth_header,
-    resolve_local_gemini_auth, resolve_local_standard_auth,
-    resolve_local_vertex_api_key_query_auth, resolve_transport_execution_timeouts,
-    resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
-    supports_local_claude_code_transport_with_network,
-    supports_local_gemini_transport_with_network,
-    supports_local_kiro_request_transport_with_network,
-    supports_local_standard_transport_with_network,
-    supports_local_vertex_api_key_gemini_transport_with_network, AntigravityEnvelopeRequestType,
+use crate::execution_runtime::{ConversionMode, ExecutionStrategy};
+use crate::headers::collect_control_headers;
+use crate::provider_transport::antigravity::{
+    build_antigravity_safe_v1internal_request, build_antigravity_static_identity_headers,
+    classify_local_antigravity_request_support, AntigravityEnvelopeRequestType,
     AntigravityRequestEnvelopeSupport, AntigravityRequestSideSupport,
-    LocalResolvedOAuthRequestAuth, KIRO_ENVELOPE_NAME,
 };
-use crate::gateway::scheduler::{current_unix_secs, GatewayMinimalCandidateSelectionCandidate};
-use crate::gateway::{
-    append_execution_contract_fields_to_value, AppState, ConversionMode, ExecutionStrategy,
-    GatewayControlSyncDecisionResponse, EXECUTION_RUNTIME_STREAM_DECISION_ACTION,
-    EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
+use crate::provider_transport::auth::{
+    build_openai_passthrough_headers, resolve_local_gemini_auth, resolve_local_standard_auth,
+};
+use crate::provider_transport::claude_code::{
+    build_claude_code_passthrough_headers, supports_local_claude_code_transport_with_network,
+};
+use crate::provider_transport::kiro::{
+    build_kiro_provider_headers, supports_local_kiro_request_transport_with_network,
+    KIRO_ENVELOPE_NAME,
+};
+use crate::provider_transport::policy::{
+    supports_local_gemini_transport_with_network, supports_local_standard_transport_with_network,
+};
+use crate::provider_transport::vertex::{
+    resolve_local_vertex_api_key_query_auth,
+    supports_local_vertex_api_key_gemini_transport_with_network,
+};
+use crate::provider_transport::{
+    apply_local_header_rules, build_passthrough_headers, ensure_upstream_auth_header,
+    resolve_transport_execution_timeouts, resolve_transport_proxy_snapshot_with_tunnel_affinity,
+    resolve_transport_tls_profile, LocalResolvedOAuthRequestAuth,
+};
+use crate::scheduler::{current_unix_secs, GatewayMinimalCandidateSelectionCandidate};
+use crate::{
+    append_execution_contract_fields_to_value, AppState, GatewayControlSyncDecisionResponse,
+    EXECUTION_RUNTIME_STREAM_DECISION_ACTION, EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
 };
 
 use super::types::{
@@ -351,7 +362,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
     };
 
     let Some(provider_request_headers) = (if let Some(kiro_auth) = kiro_auth.as_ref() {
-        crate::gateway::provider_transport::build_kiro_provider_headers(
+        build_kiro_provider_headers(
             &parts.headers,
             &provider_request_body,
             body_json,
@@ -445,6 +456,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
             "provider_id": candidate.provider_id,
             "endpoint_id": candidate.endpoint_id,
             "key_id": candidate.key_id,
+            "key_name": candidate.key_name,
             "provider_api_format": spec.api_format,
             "client_api_format": spec.api_format,
             "mapped_model": mapped_model,

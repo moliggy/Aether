@@ -1,7 +1,11 @@
-use crate::gateway::provider_transport::{
+use crate::provider_transport::auth::{
     resolve_local_gemini_auth, resolve_local_openai_chat_auth, resolve_local_standard_auth,
-    supports_local_gemini_transport_with_network, supports_local_openai_chat_transport,
-    supports_local_standard_transport_with_network, GatewayProviderTransportSnapshot,
+};
+use crate::provider_transport::policy::{
+    supports_local_openai_chat_transport, supports_local_standard_transport_with_network,
+};
+use crate::provider_transport::{
+    supports_local_gemini_transport_with_network, GatewayProviderTransportSnapshot,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

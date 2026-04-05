@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use aether_contracts::ExecutionPlan;
 
-pub(crate) use crate::gateway::ai_pipeline::planner::generic_decision_missing_exact_provider_request;
-use crate::gateway::{GatewayControlSyncDecisionResponse, GatewayError};
+pub(crate) use crate::ai_pipeline::contracts::generic_decision_missing_exact_provider_request;
+use crate::{GatewayControlSyncDecisionResponse, GatewayError};
 
 pub(crate) struct LocalSyncPlanAndReport {
     pub(crate) plan: ExecutionPlan,

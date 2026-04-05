@@ -39,7 +39,7 @@ pub(crate) fn should_buffer_request_for_local_auth(
     };
     decision.route_class.as_deref() == Some("ai_public")
         && decision.route_kind.as_deref() != Some("files")
-        && crate::gateway::headers::is_json_request(headers)
+        && crate::headers::is_json_request(headers)
 }
 
 pub(crate) fn request_model_local_rejection(

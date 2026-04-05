@@ -1,13 +1,14 @@
 use super::{
-    admin_billing_optional_bool_filter, admin_billing_optional_epoch_value,
-    admin_billing_optional_filter, admin_billing_pages, admin_billing_parse_page,
-    admin_billing_parse_page_size, admin_billing_validate_safe_expression,
-    build_admin_billing_bad_request_response, build_admin_billing_not_found_response,
-    build_admin_billing_read_only_response, default_admin_billing_true,
-    normalize_admin_billing_optional_text, normalize_admin_billing_required_text,
+    admin_billing_optional_bool_filter, admin_billing_optional_filter, admin_billing_pages,
+    admin_billing_parse_page, admin_billing_parse_page_size,
+    admin_billing_validate_safe_expression, build_admin_billing_bad_request_response,
+    build_admin_billing_not_found_response, build_admin_billing_read_only_response,
+    default_admin_billing_true, normalize_admin_billing_optional_text,
+    normalize_admin_billing_required_text,
 };
-use crate::gateway::handlers::unix_secs_to_rfc3339;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::unix_secs_to_rfc3339;
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,
@@ -16,7 +17,6 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use sqlx::Row;
 
 fn default_admin_billing_collector_value_type() -> String {
     "float".to_string()
@@ -43,7 +43,7 @@ struct AdminBillingCollectorUpsertRequest {
 }
 
 fn build_admin_billing_collector_payload_from_record(
-    record: &crate::gateway::AdminBillingCollectorRecord,
+    record: &crate::AdminBillingCollectorRecord,
 ) -> serde_json::Value {
     json!({
         "id": record.id,
@@ -75,26 +75,6 @@ fn admin_billing_collector_id_from_path(request_path: &str) -> Option<String> {
     }
 }
 
-fn admin_billing_collector_payload(
-    row: &sqlx::postgres::PgRow,
-) -> Result<serde_json::Value, GatewayError> {
-    Ok(json!({
-        "id": row.try_get::<String, _>("id").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "api_format": row.try_get::<String, _>("api_format").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "task_type": row.try_get::<String, _>("task_type").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "dimension_name": row.try_get::<String, _>("dimension_name").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "source_type": row.try_get::<String, _>("source_type").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "source_path": row.try_get::<Option<String>, _>("source_path").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "value_type": row.try_get::<String, _>("value_type").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "transform_expression": row.try_get::<Option<String>, _>("transform_expression").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "default_value": row.try_get::<Option<String>, _>("default_value").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "priority": row.try_get::<i32, _>("priority").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "is_enabled": row.try_get::<bool, _>("is_enabled").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "created_at": admin_billing_optional_epoch_value(row, "created_at_unix_secs")?,
-        "updated_at": admin_billing_optional_epoch_value(row, "updated_at_unix_secs")?,
-    }))
-}
-
 async fn build_admin_list_dimension_collectors_response(
     state: &AppState,
     request_context: &GatewayPublicRequestContext,
@@ -116,7 +96,7 @@ async fn build_admin_list_dimension_collectors_response(
         Err(detail) => return Ok(build_admin_billing_bad_request_response(detail)),
     };
 
-    if let Some((items, total)) = state
+    let (items, total) = state
         .list_admin_billing_collectors(
             api_format.as_deref(),
             task_type.as_deref(),
@@ -126,90 +106,13 @@ async fn build_admin_list_dimension_collectors_response(
             page_size,
         )
         .await?
-    {
-        return Ok(Json(json!({
-            "items": items
-                .iter()
-                .map(build_admin_billing_collector_payload_from_record)
-                .collect::<Vec<_>>(),
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "pages": admin_billing_pages(total, page_size),
-        }))
-        .into_response());
-    }
-
-    let mut total = 0_u64;
-    let mut items = Vec::new();
-    if let Some(pool) = state.postgres_pool() {
-        let count_row = sqlx::query(
-            r#"
-SELECT COUNT(*) AS total
-FROM dimension_collectors
-WHERE ($1::TEXT IS NULL OR api_format = $1)
-  AND ($2::TEXT IS NULL OR task_type = $2)
-  AND ($3::TEXT IS NULL OR dimension_name = $3)
-  AND ($4::BOOL IS NULL OR is_enabled = $4)
-            "#,
-        )
-        .bind(api_format.as_deref())
-        .bind(task_type.as_deref())
-        .bind(dimension_name.as_deref())
-        .bind(is_enabled)
-        .fetch_one(&pool)
-        .await
-        .map_err(|err| GatewayError::Internal(err.to_string()))?;
-        total = count_row
-            .try_get::<i64, _>("total")
-            .map_err(|err| GatewayError::Internal(err.to_string()))?
-            .max(0) as u64;
-
-        let offset = u64::from(page.saturating_sub(1) * page_size);
-        let rows = sqlx::query(
-            r#"
-SELECT
-  id,
-  api_format,
-  task_type,
-  dimension_name,
-  source_type,
-  source_path,
-  value_type,
-  transform_expression,
-  default_value,
-  priority,
-  is_enabled,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
-FROM dimension_collectors
-WHERE ($1::TEXT IS NULL OR api_format = $1)
-  AND ($2::TEXT IS NULL OR task_type = $2)
-  AND ($3::TEXT IS NULL OR dimension_name = $3)
-  AND ($4::BOOL IS NULL OR is_enabled = $4)
-ORDER BY updated_at DESC, priority DESC, id ASC
-OFFSET $5
-LIMIT $6
-            "#,
-        )
-        .bind(api_format.as_deref())
-        .bind(task_type.as_deref())
-        .bind(dimension_name.as_deref())
-        .bind(is_enabled)
-        .bind(i64::try_from(offset).map_err(|err| GatewayError::Internal(err.to_string()))?)
-        .bind(i64::from(page_size))
-        .fetch_all(&pool)
-        .await
-        .map_err(|err| GatewayError::Internal(err.to_string()))?;
-
-        items = rows
-            .iter()
-            .map(admin_billing_collector_payload)
-            .collect::<Result<Vec<_>, GatewayError>>()?;
-    }
+        .unwrap_or_default();
 
     Ok(Json(json!({
-        "items": items,
+        "items": items
+            .iter()
+            .map(build_admin_billing_collector_payload_from_record)
+            .collect::<Vec<_>>(),
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -229,45 +132,10 @@ async fn build_admin_get_dimension_collector_response(
         ));
     };
 
-    if let Some(record) = state.read_admin_billing_collector(&collector_id).await? {
-        return Ok(
-            Json(build_admin_billing_collector_payload_from_record(&record)).into_response(),
-        );
-    }
-
-    let Some(pool) = state.postgres_pool() else {
-        return Ok(build_admin_billing_not_found_response(
-            "Dimension collector not found",
-        ));
-    };
-
-    let row = sqlx::query(
-        r#"
-SELECT
-  id,
-  api_format,
-  task_type,
-  dimension_name,
-  source_type,
-  source_path,
-  value_type,
-  transform_expression,
-  default_value,
-  priority,
-  is_enabled,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
-FROM dimension_collectors
-WHERE id = $1
-        "#,
-    )
-    .bind(&collector_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|err| GatewayError::Internal(err.to_string()))?;
-
-    match row {
-        Some(row) => Ok(Json(admin_billing_collector_payload(&row)?).into_response()),
+    match state.read_admin_billing_collector(&collector_id).await? {
+        Some(record) => {
+            Ok(Json(build_admin_billing_collector_payload_from_record(&record)).into_response())
+        }
         None => Ok(build_admin_billing_not_found_response(
             "Dimension collector not found",
         )),
@@ -278,7 +146,7 @@ async fn parse_admin_billing_collector_request(
     state: &AppState,
     request_body: Option<&Bytes>,
     existing_id: Option<&str>,
-) -> Result<crate::gateway::AdminBillingCollectorWriteInput, Response<Body>> {
+) -> Result<crate::AdminBillingCollectorWriteInput, Response<Body>> {
     let Some(request_body) = request_body else {
         return Err(build_admin_billing_bad_request_response("请求体不能为空"));
     };
@@ -391,7 +259,7 @@ async fn parse_admin_billing_collector_request(
         }
     }
 
-    Ok(crate::gateway::AdminBillingCollectorWriteInput {
+    Ok(crate::AdminBillingCollectorWriteInput {
         api_format,
         task_type,
         dimension_name,
@@ -414,16 +282,16 @@ async fn build_admin_create_dimension_collector_response(
         Err(response) => return Ok(response),
     };
     match state.create_admin_billing_collector(&input).await? {
-        crate::gateway::LocalMutationOutcome::Applied(record) => {
+        crate::LocalMutationOutcome::Applied(record) => {
             Ok(Json(build_admin_billing_collector_payload_from_record(&record)).into_response())
         }
-        crate::gateway::LocalMutationOutcome::Invalid(detail) => {
+        crate::LocalMutationOutcome::Invalid(detail) => {
             Ok(build_admin_billing_bad_request_response(detail))
         }
-        crate::gateway::LocalMutationOutcome::NotFound => Ok(
+        crate::LocalMutationOutcome::NotFound => Ok(
             build_admin_billing_not_found_response("Dimension collector not found"),
         ),
-        crate::gateway::LocalMutationOutcome::Unavailable => Ok(
+        crate::LocalMutationOutcome::Unavailable => Ok(
             build_admin_billing_read_only_response("当前为只读模式，无法创建维度采集器"),
         ),
     }
@@ -450,16 +318,16 @@ async fn build_admin_update_dimension_collector_response(
         .update_admin_billing_collector(&collector_id, &input)
         .await?
     {
-        crate::gateway::LocalMutationOutcome::Applied(record) => {
+        crate::LocalMutationOutcome::Applied(record) => {
             Ok(Json(build_admin_billing_collector_payload_from_record(&record)).into_response())
         }
-        crate::gateway::LocalMutationOutcome::NotFound => Ok(
+        crate::LocalMutationOutcome::NotFound => Ok(
             build_admin_billing_not_found_response("Dimension collector not found"),
         ),
-        crate::gateway::LocalMutationOutcome::Invalid(detail) => {
+        crate::LocalMutationOutcome::Invalid(detail) => {
             Ok(build_admin_billing_bad_request_response(detail))
         }
-        crate::gateway::LocalMutationOutcome::Unavailable => Ok(
+        crate::LocalMutationOutcome::Unavailable => Ok(
             build_admin_billing_read_only_response("当前为只读模式，无法更新维度采集器"),
         ),
     }

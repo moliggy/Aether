@@ -1,6 +1,7 @@
 mod candidate;
 mod failover;
 mod health;
+mod request_candidate_state;
 mod request_candidates;
 mod route;
 
@@ -9,6 +10,9 @@ pub(crate) use candidate::{
     list_selectable_candidates_for_required_capability_without_requested_model,
     read_cached_scheduler_affinity_target, read_minimal_candidate_selection,
     GatewayMinimalCandidateSelectionCandidate,
+};
+pub(crate) use candidate::{
+    SchedulerCandidateSelectionRowSource, SchedulerRuntimeState,
 };
 pub(crate) use failover::{
     resolve_core_stream_direct_finalize_report_kind,
@@ -22,6 +26,7 @@ pub(crate) use health::{
     is_provider_key_circuit_open, provider_key_health_score, provider_key_rpm_allows_request_since,
     PROVIDER_KEY_RPM_WINDOW_SECS,
 };
+pub(crate) use request_candidate_state::SchedulerRequestCandidateRuntimeState;
 pub(crate) use request_candidates::{
     current_unix_secs, ensure_execution_request_candidate_slot, execution_error_details,
     record_local_request_candidate_status, record_report_request_candidate_status,

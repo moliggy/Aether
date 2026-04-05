@@ -5,8 +5,8 @@ use axum::Json;
 use serde_json::json;
 use tracing::warn;
 
-use crate::gateway::constants::*;
-use crate::gateway::insert_header_if_missing;
+use crate::constants::*;
+use crate::insert_header_if_missing;
 
 #[derive(Debug)]
 pub(crate) enum GatewayError {

@@ -2,6 +2,10 @@ use serde_json::json;
 
 use super::maybe_build_local_stream_rewriter;
 
+fn utf8(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes).expect("utf8 should decode")
+}
+
 #[test]
 fn antigravity_stream_rewriter_unwraps_and_injects_tool_ids() {
     let report_context = json!({
@@ -136,20 +140,22 @@ fn gemini_to_openai_chat_stream_rewriter_buffers_and_converts_text() {
             b"data: {\"responseId\":\"resp_123\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello \"}],\"role\":\"model\"},\"index\":0}],\"modelVersion\":\"gemini-2.5-pro\"}\n\n",
         )
         .expect("rewrite should succeed");
-    assert!(first.is_empty());
+    let first_text = utf8(first);
+    assert!(first_text.contains("\"object\":\"chat.completion.chunk\""));
+    assert!(first_text.contains("\"role\":\"assistant\""));
+    assert!(first_text.contains("\"content\":\"Hello \""));
+    assert!(!first_text.contains("data: [DONE]"));
     let second = rewriter
         .push_chunk(
             b"data: {\"responseId\":\"resp_123\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Gemini\"}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"modelVersion\":\"gemini-2.5-pro\"}\n\n",
         )
         .expect("rewrite should succeed");
-    assert!(second.is_empty());
-    let output_text = String::from_utf8(rewriter.finish().expect("finish should succeed"))
-        .expect("utf8 should decode");
+    let output_text = utf8(second);
     assert!(output_text.contains("\"object\":\"chat.completion.chunk\""));
-    assert!(output_text.contains("\"role\":\"assistant\""));
     assert!(output_text.contains("\"content\":\"Gemini\""));
     assert!(output_text.contains("\"finish_reason\":\"stop\""));
     assert!(output_text.contains("data: [DONE]"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }
 
 #[test]
@@ -167,9 +173,7 @@ fn gemini_to_openai_chat_stream_rewriter_buffers_and_converts_function_call() {
             b"data: {\"responseId\":\"resp_tool_123\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Need a tool.\"},{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"SF\"}}}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"modelVersion\":\"gemini-2.5-pro\"}\n\n",
         )
         .expect("rewrite should succeed");
-    assert!(output.is_empty());
-    let output_text = String::from_utf8(rewriter.finish().expect("finish should succeed"))
-        .expect("utf8 should decode");
+    let output_text = utf8(output);
     assert!(output_text.contains("\"object\":\"chat.completion.chunk\""));
     assert!(output_text.contains("\"role\":\"assistant\""));
     assert!(output_text.contains("\"content\":\"Need a tool.\""));
@@ -178,10 +182,64 @@ fn gemini_to_openai_chat_stream_rewriter_buffers_and_converts_function_call() {
     assert!(output_text.contains("\\\"city\\\":\\\"SF\\\""));
     assert!(output_text.contains("\"finish_reason\":\"tool_calls\""));
     assert!(output_text.contains("data: [DONE]"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }
 
 #[test]
-fn openai_cli_to_openai_chat_stream_rewriter_buffers_and_converts_completed_event() {
+fn openai_cli_to_openai_chat_stream_rewriter_converts_text_deltas_immediately() {
+    let report_context = json!({
+        "provider_api_format": "openai:cli",
+        "client_api_format": "openai:chat",
+        "needs_conversion": true,
+        "mapped_model": "gpt-5.4",
+    });
+    let mut rewriter =
+        maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
+    let created = rewriter
+        .push_chunk(
+            concat!(
+                "event: response.created\n",
+                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_cli_stream_123\",\"object\":\"response\",\"model\":\"gpt-5.4\",\"status\":\"in_progress\"}}\n\n"
+            )
+            .as_bytes(),
+        )
+        .expect("rewrite should succeed");
+    let created_text = String::from_utf8(created).expect("utf8 should decode");
+    assert!(created_text.contains("\"object\":\"chat.completion.chunk\""));
+    assert!(created_text.contains("\"role\":\"assistant\""));
+    assert!(!created_text.contains("data: [DONE]"));
+
+    let delta = rewriter
+        .push_chunk(
+            concat!(
+                "event: response.output_text.delta\n",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello Codex\"}\n\n"
+            )
+            .as_bytes(),
+        )
+        .expect("rewrite should succeed");
+    let delta_text = String::from_utf8(delta).expect("utf8 should decode");
+    assert!(delta_text.contains("\"object\":\"chat.completion.chunk\""));
+    assert!(delta_text.contains("\"content\":\"Hello Codex\""));
+    assert!(!delta_text.contains("data: [DONE]"));
+
+    let completed = rewriter
+        .push_chunk(
+            concat!(
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_cli_stream_123\",\"object\":\"response\",\"model\":\"gpt-5.4\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"id\":\"msg_cli_stream_123\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello Codex\",\"annotations\":[]}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"total_tokens\":3}}}\n\n"
+            )
+            .as_bytes(),
+        )
+        .expect("rewrite should succeed");
+    let completed_text = String::from_utf8(completed).expect("utf8 should decode");
+    assert!(completed_text.contains("\"finish_reason\":\"stop\""));
+    assert!(completed_text.contains("data: [DONE]"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
+}
+
+#[test]
+fn openai_cli_to_openai_chat_stream_rewriter_converts_completed_event_without_buffering() {
     let report_context = json!({
         "provider_api_format": "openai:cli",
         "client_api_format": "openai:chat",
@@ -199,14 +257,13 @@ fn openai_cli_to_openai_chat_stream_rewriter_buffers_and_converts_completed_even
             .as_bytes(),
         )
         .expect("rewrite should succeed");
-    assert!(output.is_empty());
-    let output_text = String::from_utf8(rewriter.finish().expect("finish should succeed"))
-        .expect("utf8 should decode");
+    let output_text = String::from_utf8(output).expect("utf8 should decode");
     assert!(output_text.contains("\"object\":\"chat.completion.chunk\""));
     assert!(output_text.contains("\"role\":\"assistant\""));
     assert!(output_text.contains("\"content\":\"Hello Codex\""));
     assert!(output_text.contains("\"finish_reason\":\"stop\""));
     assert!(output_text.contains("data: [DONE]"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }
 
 #[test]
@@ -226,13 +283,14 @@ fn antigravity_gemini_to_openai_chat_stream_rewriter_unwraps_and_converts_functi
             b"data: {\"response\":{\"responseId\":\"resp_antigravity_chat_tool_123\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Need a tool.\"},{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"SF\"}}}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"modelVersion\":\"claude-sonnet-4-5\"},\"responseId\":\"resp_antigravity_chat_tool_123\"}\n\n",
         )
         .expect("rewrite should succeed");
-    assert!(output.is_empty());
-    let output_text = String::from_utf8(rewriter.finish().expect("finish should succeed"))
-        .expect("utf8 should decode");
+    let output_text = utf8(output);
     assert!(output_text.contains("\"object\":\"chat.completion.chunk\""));
+    assert!(output_text.contains("\"content\":\"Need a tool.\""));
     assert!(output_text.contains("\"tool_calls\""));
     assert!(output_text.contains("\"name\":\"get_weather\""));
     assert!(output_text.contains("\"finish_reason\":\"tool_calls\""));
+    assert!(output_text.contains("data: [DONE]"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }
 
 #[test]
@@ -251,12 +309,15 @@ fn antigravity_gemini_to_openai_cli_stream_rewriter_unwraps_and_converts_functio
             b"data: {\"response\":{\"responseId\":\"resp_antigravity_cli_tool_123\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Need a tool.\"},{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"SF\"}}}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"modelVersion\":\"claude-sonnet-4-5\",\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":3,\"totalTokenCount\":5}},\"responseId\":\"resp_antigravity_cli_tool_123\"}\n\n",
         )
         .expect("rewrite should succeed");
-    assert!(output.is_empty());
-    let output_text = String::from_utf8(rewriter.finish().expect("finish should succeed"))
-        .expect("utf8 should decode");
+    let output_text = utf8(output);
+    assert!(output_text.contains("event: response.created"));
+    assert!(output_text.contains("event: response.output_text.delta"));
+    assert!(output_text.contains("event: response.output_item.added"));
+    assert!(output_text.contains("event: response.function_call_arguments.delta"));
     assert!(output_text.contains("event: response.completed"));
     assert!(output_text.contains("\"type\":\"function_call\""));
     assert!(output_text.contains("\"name\":\"get_weather\""));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }
 
 #[test]
@@ -274,20 +335,24 @@ fn gemini_to_openai_cli_stream_rewriter_buffers_and_converts_to_completed_event(
             b"data: {\"responseId\":\"resp_123\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello \"}],\"role\":\"model\"},\"index\":0}],\"modelVersion\":\"gemini-2.5-pro\"}\n\n",
         )
         .expect("rewrite should succeed");
-    assert!(first.is_empty());
+    let first_text = utf8(first);
+    assert!(first_text.contains("event: response.created"));
+    assert!(first_text.contains("event: response.output_text.delta"));
+    assert!(first_text.contains("\"delta\":\"Hello \""));
     let second = rewriter
         .push_chunk(
             b"data: {\"responseId\":\"resp_123\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Gemini CLI\"}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"modelVersion\":\"gemini-2.5-pro\",\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":3,\"totalTokenCount\":5}}\n\n",
         )
         .expect("rewrite should succeed");
-    assert!(second.is_empty());
-    let output_text = String::from_utf8(rewriter.finish().expect("finish should succeed"))
-        .expect("utf8 should decode");
+    let output_text = utf8(second);
+    assert!(output_text.contains("event: response.output_text.delta"));
     assert!(output_text.contains("event: response.completed"));
     assert!(output_text.contains("\"type\":\"response.completed\""));
     assert!(output_text.contains("\"object\":\"response\""));
-    assert!(output_text.contains("\"text\":\"Gemini CLI\""));
+    assert!(output_text.contains("\"delta\":\"Gemini CLI\""));
+    assert!(output_text.contains("\"text\":\"Hello Gemini CLI\""));
     assert!(output_text.contains("\"total_tokens\":5"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }
 
 #[test]
@@ -317,14 +382,15 @@ fn claude_to_openai_cli_stream_rewriter_buffers_and_converts_to_completed_event(
             .as_bytes(),
         )
         .expect("rewrite should succeed");
-    assert!(output.is_empty());
-    let output_text = String::from_utf8(rewriter.finish().expect("finish should succeed"))
-        .expect("utf8 should decode");
+    let output_text = utf8(output);
+    assert!(output_text.contains("event: response.created"));
+    assert!(output_text.contains("event: response.output_text.delta"));
     assert!(output_text.contains("event: response.completed"));
     assert!(output_text.contains("\"type\":\"response.completed\""));
     assert!(output_text.contains("\"object\":\"response\""));
     assert!(output_text.contains("\"text\":\"Hello Claude CLI\""));
     assert!(output_text.contains("\"total_tokens\":5"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }
 
 #[test]
@@ -358,15 +424,19 @@ fn claude_to_openai_cli_stream_rewriter_converts_tool_use_to_function_call() {
             .as_bytes(),
         )
         .expect("rewrite should succeed");
-    assert!(output.is_empty());
-    let output_text = String::from_utf8(rewriter.finish().expect("finish should succeed"))
-        .expect("utf8 should decode");
+    let output_text = utf8(output);
+    assert!(output_text.contains("event: response.created"));
+    assert!(output_text.contains("event: response.output_text.delta"));
+    assert!(output_text.contains("\"delta\":\"Running tool.\""));
+    assert!(output_text.contains("event: response.output_item.added"));
+    assert!(output_text.contains("event: response.function_call_arguments.delta"));
     assert!(output_text.contains("event: response.completed"));
     assert!(output_text.contains("\"type\":\"response.completed\""));
     assert!(output_text.contains("\"type\":\"function_call\""));
     assert!(output_text.contains("\"call_id\":\"tool_123\""));
     assert!(output_text.contains("\"name\":\"read_file\""));
     assert!(output_text.contains("\\\"path\\\":\\\"/tmp/test.txt\\\""));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }
 
 #[test]
@@ -384,14 +454,16 @@ fn gemini_to_openai_cli_stream_rewriter_converts_function_call_to_completed_even
             b"data: {\"responseId\":\"resp_tool_123\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Need a tool.\"},{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"location\":\"Tokyo\"}}}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"modelVersion\":\"gemini-2.5-pro\",\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":3,\"totalTokenCount\":5}}\n\n",
         )
         .expect("rewrite should succeed");
-    assert!(output.is_empty());
-    let output_text = String::from_utf8(rewriter.finish().expect("finish should succeed"))
-        .expect("utf8 should decode");
+    let output_text = utf8(output);
+    assert!(output_text.contains("event: response.created"));
+    assert!(output_text.contains("event: response.output_item.added"));
+    assert!(output_text.contains("event: response.function_call_arguments.delta"));
     assert!(output_text.contains("event: response.completed"));
     assert!(output_text.contains("\"type\":\"response.completed\""));
     assert!(output_text.contains("\"type\":\"function_call\""));
     assert!(output_text.contains("\"name\":\"get_weather\""));
     assert!(output_text.contains("\\\"location\\\":\\\"Tokyo\\\""));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }
 
 #[test]
@@ -409,14 +481,16 @@ fn gemini_to_openai_compact_stream_rewriter_converts_function_call_to_completed_
             b"data: {\"responseId\":\"resp_tool_compact_123\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Need a tool.\"},{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"location\":\"Tokyo\"}}}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"modelVersion\":\"gemini-2.5-pro\",\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":3,\"totalTokenCount\":5}}\n\n",
         )
         .expect("rewrite should succeed");
-    assert!(output.is_empty());
-    let output_text = String::from_utf8(rewriter.finish().expect("finish should succeed"))
-        .expect("utf8 should decode");
+    let output_text = utf8(output);
+    assert!(output_text.contains("event: response.created"));
+    assert!(output_text.contains("event: response.output_item.added"));
+    assert!(output_text.contains("event: response.function_call_arguments.delta"));
     assert!(output_text.contains("event: response.completed"));
     assert!(output_text.contains("\"type\":\"response.completed\""));
     assert!(output_text.contains("\"type\":\"function_call\""));
     assert!(output_text.contains("\"name\":\"get_weather\""));
     assert!(output_text.contains("\\\"location\\\":\\\"Tokyo\\\""));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }
 
 #[test]
@@ -429,23 +503,32 @@ fn openai_chat_to_claude_chat_stream_rewriter_converts_via_standard_matrix() {
     });
     let mut rewriter =
         maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
-    let output = rewriter
+    let first = rewriter
+        .push_chunk(
+            "data: {\"id\":\"chatcmpl_std_claude_123\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello Claude\"},\"finish_reason\":null}]}\n\n"
+            .as_bytes(),
+        )
+        .expect("rewrite should succeed");
+    let first_text = utf8(first);
+    assert!(first_text.contains("event: message_start"));
+    assert!(first_text.contains("event: content_block_start"));
+    assert!(first_text.contains("event: content_block_delta"));
+    assert!(first_text.contains("\"text\":\"Hello Claude\""));
+
+    let second = rewriter
         .push_chunk(
             concat!(
-                "data: {\"id\":\"chatcmpl_std_claude_123\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello Claude\"},\"finish_reason\":null}]}\n\n",
                 "data: {\"id\":\"chatcmpl_std_claude_123\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\n",
                 "data: [DONE]\n\n"
             )
             .as_bytes(),
         )
         .expect("rewrite should succeed");
-    assert!(output.is_empty());
-    let output_text = String::from_utf8(rewriter.finish().expect("finish should succeed"))
-        .expect("utf8 should decode");
-    assert!(output_text.contains("event: message_start"));
-    assert!(output_text.contains("event: content_block_delta"));
-    assert!(output_text.contains("\"text\":\"Hello Claude\""));
+    let output_text = utf8(second);
+    assert!(output_text.contains("event: content_block_stop"));
+    assert!(output_text.contains("event: message_delta"));
     assert!(output_text.contains("event: message_stop"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }
 
 #[test]
@@ -458,20 +541,28 @@ fn openai_chat_to_gemini_cli_stream_rewriter_converts_via_standard_matrix() {
     });
     let mut rewriter =
         maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
-    let output = rewriter
+    let first = rewriter
+        .push_chunk(
+            "data: {\"id\":\"chatcmpl_std_gemini_cli_123\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello Gemini CLI\"},\"finish_reason\":null}]}\n\n"
+            .as_bytes(),
+        )
+        .expect("rewrite should succeed");
+    let first_text = utf8(first);
+    assert!(first_text.contains("\"responseId\":\"chatcmpl_std_gemini_cli_123\""));
+    assert!(first_text.contains("\"candidates\""));
+    assert!(first_text.contains("\"text\":\"Hello Gemini CLI\""));
+
+    let second = rewriter
         .push_chunk(
             concat!(
-                "data: {\"id\":\"chatcmpl_std_gemini_cli_123\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello Gemini CLI\"},\"finish_reason\":null}]}\n\n",
                 "data: {\"id\":\"chatcmpl_std_gemini_cli_123\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":3,\"total_tokens\":5}}\n\n",
                 "data: [DONE]\n\n"
             )
             .as_bytes(),
         )
         .expect("rewrite should succeed");
-    assert!(output.is_empty());
-    let output_text = String::from_utf8(rewriter.finish().expect("finish should succeed"))
-        .expect("utf8 should decode");
-    assert!(output_text.contains("\"responseId\":\"chatcmpl_std_gemini_cli_123\""));
-    assert!(output_text.contains("\"candidates\""));
-    assert!(output_text.contains("\"text\":\"Hello Gemini CLI\""));
+    let output_text = utf8(second);
+    assert!(output_text.contains("\"finishReason\":\"STOP\""));
+    assert!(output_text.contains("\"totalTokenCount\":5"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }

@@ -1,4 +1,4 @@
-use crate::gateway::ai_pipeline::planner::{
+use crate::ai_pipeline::planner::common::{
     GEMINI_CLI_STREAM_PLAN_KIND, GEMINI_CLI_SYNC_PLAN_KIND,
 };
 

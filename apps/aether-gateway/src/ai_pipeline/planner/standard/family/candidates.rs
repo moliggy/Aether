@@ -5,13 +5,13 @@ use serde_json::json;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::gateway::scheduler::{
+use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::control::GatewayControlDecision;
+use crate::execution_runtime::{ConversionMode, ExecutionStrategy};
+use crate::scheduler::{
     current_unix_secs, list_selectable_candidates, GatewayMinimalCandidateSelectionCandidate,
 };
-use crate::gateway::{
-    append_execution_contract_fields_to_value, AppState, ConversionMode, ExecutionStrategy,
-    GatewayControlDecision, GatewayError,
-};
+use crate::{append_execution_contract_fields_to_value, AppState, GatewayError};
 
 use super::types::{
     LocalStandardCandidateAttempt, LocalStandardDecisionInput, LocalStandardSourceFamily,
@@ -117,10 +117,7 @@ pub(super) async fn materialize_local_standard_candidate_attempts(
             }
         }
     }
-    let candidates = crate::gateway::ai_pipeline::planner::prefer_local_tunnel_owner_candidates(
-        state, candidates,
-    )
-    .await;
+    let candidates = prefer_local_tunnel_owner_candidates(state, candidates).await;
 
     let created_at_unix_secs = current_unix_secs();
     let mut attempts = Vec::with_capacity(candidates.len());
@@ -132,7 +129,7 @@ pub(super) async fn materialize_local_standard_candidate_attempts(
         } else {
             ExecutionStrategy::LocalCrossFormat
         };
-        let conversion_mode = if crate::gateway::ai_pipeline::conversion::request_conversion_kind(
+        let conversion_mode = if crate::ai_pipeline::conversion::request_conversion_kind(
             spec.api_format,
             provider_api_format.as_str(),
         )
@@ -213,7 +210,7 @@ pub(super) async fn materialize_local_standard_candidate_attempts(
 }
 
 fn auth_snapshot_allows_cross_format_candidate(
-    auth_snapshot: &crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot,
+    auth_snapshot: &crate::data::auth::GatewayAuthApiKeySnapshot,
     requested_model: &str,
     candidate: &GatewayMinimalCandidateSelectionCandidate,
 ) -> bool {

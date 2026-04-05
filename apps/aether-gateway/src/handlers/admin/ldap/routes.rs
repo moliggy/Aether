@@ -3,7 +3,9 @@ use super::ldap_builders::{
     AdminLdapConfigTestRequest, AdminLdapConfigUpdateRequest,
 };
 use super::ldap_shared::*;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,
@@ -29,12 +31,16 @@ pub(super) async fn maybe_build_local_admin_ldap_response(
             if request_context.request_method == http::Method::GET
                 && is_admin_ldap_config_root(&request_context.request_path) =>
         {
-            return Ok(Some(
+            return Ok(Some(attach_admin_audit_response(
                 Json(build_admin_ldap_config_payload(
                     state.get_ldap_module_config().await?.as_ref(),
                 ))
                 .into_response(),
-            ));
+                "admin_ldap_config_viewed",
+                "view_ldap_config",
+                "ldap_config",
+                "ldap",
+            )));
         }
         Some("set_config")
             if request_context.request_method == http::Method::PUT
@@ -91,7 +97,13 @@ pub(super) async fn maybe_build_local_admin_ldap_response(
                     "message": "缺少必要字段: server_url, bind_dn, base_dn, bind_password",
                 }),
             };
-            return Ok(Some(Json(response).into_response()));
+            return Ok(Some(attach_admin_audit_response(
+                Json(response).into_response(),
+                "admin_ldap_connection_tested",
+                "test_ldap_connection",
+                "ldap_config",
+                "ldap",
+            )));
         }
         _ => {}
     }

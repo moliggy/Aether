@@ -5,7 +5,7 @@ use aether_data::repository::video_tasks::{
 };
 use serde::Serialize;
 
-use crate::gateway::{AppState, GatewayError};
+use crate::{AppState, GatewayError};
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct VideoTaskPageResponse {

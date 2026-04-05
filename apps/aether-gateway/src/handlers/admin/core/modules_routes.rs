@@ -1,10 +1,11 @@
-use crate::gateway::handlers::public::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::public::{
     admin_module_by_name, admin_module_name_from_enabled_path, admin_module_name_from_status_path,
     build_admin_module_runtime_state, build_admin_module_status_payload,
     build_admin_module_validation_result, build_admin_modules_status_payload,
     module_available_from_env, AdminSetModuleEnabledRequest,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,

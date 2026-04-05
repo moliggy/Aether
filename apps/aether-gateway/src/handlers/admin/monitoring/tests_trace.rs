@@ -2,7 +2,7 @@ use super::super::maybe_build_local_admin_monitoring_response;
 use super::super::test_support::{
     request_context, sample_candidate, sample_endpoint, sample_key, sample_provider,
 };
-use crate::gateway::AppState;
+use crate::AppState;
 use axum::body::to_bytes;
 use serde_json::json;
 use std::sync::Arc;

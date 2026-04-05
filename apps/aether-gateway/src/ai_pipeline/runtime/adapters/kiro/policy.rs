@@ -1,5 +1,5 @@
-use crate::gateway::provider_transport::snapshot::GatewayProviderTransportSnapshot;
-use crate::gateway::provider_transport::{
+use crate::provider_transport::snapshot::GatewayProviderTransportSnapshot;
+use crate::provider_transport::{
     resolve_transport_tls_profile, transport_proxy_is_locally_supported,
 };
 
@@ -46,7 +46,7 @@ mod tests {
     use super::{
         supports_local_kiro_request_transport, supports_local_kiro_request_transport_with_network,
     };
-    use crate::gateway::provider_transport::snapshot::{
+    use crate::provider_transport::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
     };

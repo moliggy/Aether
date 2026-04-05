@@ -15,9 +15,9 @@ use sqlx::Row;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::gateway::gateway_data::GatewayDataState;
-use crate::gateway::handlers::admin::admin_provider_ops_local_action_response;
-use crate::gateway::{AppState, GatewayError};
+use crate::data::GatewayDataState;
+use crate::handlers::admin::provider_ops::admin_provider_ops_local_action_response;
+use crate::{AppState, GatewayError};
 
 #[path = "runtime/audit_cleanup.rs"]
 mod audit_cleanup;

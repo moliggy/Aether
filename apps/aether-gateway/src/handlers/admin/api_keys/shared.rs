@@ -3,7 +3,7 @@ use super::{
     serialize_admin_system_users_export_wallet, AppState, Body, GatewayError,
     GatewayPublicRequestContext, IntoResponse, Json, Response,
 };
-use crate::gateway::handlers::admin::api_keys::ADMIN_API_KEYS_DATA_UNAVAILABLE_DETAIL;
+use crate::handlers::admin::api_keys::ADMIN_API_KEYS_DATA_UNAVAILABLE_DETAIL;
 
 #[derive(Debug, Default, serde::Deserialize)]
 pub(super) struct AdminStandaloneApiKeyCreateRequest {

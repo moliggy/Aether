@@ -2,7 +2,8 @@ use axum::body::Body;
 use axum::http::Response;
 use serde_json::Value;
 
-use crate::gateway::{GatewayControlDecision, GatewayError, GatewaySyncReportRequest};
+use crate::control::GatewayControlDecision;
+use crate::{usage::GatewaySyncReportRequest, GatewayError};
 
 #[path = "stream_rewrite.rs"]
 pub(crate) mod stream;

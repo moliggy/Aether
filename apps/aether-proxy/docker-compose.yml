@@ -6,7 +6,14 @@ services:
     env_file:
       - .env
     environment:
-      AETHER_PROXY_LOG_JSON: "true"
+      AETHER_PROXY_LOG_JSON: ${AETHER_PROXY_LOG_JSON:-true}
+      AETHER_PROXY_LOG_DESTINATION: ${AETHER_PROXY_LOG_DESTINATION:-stdout}
+      AETHER_PROXY_LOG_DIR: ${AETHER_PROXY_LOG_DIR:-/var/log/aether-proxy}
+      AETHER_PROXY_LOG_ROTATION: ${AETHER_PROXY_LOG_ROTATION:-daily}
+      AETHER_PROXY_LOG_RETENTION_DAYS: ${AETHER_PROXY_LOG_RETENTION_DAYS:-7}
+      AETHER_PROXY_LOG_MAX_FILES: ${AETHER_PROXY_LOG_MAX_FILES:-30}
+    volumes:
+      - ./logs:/var/log/aether-proxy
     logging:
       driver: json-file
       options:

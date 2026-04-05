@@ -5,7 +5,9 @@ mod types;
 pub use memory::InMemoryRequestCandidateRepository;
 pub use sql::SqlxRequestCandidateReadRepository;
 pub use types::{
-    PublicHealthStatusCount, PublicHealthTimelineBucket, RequestCandidateReadRepository,
-    RequestCandidateRepository, RequestCandidateStatus, RequestCandidateWriteRepository,
+    build_decision_trace, derive_request_candidate_final_status, DecisionTrace,
+    DecisionTraceCandidate, PublicHealthStatusCount, PublicHealthTimelineBucket,
+    RequestCandidateFinalStatus, RequestCandidateReadRepository, RequestCandidateRepository,
+    RequestCandidateStatus, RequestCandidateTrace, RequestCandidateWriteRepository,
     StoredRequestCandidate, UpsertRequestCandidateRecord,
 };

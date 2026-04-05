@@ -51,38 +51,45 @@ use url::form_urlencoded;
 use url::Url;
 use uuid::Uuid;
 
-use crate::gateway::api::ai::{
+use crate::ai_pipeline::finalize::maybe_build_sync_finalize_outcome;
+use crate::ai_pipeline::planner::{
+    maybe_build_stream_decision_payload, maybe_build_stream_plan_payload,
+    maybe_build_sync_decision_payload, maybe_build_sync_plan_payload,
+};
+use crate::api::ai::{
     admin_default_body_rules_for_signature, admin_endpoint_signature_parts,
     public_api_format_local_path,
 };
-use crate::gateway::api::response::{
+use crate::api::response::{
     build_client_response, build_local_auth_rejection_response, build_local_http_error_response,
     build_local_overloaded_response, build_local_user_rpm_limited_response,
 };
-use crate::gateway::constants::*;
-use crate::gateway::headers::{
+use crate::audit::record_shadow_result_non_blocking;
+use crate::constants::*;
+use crate::control::{
+    allows_control_execute_emergency, maybe_execute_via_control, request_model_local_rejection,
+    resolve_public_request_context, should_buffer_request_for_local_auth,
+    trusted_auth_local_rejection, GatewayControlDecision, GatewayPublicRequestContext,
+};
+use crate::execution_runtime::{
+    execute_execution_runtime_stream, execute_execution_runtime_sync,
+    maybe_execute_via_execution_runtime_stream, maybe_execute_via_execution_runtime_sync,
+};
+use crate::fallback_metrics::{GatewayFallbackMetricKind, GatewayFallbackReason};
+use crate::headers::{
     extract_or_generate_trace_id, header_value_str, should_skip_request_header,
 };
-use crate::gateway::provider_transport::{
+use crate::provider_transport::provider_types::{
     fixed_provider_template, provider_type_enables_format_conversion_by_default,
     provider_type_is_fixed,
 };
-use crate::gateway::scheduler::{
+use crate::rate_limit::FrontdoorUserRpmOutcome;
+use crate::scheduler::{
     count_recent_rpm_requests_for_provider_key_since, is_provider_key_circuit_open,
     provider_key_health_score,
 };
-use crate::gateway::{
-    allows_control_execute_emergency, execute_execution_runtime_stream,
-    execute_execution_runtime_sync, maybe_build_stream_decision_payload,
-    maybe_build_stream_plan_payload, maybe_build_sync_decision_payload,
-    maybe_build_sync_finalize_outcome, maybe_build_sync_plan_payload, maybe_execute_via_control,
-    maybe_execute_via_execution_runtime_stream, maybe_execute_via_execution_runtime_sync,
-    record_shadow_result_non_blocking, request_model_local_rejection,
-    resolve_public_request_context, should_buffer_request_for_local_auth,
-    trusted_auth_local_rejection, AppState, FrontdoorUserRpmOutcome, GatewayControlDecision,
-    GatewayError, GatewayFallbackMetricKind, GatewayFallbackReason, GatewayPublicRequestContext,
-    LocalProviderDeleteTaskState,
-};
+use crate::state::{AppState, LocalProviderDeleteTaskState};
+use crate::GatewayError;
 
 const ADMIN_PROVIDER_MAPPING_PREVIEW_MAX_KEYS: usize = 200;
 const ADMIN_PROVIDER_MAPPING_PREVIEW_MAX_MODELS: usize = 500;
@@ -98,7 +105,10 @@ pub(crate) mod proxy;
 pub(crate) mod public;
 pub(crate) mod shared;
 
-pub(crate) use proxy::proxy_request;
+pub(crate) use admin::stats::{
+    admin_stats_bad_request_response, list_usage_for_optional_range, parse_bounded_u32, round_to,
+    AdminStatsTimeRange, AdminStatsUsageFilter,
+};
 pub(crate) use shared::*;
 
 pub(crate) const OFFICIAL_EXTERNAL_MODEL_PROVIDERS: &[&str] = &[

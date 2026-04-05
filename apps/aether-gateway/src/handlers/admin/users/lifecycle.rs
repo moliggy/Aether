@@ -6,8 +6,10 @@ use super::{
     normalize_admin_username, validate_admin_user_password, AdminCreateUserRequest,
     AdminUpdateUserFieldPresence, AdminUpdateUserRequest,
 };
-use crate::gateway::handlers::{query_param_optional_bool, query_param_value};
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::{query_param_optional_bool, query_param_value};
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,
@@ -185,7 +187,6 @@ pub(super) async fn build_admin_create_user_response(
     request_context: &GatewayPublicRequestContext,
     request_body: Option<&axum::body::Bytes>,
 ) -> Result<Response<Body>, GatewayError> {
-    let _ = request_context;
     if !state.has_auth_user_write_capability() {
         return Ok(build_admin_users_read_only_response(
             "当前为只读模式，无法创建用户",
@@ -375,12 +376,18 @@ pub(super) async fn build_admin_create_user_response(
         ));
     }
 
-    Ok(Json(build_admin_user_payload(
-        &user,
-        payload.rate_limit,
-        payload.unlimited,
+    Ok(attach_admin_audit_response(
+        Json(build_admin_user_payload(
+            &user,
+            payload.rate_limit,
+            payload.unlimited,
+        ))
+        .into_response(),
+        "admin_user_created",
+        "create_user",
+        "user",
+        &user.id,
     ))
-    .into_response())
 }
 
 pub(super) async fn build_admin_update_user_response(
@@ -696,7 +703,13 @@ pub(super) async fn build_admin_update_user_response(
         .and_then(|row| row.rate_limit)
         .or(payload.rate_limit);
 
-    Ok(Json(build_admin_user_payload(&user, rate_limit, unlimited)).into_response())
+    Ok(attach_admin_audit_response(
+        Json(build_admin_user_payload(&user, rate_limit, unlimited)).into_response(),
+        "admin_user_updated",
+        "update_user",
+        "user",
+        &user_id,
+    ))
 }
 
 pub(super) async fn build_admin_delete_user_response(
@@ -744,5 +757,11 @@ pub(super) async fn build_admin_delete_user_response(
             .into_response());
     }
 
-    Ok(Json(json!({ "message": "用户删除成功" })).into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({ "message": "用户删除成功" })).into_response(),
+        "admin_user_deleted",
+        "delete_user",
+        "user",
+        &user_id,
+    ))
 }

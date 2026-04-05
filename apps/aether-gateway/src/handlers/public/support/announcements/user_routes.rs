@@ -6,7 +6,8 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::gateway::{AppState, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::AppState;
 
 use super::super::{build_unhandled_public_support_response, resolve_authenticated_local_user};
 use super::announcements_shared::{

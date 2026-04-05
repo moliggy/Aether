@@ -3,11 +3,12 @@ use super::{
     admin_provider_model_effective_output_price, model_tiered_pricing_first_tier_value,
     timestamp_or_now,
 };
-use crate::gateway::handlers::json_string_list;
-use crate::gateway::AppState;
+use crate::handlers::json_string_list;
+use crate::AppState;
 use aether_data::repository::global_models::{
     AdminGlobalModelListQuery, StoredAdminGlobalModel, StoredAdminProviderModel,
 };
+use futures_util::stream::{self, StreamExt};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -79,6 +80,29 @@ fn build_admin_global_model_price_range(
     })
 }
 
+async fn admin_global_model_provider_models_by_global_model_id(
+    state: &AppState,
+    global_model_ids: &[String],
+) -> BTreeMap<String, Vec<StoredAdminProviderModel>> {
+    let state = state.clone();
+    stream::iter(global_model_ids.iter().cloned().map(|global_model_id| {
+        let state = state.clone();
+        async move {
+            let provider_models = state
+                .list_admin_provider_models_by_global_model_id(&global_model_id)
+                .await
+                .ok()
+                .unwrap_or_default();
+            (global_model_id, provider_models)
+        }
+    }))
+    .buffer_unordered(32)
+    .collect::<Vec<_>>()
+    .await
+    .into_iter()
+    .collect()
+}
+
 pub(crate) fn build_admin_global_model_response(
     global_model: &StoredAdminGlobalModel,
     provider_models: &[StoredAdminProviderModel],
@@ -132,12 +156,16 @@ pub(crate) async fn build_admin_global_models_payload(
             .cmp(&right.name)
             .then_with(|| left.id.cmp(&right.id))
     });
+    let global_model_ids = models
+        .iter()
+        .map(|model| model.id.clone())
+        .collect::<Vec<_>>();
+    let mut provider_models_by_global_model =
+        admin_global_model_provider_models_by_global_model_id(state, &global_model_ids).await;
     let mut payload_models = Vec::with_capacity(models.len());
     for model in models {
-        let provider_models = state
-            .list_admin_provider_models_by_global_model_id(&model.id)
-            .await
-            .ok()
+        let provider_models = provider_models_by_global_model
+            .remove(&model.id)
             .unwrap_or_default();
         payload_models.push(build_admin_global_model_response(
             &model,

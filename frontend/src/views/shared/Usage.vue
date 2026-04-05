@@ -416,6 +416,11 @@ async function pollActiveRequests() {
         if ('api_key_name' in update) {
           record.api_key_name = typeof update.api_key_name === 'string' ? update.api_key_name : undefined
         }
+        if ('provider_key_name' in update) {
+          record.provider_key_name = typeof update.provider_key_name === 'string'
+            ? update.provider_key_name
+            : undefined
+        }
       }
     }
 

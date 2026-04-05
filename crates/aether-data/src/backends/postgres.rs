@@ -45,9 +45,11 @@ use crate::repository::proxy_nodes::{
 use crate::repository::quota::{
     ProviderQuotaReadRepository, ProviderQuotaWriteRepository, SqlxProviderQuotaRepository,
 };
+use crate::repository::settlement::{SettlementWriteRepository, SqlxSettlementRepository};
 use crate::repository::shadow_results::{
     ShadowResultReadRepository, ShadowResultWriteRepository, SqlxShadowResultRepository,
 };
+use crate::repository::system::{AdminSystemStats, StoredSystemConfigEntry};
 use crate::repository::usage::{
     SqlxUsageReadRepository, UsageReadRepository, UsageWriteRepository,
 };
@@ -260,6 +262,10 @@ impl PostgresBackend {
         Arc::new(SqlxWalletRepository::new(self.pool_clone()))
     }
 
+    pub fn settlement_write_repository(&self) -> Arc<dyn SettlementWriteRepository> {
+        Arc::new(SqlxSettlementRepository::new(self.pool_clone()))
+    }
+
     pub fn video_task_read_repository(&self) -> Arc<dyn VideoTaskReadRepository> {
         Arc::new(SqlxVideoTaskReadRepository::new(self.pool_clone()))
     }
@@ -322,19 +328,20 @@ impl PostgresBackend {
 
     pub async fn list_system_config_entries(
         &self,
-    ) -> Result<Vec<(String, serde_json::Value, Option<String>, Option<u64>)>, DataLayerError> {
+    ) -> Result<Vec<StoredSystemConfigEntry>, DataLayerError> {
         let rows = sqlx::query(LIST_SYSTEM_CONFIG_ENTRIES_SQL)
             .fetch_all(&self.pool)
             .await?;
         rows.into_iter()
             .map(|row| {
-                Ok((
-                    row.try_get("key")?,
-                    row.try_get("value")?,
-                    row.try_get("description")?,
-                    row.try_get::<Option<i64>, _>("updated_at_unix_secs")?
+                Ok(StoredSystemConfigEntry {
+                    key: row.try_get("key")?,
+                    value: row.try_get("value")?,
+                    description: row.try_get("description")?,
+                    updated_at_unix_secs: row
+                        .try_get::<Option<i64>, _>("updated_at_unix_secs")?
                         .map(|value| value.max(0) as u64),
-                ))
+                })
             })
             .collect()
     }
@@ -344,7 +351,7 @@ impl PostgresBackend {
         key: &str,
         value: &serde_json::Value,
         description: Option<&str>,
-    ) -> Result<(String, serde_json::Value, Option<String>, Option<u64>), DataLayerError> {
+    ) -> Result<StoredSystemConfigEntry, DataLayerError> {
         let row = sqlx::query(UPSERT_SYSTEM_CONFIG_ENTRY_SQL)
             .bind(uuid::Uuid::new_v4().to_string())
             .bind(key)
@@ -352,13 +359,14 @@ impl PostgresBackend {
             .bind(description)
             .fetch_one(&self.pool)
             .await?;
-        Ok((
-            row.try_get("key")?,
-            row.try_get("value")?,
-            row.try_get("description")?,
-            row.try_get::<Option<i64>, _>("updated_at_unix_secs")?
+        Ok(StoredSystemConfigEntry {
+            key: row.try_get("key")?,
+            value: row.try_get("value")?,
+            description: row.try_get("description")?,
+            updated_at_unix_secs: row
+                .try_get::<Option<i64>, _>("updated_at_unix_secs")?
                 .map(|value| value.max(0) as u64),
-        ))
+        })
     }
 
     pub async fn delete_system_config_value(&self, key: &str) -> Result<bool, DataLayerError> {
@@ -369,16 +377,16 @@ impl PostgresBackend {
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn read_admin_system_stats(&self) -> Result<(u64, u64, u64, u64), DataLayerError> {
+    pub async fn read_admin_system_stats(&self) -> Result<AdminSystemStats, DataLayerError> {
         let row = sqlx::query(READ_ADMIN_SYSTEM_STATS_SQL)
             .fetch_one(&self.pool)
             .await?;
-        Ok((
-            row.try_get::<i64, _>("total_users")?.max(0) as u64,
-            row.try_get::<i64, _>("active_users")?.max(0) as u64,
-            row.try_get::<i64, _>("total_api_keys")?.max(0) as u64,
-            row.try_get::<i64, _>("total_requests")?.max(0) as u64,
-        ))
+        Ok(AdminSystemStats {
+            total_users: row.try_get::<i64, _>("total_users")?.max(0) as u64,
+            active_users: row.try_get::<i64, _>("active_users")?.max(0) as u64,
+            total_api_keys: row.try_get::<i64, _>("total_api_keys")?.max(0) as u64,
+            total_requests: row.try_get::<i64, _>("total_requests")?.max(0) as u64,
+        })
     }
 }
 
@@ -431,6 +439,7 @@ mod tests {
         let _usage_writer = backend.usage_write_repository();
         let _wallet_reader = backend.wallet_read_repository();
         let _wallet_writer = backend.wallet_write_repository();
+        let _settlement_writer = backend.settlement_write_repository();
         let _video_task_reader = backend.video_task_read_repository();
         let _video_task_writer = backend.video_task_write_repository();
         let _transaction_runner = backend.transaction_runner();

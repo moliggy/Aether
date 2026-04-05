@@ -1,15 +1,20 @@
 use super::{
     build_internal_control_error_response, normalize_provider_oauth_refresh_error_message,
 };
-use crate::gateway::handlers::ADMIN_PROVIDER_OAUTH_DATA_UNAVAILABLE_DETAIL;
-use crate::gateway::provider_transport::{
+use crate::handlers::ADMIN_PROVIDER_OAUTH_DATA_UNAVAILABLE_DETAIL;
+use crate::provider_transport::provider_types::{
     provider_type_admin_oauth_template, provider_type_is_fixed_for_admin_oauth,
     ProviderOAuthTemplate, ADMIN_PROVIDER_OAUTH_TEMPLATE_TYPES,
 };
-use crate::gateway::{AppState, GatewayError};
+use crate::{AppState, GatewayError};
+use aether_data::repository::provider_oauth::{
+    build_provider_oauth_batch_task_status_payload, provider_oauth_batch_task_storage_key,
+    provider_oauth_device_session_storage_key, provider_oauth_state_storage_key,
+    StoredAdminProviderOAuthDeviceSession, StoredAdminProviderOAuthState,
+    PROVIDER_OAUTH_BATCH_TASK_TTL_SECS, PROVIDER_OAUTH_STATE_TTL_SECS,
+};
 use axum::{body::Body, http, response::Response};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -50,31 +55,10 @@ pub(crate) fn build_admin_provider_oauth_backend_unavailable_response() -> Respo
     )
 }
 
-const KIRO_DEVICE_AUTH_SESSION_PREFIX: &str = "device_auth_session:";
-pub(crate) const KIRO_DEVICE_AUTH_SESSION_TTL_BUFFER_SECS: u64 = 60;
-const PROVIDER_OAUTH_BATCH_TASK_TTL_SECS: u64 = 24 * 60 * 60;
 const KIRO_DEVICE_DEFAULT_START_URL: &str = "https://view.awsapps.com/start";
 const KIRO_DEVICE_DEFAULT_REGION: &str = "us-east-1";
 const KIRO_IDC_AMZ_USER_AGENT: &str =
     "aws-sdk-js/3.738.0 ua/2.1 os/other lang/js md/browser#unknown_unknown api/sso-oidc#3.738.0 m/E KiroIDE";
-
-#[derive(Debug, Clone, serde::Serialize, Deserialize)]
-pub(crate) struct StoredAdminProviderOAuthDeviceSession {
-    pub(crate) provider_id: String,
-    pub(crate) region: String,
-    pub(crate) client_id: String,
-    pub(crate) client_secret: String,
-    pub(crate) device_code: String,
-    pub(crate) interval: u64,
-    pub(crate) expires_at_unix_secs: u64,
-    pub(crate) status: String,
-    pub(crate) proxy_node_id: Option<String>,
-    pub(crate) created_at_unix_secs: u64,
-    pub(crate) key_id: Option<String>,
-    pub(crate) email: Option<String>,
-    pub(crate) replaced: bool,
-    pub(crate) error_msg: Option<String>,
-}
 
 pub(crate) fn default_kiro_device_start_url() -> String {
     KIRO_DEVICE_DEFAULT_START_URL.to_string()
@@ -95,10 +79,6 @@ pub(crate) fn normalize_kiro_device_region(value: Option<&str>) -> Option<String
         .then(|| value.to_string())
 }
 
-fn provider_oauth_device_session_key(session_id: &str) -> String {
-    format!("{KIRO_DEVICE_AUTH_SESSION_PREFIX}{session_id}")
-}
-
 pub(crate) fn current_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -113,7 +93,7 @@ pub(crate) async fn save_provider_oauth_device_session(
     session: &StoredAdminProviderOAuthDeviceSession,
     ttl_seconds: u64,
 ) -> Result<(), Response<Body>> {
-    let key = provider_oauth_device_session_key(session_id);
+    let key = provider_oauth_device_session_storage_key(session_id);
     let value = serde_json::to_string(session).map_err(|_| {
         build_internal_control_error_response(
             http::StatusCode::SERVICE_UNAVAILABLE,
@@ -145,7 +125,7 @@ pub(crate) async fn read_provider_oauth_device_session(
     state: &AppState,
     session_id: &str,
 ) -> Result<Option<StoredAdminProviderOAuthDeviceSession>, GatewayError> {
-    let key = provider_oauth_device_session_key(session_id);
+    let key = provider_oauth_device_session_storage_key(session_id);
     let raw = if let Some(runner) = state.redis_kv_runner() {
         let mut connection = runner
             .client()
@@ -330,14 +310,6 @@ pub(crate) fn build_kiro_device_key_name(
     format!("kiro_{fallback} (idc)")
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct StoredAdminProviderOAuthState {
-    pub(crate) key_id: String,
-    pub(crate) provider_id: String,
-    pub(crate) provider_type: String,
-    pub(crate) pkce_verifier: Option<String>,
-}
-
 pub(crate) fn generate_provider_oauth_nonce() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
@@ -375,11 +347,11 @@ pub(crate) async fn save_provider_oauth_state(
             .map(|duration| duration.as_secs())
             .unwrap_or(0),
     });
-    let key = format!("provider_oauth_state:{nonce}");
+    let key = provider_oauth_state_storage_key(&nonce);
     let value = payload.to_string();
     if let Some(runner) = state.redis_kv_runner() {
         runner
-            .setex(&key, &value, Some(600))
+            .setex(&key, &value, Some(PROVIDER_OAUTH_STATE_TTL_SECS))
             .await
             .map_err(|err| GatewayError::Internal(err.to_string()))?;
         return Ok(nonce);
@@ -422,7 +394,7 @@ pub(crate) async fn consume_provider_oauth_state(
     state: &AppState,
     nonce: &str,
 ) -> Result<Option<StoredAdminProviderOAuthState>, GatewayError> {
-    let key = format!("provider_oauth_state:{nonce}");
+    let key = provider_oauth_state_storage_key(nonce);
     let raw = if let Some(runner) = state.redis_kv_runner() {
         let mut connection = runner
             .client()
@@ -731,83 +703,12 @@ pub(crate) fn build_provider_oauth_start_response(
     })
 }
 
-fn build_provider_oauth_batch_task_status_payload(
-    provider_id: &str,
-    state: &serde_json::Map<String, serde_json::Value>,
-) -> serde_json::Value {
-    let now_unix_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
-    let raw_status = state
-        .get("status")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("failed");
-    let normalized_status = match raw_status {
-        "submitted" | "processing" | "completed" | "failed" => raw_status,
-        _ => "failed",
-    };
-    let error_samples = state
-        .get("error_samples")
-        .and_then(serde_json::Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter(|item| item.is_object())
-                .cloned()
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-
-    json!({
-        "task_id": state
-            .get("task_id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default(),
-        "provider_id": provider_id,
-        "provider_type": state
-            .get("provider_type")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default(),
-        "status": normalized_status,
-        "total": state.get("total").and_then(serde_json::Value::as_i64).unwrap_or(0),
-        "processed": state.get("processed").and_then(serde_json::Value::as_i64).unwrap_or(0),
-        "success": state.get("success").and_then(serde_json::Value::as_i64).unwrap_or(0),
-        "failed": state.get("failed").and_then(serde_json::Value::as_i64).unwrap_or(0),
-        "progress_percent": state
-            .get("progress_percent")
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(0)
-            .clamp(0, 100),
-        "message": state.get("message").cloned().unwrap_or(serde_json::Value::Null),
-        "error": state.get("error").cloned().unwrap_or(serde_json::Value::Null),
-        "error_samples": error_samples,
-        "created_at": state
-            .get("created_at")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(now_unix_secs),
-        "started_at": state.get("started_at").cloned().unwrap_or(serde_json::Value::Null),
-        "finished_at": state
-            .get("finished_at")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
-        "updated_at": state
-            .get("updated_at")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(now_unix_secs),
-    })
-}
-
-fn provider_oauth_batch_task_key(task_id: &str) -> String {
-    format!("provider_oauth_batch_task:{task_id}")
-}
-
 pub(crate) async fn save_provider_oauth_batch_task_payload(
     state: &AppState,
     task_id: &str,
     task_state: &serde_json::Value,
 ) -> Result<(), GatewayError> {
-    let key = provider_oauth_batch_task_key(task_id);
+    let key = provider_oauth_batch_task_storage_key(task_id);
     let serialized =
         serde_json::to_string(task_state).map_err(|err| GatewayError::Internal(err.to_string()))?;
 
@@ -843,7 +744,7 @@ pub(crate) async fn read_provider_oauth_batch_task_payload(
     provider_id: &str,
     task_id: &str,
 ) -> Result<Option<serde_json::Value>, GatewayError> {
-    let key = provider_oauth_batch_task_key(task_id);
+    let key = provider_oauth_batch_task_storage_key(task_id);
     let raw = if let Some(runner) = state.redis_kv_runner() {
         let Ok(mut connection) = runner.client().get_multiplexed_async_connection().await else {
             return Err(GatewayError::Internal(

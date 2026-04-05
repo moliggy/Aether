@@ -9,7 +9,8 @@ use super::reads::{
     build_admin_wallet_list_response, build_admin_wallet_refund_requests_response,
     build_admin_wallet_refunds_response, build_admin_wallet_transactions_response,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::{AppState, GatewayError};
 use axum::{body::Body, http, response::Response};
 
 pub(super) async fn maybe_build_local_admin_wallets_routes_response(

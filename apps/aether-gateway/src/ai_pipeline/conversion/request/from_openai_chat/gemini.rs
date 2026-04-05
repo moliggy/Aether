@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::super::to_openai_chat::{extract_openai_text_content, parse_openai_tool_result_content};
 use super::shared::parse_openai_tool_arguments;
-use crate::gateway::ai_pipeline::planner::standard::{
+use crate::ai_pipeline::planner::standard::{
     copy_request_number_field_as, map_openai_reasoning_effort_to_gemini_budget,
     parse_openai_stop_sequences, value_as_u64,
 };

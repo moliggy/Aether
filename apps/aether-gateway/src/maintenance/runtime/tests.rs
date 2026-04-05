@@ -276,7 +276,7 @@ fn usage_cleanup_window_uses_non_overlapping_ranges() {
 #[tokio::test]
 async fn summarize_postgres_pool_uses_busy_connections_for_usage_rate() {
     let data = GatewayDataState::from_config(
-        crate::gateway::gateway_data::GatewayDataConfig::from_postgres_config(
+        crate::data::GatewayDataConfig::from_postgres_config(
             aether_data::postgres::PostgresPoolConfig {
                 database_url: "postgres://localhost/aether".to_string(),
                 min_connections: 1,

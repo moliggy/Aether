@@ -1,8 +1,8 @@
-pub(crate) mod kiro_stream;
+pub(crate) mod kiro;
 pub(crate) mod private_envelope;
 pub(crate) mod surfaces;
 
-pub(crate) use kiro_stream::KiroToClaudeCliStreamState;
+pub(crate) use kiro::KiroToClaudeCliStreamState;
 pub(crate) use private_envelope::{
     maybe_build_provider_private_stream_normalizer,
     maybe_normalize_provider_private_sync_report_payload,

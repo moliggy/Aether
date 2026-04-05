@@ -3,8 +3,8 @@ use super::{
     extract_execution_error_message, persist_provider_quota_refresh_state,
     quota_refresh_success_invalid_state,
 };
-use crate::gateway::handlers::ANTIGRAVITY_FETCH_AVAILABLE_MODELS_PATH;
-use crate::gateway::{AppState, GatewayError};
+use crate::handlers::ANTIGRAVITY_FETCH_AVAILABLE_MODELS_PATH;
+use crate::{AppState, GatewayError};
 use aether_contracts::{ExecutionPlan, ExecutionResult, ExecutionTimeouts, RequestBody};
 use aether_data::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
@@ -64,21 +64,22 @@ fn parse_antigravity_usage_response(
 
 async fn execute_antigravity_quota_plan(
     state: &AppState,
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
     authorization: (String, String),
     project_id: &str,
-    auth: &crate::gateway::provider_transport::AntigravityRequestAuthSupport,
+    auth: &crate::provider_transport::antigravity::AntigravityRequestAuthSupport,
 ) -> Result<Option<ExecutionResult>, GatewayError> {
     let supported_auth = match auth {
-        crate::gateway::provider_transport::AntigravityRequestAuthSupport::Supported(auth) => auth,
-        crate::gateway::provider_transport::AntigravityRequestAuthSupport::Unsupported(_) => {
+        crate::provider_transport::antigravity::AntigravityRequestAuthSupport::Supported(auth) => auth,
+        crate::provider_transport::antigravity::AntigravityRequestAuthSupport::Unsupported(_) => {
             return Ok(None);
         }
     };
 
-    let mut headers = crate::gateway::provider_transport::build_antigravity_static_identity_headers(
-        supported_auth,
-    );
+    let mut headers =
+        crate::provider_transport::antigravity::build_antigravity_static_identity_headers(
+            supported_auth,
+        );
     headers.insert("authorization".to_string(), authorization.1);
     headers.insert("content-type".to_string(), "application/json".to_string());
     headers.insert("accept".to_string(), "application/json".to_string());
@@ -112,9 +113,9 @@ async fn execute_antigravity_quota_plan(
         client_api_format: "gemini:chat".to_string(),
         provider_api_format: "antigravity:fetch_available_models".to_string(),
         model_name: Some("fetchAvailableModels".to_string()),
-        proxy: crate::gateway::provider_transport::resolve_transport_proxy_snapshot_with_tunnel_affinity(state, transport).await,
-        tls_profile: crate::gateway::provider_transport::resolve_transport_tls_profile(transport),
-        timeouts: crate::gateway::provider_transport::resolve_transport_execution_timeouts(
+        proxy: crate::provider_transport::resolve_transport_proxy_snapshot_with_tunnel_affinity(state, transport).await,
+        tls_profile: crate::provider_transport::resolve_transport_tls_profile(transport),
+        timeouts: crate::provider_transport::resolve_transport_execution_timeouts(
             transport,
         )
         .or(Some(ExecutionTimeouts {
@@ -159,7 +160,7 @@ pub(crate) async fn refresh_antigravity_provider_quota_locally(
         };
 
         let authorization = match state.resolve_local_oauth_request_auth(&transport).await? {
-            Some(crate::gateway::provider_transport::LocalResolvedOAuthRequestAuth::Header {
+            Some(crate::provider_transport::LocalResolvedOAuthRequestAuth::Header {
                 name,
                 value,
             }) => (name, value),
@@ -176,12 +177,14 @@ pub(crate) async fn refresh_antigravity_provider_quota_locally(
         };
 
         let antigravity_auth =
-            crate::gateway::provider_transport::resolve_local_antigravity_request_auth(&transport);
+            crate::provider_transport::antigravity::resolve_local_antigravity_request_auth(
+                &transport,
+            );
         let project_id = match &antigravity_auth {
-            crate::gateway::provider_transport::AntigravityRequestAuthSupport::Supported(auth) => {
+            crate::provider_transport::antigravity::AntigravityRequestAuthSupport::Supported(auth) => {
                 auth.project_id.clone()
             }
-            crate::gateway::provider_transport::AntigravityRequestAuthSupport::Unsupported(_) => {
+            crate::provider_transport::antigravity::AntigravityRequestAuthSupport::Unsupported(_) => {
                 failed_count += 1;
                 results.push(json!({
                     "key_id": key.id,

@@ -1,7 +1,7 @@
 use aether_contracts::{ExecutionPlan, ExecutionResult};
 
-use crate::gateway::constants::TRACE_ID_HEADER;
-use crate::gateway::{AppState, GatewayError};
+use crate::constants::TRACE_ID_HEADER;
+use crate::{AppState, GatewayError};
 
 fn build_remote_execution_runtime_request(
     state: &AppState,

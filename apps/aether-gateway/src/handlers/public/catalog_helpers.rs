@@ -1,8 +1,8 @@
-use crate::gateway::api::ai::public_api_format_local_path;
-use crate::gateway::handlers::{
+use crate::api::ai::public_api_format_local_path;
+use crate::handlers::{
     query_param_optional_bool, query_param_value, unix_secs_to_rfc3339,
 };
-use crate::gateway::AppState;
+use crate::AppState;
 use aether_data::repository::candidates::{
     PublicHealthTimelineBucket, RequestCandidateStatus, StoredRequestCandidate,
 };

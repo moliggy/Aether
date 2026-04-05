@@ -1,6 +1,7 @@
 use super::INTERNAL_GATEWAY_PATH_PREFIXES;
-use crate::gateway::handlers::{query_param_value, unix_secs_to_rfc3339};
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{query_param_value, unix_secs_to_rfc3339};
+use crate::{AppState, GatewayError};
 use aether_crypto::decrypt_python_fernet_ciphertext;
 #[cfg(test)]
 use aether_crypto::DEVELOPMENT_ENCRYPTION_KEY;
@@ -91,7 +92,7 @@ use self::common::{
     admin_monitoring_bad_request_response, admin_monitoring_data_unavailable_response,
     admin_monitoring_not_found_response, admin_monitoring_usage_is_error,
     admin_monitoring_user_behavior_user_id_from_path, AdminMonitoringCacheAffinityRecord,
-    AdminMonitoringCacheSnapshot,
+    AdminMonitoringCacheSnapshot, AdminMonitoringResilienceSnapshot,
 };
 use self::resilience::{
     build_admin_monitoring_reset_error_stats_response,
@@ -105,7 +106,7 @@ use self::route_filters::{
     parse_admin_monitoring_username_filter,
 };
 use self::routes::{
-    match_admin_monitoring_route, maybe_build_local_admin_monitoring_response, AdminMonitoringRoute,
+    match_admin_monitoring_route, AdminMonitoringRoute,
 };
 use self::trace::{
     build_admin_monitoring_trace_provider_stats_response,
@@ -120,7 +121,7 @@ const ADMIN_MONITORING_CACHE_AFFINITY_DEFAULT_TTL_SECS: u64 = 300;
 const ADMIN_MONITORING_CACHE_RESERVATION_RATIO: f64 = 0.1;
 const ADMIN_MONITORING_DYNAMIC_RESERVATION_PROBE_PHASE_REQUESTS: u64 = 100;
 
-pub(crate) async fn maybe_build_local_admin_monitoring_root_response(
+pub(crate) async fn maybe_build_local_admin_monitoring_response(
     state: &AppState,
     request_context: &GatewayPublicRequestContext,
 ) -> Result<Option<Response<Body>>, GatewayError> {

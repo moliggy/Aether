@@ -1,4 +1,5 @@
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::{AppState, GatewayError};
 use aether_data::repository::provider_catalog::StoredProviderCatalogKey;
 use axum::body::{Body, Bytes};
 use axum::http::{self, Response};

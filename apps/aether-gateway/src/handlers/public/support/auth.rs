@@ -301,7 +301,7 @@ pub(super) async fn maybe_build_local_auth_response(
 #[cfg(test)]
 mod tests {
     use super::{maybe_build_local_auth_response, AppState, GatewayPublicRequestContext};
-    use crate::gateway::GatewayControlDecision;
+    use crate::control::GatewayControlDecision;
     use axum::body::to_bytes;
     use axum::http::{HeaderMap, Method, StatusCode, Uri};
 

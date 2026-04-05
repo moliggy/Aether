@@ -8,11 +8,12 @@ use axum::http::header::CONTENT_TYPE;
 use axum::http::Response;
 use tracing::warn;
 
-use crate::gateway::constants::{
+use crate::constants::{
     CONTROL_CANDIDATE_ID_HEADER, CONTROL_REQUEST_ID_HEADER, EXECUTION_PATH_CONTROL_EXECUTE_STREAM,
     EXECUTION_PATH_CONTROL_EXECUTE_SYNC,
 };
-use crate::gateway::{AppState, GatewayControlDecision};
+use crate::control::GatewayControlDecision;
+use crate::AppState;
 
 pub(crate) fn record_shadow_result_non_blocking(
     state: AppState,
@@ -130,11 +131,12 @@ mod tests {
     use axum::http::{Method, Response, StatusCode};
 
     use super::record_shadow_result_non_blocking;
-    use crate::gateway::constants::{
+    use crate::constants::{
         CONTROL_REQUEST_ID_HEADER, EXECUTION_PATH_CONTROL_EXECUTE_SYNC,
         EXECUTION_PATH_EXECUTION_RUNTIME_SYNC,
     };
-    use crate::gateway::{AppState, GatewayControlDecision};
+    use crate::control::GatewayControlDecision;
+    use crate::AppState;
 
     fn sample_decision() -> GatewayControlDecision {
         GatewayControlDecision {

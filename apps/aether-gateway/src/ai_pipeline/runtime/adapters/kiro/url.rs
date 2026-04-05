@@ -1,4 +1,4 @@
-use crate::gateway::provider_transport::url::build_passthrough_path_url;
+use crate::provider_transport::url::build_passthrough_path_url;
 
 use super::credentials::DEFAULT_REGION;
 

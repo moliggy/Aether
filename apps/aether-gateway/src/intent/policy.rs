@@ -4,12 +4,11 @@ use std::hash::{Hash, Hasher};
 use aether_contracts::ExecutionPlan;
 use axum::body::Bytes;
 
-use crate::gateway::headers::header_value_str;
-use crate::gateway::provider_transport::is_codex_cli_backend_url;
-use crate::gateway::{
-    AppState, GatewayControlDecision, GatewayControlSyncDecisionResponse,
-    DIRECT_PLAN_BYPASS_MAX_ENTRIES, DIRECT_PLAN_BYPASS_TTL,
-};
+use super::constants::{DIRECT_PLAN_BYPASS_MAX_ENTRIES, DIRECT_PLAN_BYPASS_TTL};
+use crate::control::GatewayControlDecision;
+use crate::headers::header_value_str;
+use crate::provider_transport::provider_types::is_codex_cli_backend_url;
+use crate::{AppState, GatewayControlSyncDecisionResponse};
 
 pub(crate) fn should_bypass_execution_runtime_decision(
     payload: &GatewayControlSyncDecisionResponse,

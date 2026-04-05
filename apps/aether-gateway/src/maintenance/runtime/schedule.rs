@@ -4,7 +4,7 @@ use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc, Weekday};
 use chrono_tz::Tz;
 use tracing::warn;
 
-use crate::gateway::gateway_data::GatewayDataState;
+use crate::data::GatewayDataState;
 
 use super::{
     system_config_string, WalletDailyUsageAggregationTarget, DB_MAINTENANCE_HOUR,

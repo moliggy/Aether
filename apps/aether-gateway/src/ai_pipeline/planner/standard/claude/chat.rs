@@ -1,4 +1,4 @@
-use crate::gateway::ai_pipeline::planner::{
+use crate::ai_pipeline::planner::common::{
     CLAUDE_CHAT_STREAM_PLAN_KIND, CLAUDE_CHAT_SYNC_PLAN_KIND,
 };
 

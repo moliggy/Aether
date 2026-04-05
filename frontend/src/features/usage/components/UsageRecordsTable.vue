@@ -264,9 +264,9 @@
               :response-time-ms="record.response_time_ms ?? null"
             /></span>
             <span
-              v-else-if="record.response_time_ms != null"
+              v-else-if="record.response_time_ms != null || record.first_byte_time_ms != null"
               class="tabular-nums"
-            >{{ record.first_byte_time_ms != null ? (record.first_byte_time_ms / 1000).toFixed(1) + '/' : '' }}{{ (record.response_time_ms / 1000).toFixed(1) }}s</span>
+            >{{ record.first_byte_time_ms != null ? (record.first_byte_time_ms / 1000).toFixed(1) + '/' : '' }}{{ record.response_time_ms != null ? (record.response_time_ms / 1000).toFixed(1) : '-' }}{{ record.response_time_ms != null ? 's' : '' }}</span>
             <span
               v-else
               class="tabular-nums"
@@ -419,11 +419,11 @@
               <div class="flex flex-col text-xs gap-0.5">
                 <span>{{ record.provider }}</span>
                 <span
-                  v-if="record.api_key_name"
+                  v-if="record.provider_key_name || record.api_key_name"
                   class="text-muted-foreground truncate"
-                  :title="record.api_key_name"
+                  :title="record.provider_key_name || record.api_key_name"
                 >
-                  {{ record.api_key_name }}
+                  {{ record.provider_key_name || record.api_key_name }}
                   <span
                     v-if="record.rate_multiplier && record.rate_multiplier !== 1.0"
                     class="text-foreground/60"
@@ -608,7 +608,7 @@
             </div>
             <!-- 已完成状态：首字 + 总耗时 -->
             <div
-              v-else-if="record.response_time_ms != null"
+              v-else-if="record.response_time_ms != null || record.first_byte_time_ms != null"
               class="flex flex-col items-end text-xs gap-0.5"
             >
               <span
@@ -619,7 +619,14 @@
                 v-else
                 class="text-muted-foreground"
               >-</span>
-              <span class="text-muted-foreground tabular-nums">{{ (record.response_time_ms / 1000).toFixed(2) }}s</span>
+              <span
+                v-if="record.response_time_ms != null"
+                class="text-muted-foreground tabular-nums"
+              >{{ (record.response_time_ms / 1000).toFixed(2) }}s</span>
+              <span
+                v-else
+                class="text-muted-foreground"
+              >-</span>
             </div>
             <span
               v-else

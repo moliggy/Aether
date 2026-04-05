@@ -2,8 +2,9 @@ use super::{
     admin_monitoring_bad_request_response, admin_monitoring_not_found_response,
     parse_admin_monitoring_limit,
 };
-use crate::gateway::handlers::{query_param_value, unix_secs_to_rfc3339};
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{query_param_value, unix_secs_to_rfc3339};
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     response::{IntoResponse, Response},

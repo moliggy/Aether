@@ -213,6 +213,165 @@ impl StoredUserExportRow {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct StoredUserSessionRecord {
+    pub id: String,
+    pub user_id: String,
+    pub client_device_id: String,
+    pub device_label: Option<String>,
+    pub refresh_token_hash: String,
+    pub prev_refresh_token_hash: Option<String>,
+    pub rotated_at: Option<DateTime<Utc>>,
+    pub last_seen_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub revoke_reason: Option<String>,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl StoredUserSessionRecord {
+    pub const REFRESH_GRACE_SECONDS: i64 = 10;
+    pub const TOUCH_INTERVAL_SECONDS: i64 = 300;
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: String,
+        user_id: String,
+        client_device_id: String,
+        device_label: Option<String>,
+        refresh_token_hash: String,
+        prev_refresh_token_hash: Option<String>,
+        rotated_at: Option<DateTime<Utc>>,
+        last_seen_at: Option<DateTime<Utc>>,
+        expires_at: Option<DateTime<Utc>>,
+        revoked_at: Option<DateTime<Utc>>,
+        revoke_reason: Option<String>,
+        ip_address: Option<String>,
+        user_agent: Option<String>,
+        created_at: Option<DateTime<Utc>>,
+        updated_at: Option<DateTime<Utc>>,
+    ) -> Result<Self, crate::DataLayerError> {
+        if id.trim().is_empty() {
+            return Err(crate::DataLayerError::UnexpectedValue(
+                "user_sessions.id is empty".to_string(),
+            ));
+        }
+        if user_id.trim().is_empty() {
+            return Err(crate::DataLayerError::UnexpectedValue(
+                "user_sessions.user_id is empty".to_string(),
+            ));
+        }
+        if client_device_id.trim().is_empty() {
+            return Err(crate::DataLayerError::UnexpectedValue(
+                "user_sessions.client_device_id is empty".to_string(),
+            ));
+        }
+        if refresh_token_hash.trim().is_empty() {
+            return Err(crate::DataLayerError::UnexpectedValue(
+                "user_sessions.refresh_token_hash is empty".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            id,
+            user_id,
+            client_device_id,
+            device_label,
+            refresh_token_hash,
+            prev_refresh_token_hash,
+            rotated_at,
+            last_seen_at,
+            expires_at,
+            revoked_at,
+            revoke_reason,
+            ip_address,
+            user_agent,
+            created_at,
+            updated_at,
+        })
+    }
+
+    pub fn hash_refresh_token(token: &str) -> String {
+        use sha2::Digest;
+
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(token.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    pub fn verify_refresh_token(&self, token: &str, now: DateTime<Utc>) -> (bool, bool) {
+        let token_hash = Self::hash_refresh_token(token);
+        if self.refresh_token_hash == token_hash {
+            return (true, false);
+        }
+        let Some(prev_hash) = self.prev_refresh_token_hash.as_ref() else {
+            return (false, false);
+        };
+        let Some(rotated_at) = self.rotated_at else {
+            return (false, false);
+        };
+        if prev_hash == &token_hash
+            && now.signed_duration_since(rotated_at).num_seconds() <= Self::REFRESH_GRACE_SECONDS
+        {
+            return (true, true);
+        }
+        (false, false)
+    }
+
+    pub fn is_revoked(&self) -> bool {
+        self.revoked_at.is_some()
+    }
+
+    pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
+        self.expires_at.is_none_or(|expires_at| expires_at <= now)
+    }
+
+    pub fn should_touch(&self, now: DateTime<Utc>) -> bool {
+        self.last_seen_at
+            .map(|last_seen_at| {
+                now.signed_duration_since(last_seen_at).num_seconds()
+                    >= Self::TOUCH_INTERVAL_SECONDS
+            })
+            .unwrap_or(true)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct StoredUserPreferenceRecord {
+    pub user_id: String,
+    pub avatar_url: Option<String>,
+    pub bio: Option<String>,
+    pub default_provider_id: Option<String>,
+    pub default_provider_name: Option<String>,
+    pub theme: String,
+    pub language: String,
+    pub timezone: String,
+    pub email_notifications: bool,
+    pub usage_alerts: bool,
+    pub announcement_notifications: bool,
+}
+
+impl StoredUserPreferenceRecord {
+    pub fn default_for_user(user_id: impl Into<String>) -> Self {
+        Self {
+            user_id: user_id.into(),
+            avatar_url: None,
+            bio: None,
+            default_provider_id: None,
+            default_provider_name: None,
+            theme: "light".to_string(),
+            language: "zh-CN".to_string(),
+            timezone: "Asia/Shanghai".to_string(),
+            email_notifications: true,
+            usage_alerts: true,
+            announcement_notifications: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct UserExportListQuery {
     pub skip: usize,
@@ -336,9 +495,13 @@ fn parse_string_list_array(
 
 #[cfg(test)]
 mod tests {
+    use chrono::{Duration, Utc};
     use serde_json::Value;
 
-    use super::{StoredUserAuthRecord, StoredUserExportRow};
+    use super::{
+        StoredUserAuthRecord, StoredUserExportRow, StoredUserPreferenceRecord,
+        StoredUserSessionRecord,
+    };
 
     #[test]
     fn builds_user_export_row_with_allowed_lists() {
@@ -446,5 +609,50 @@ mod tests {
             Some(vec!["openai:chat".to_string()])
         );
         assert_eq!(row.allowed_models, Some(vec!["gpt-4.1".to_string()]));
+    }
+
+    #[test]
+    fn user_session_previous_refresh_token_has_grace_window() {
+        let now = Utc::now();
+        let session = StoredUserSessionRecord::new(
+            "session-1".to_string(),
+            "user-1".to_string(),
+            "device-1".to_string(),
+            None,
+            StoredUserSessionRecord::hash_refresh_token("current-token"),
+            Some(StoredUserSessionRecord::hash_refresh_token("prev-token")),
+            Some(now - Duration::seconds(StoredUserSessionRecord::REFRESH_GRACE_SECONDS - 1)),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("session should build");
+
+        assert_eq!(
+            session.verify_refresh_token("prev-token", now),
+            (true, true)
+        );
+        assert_eq!(
+            session.verify_refresh_token("current-token", now),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn user_preference_defaults_match_gateway_expectations() {
+        let record = StoredUserPreferenceRecord::default_for_user("user-1");
+
+        assert_eq!(record.user_id, "user-1");
+        assert_eq!(record.theme, "light");
+        assert_eq!(record.language, "zh-CN");
+        assert_eq!(record.timezone, "Asia/Shanghai");
+        assert!(record.email_notifications);
+        assert!(record.usage_alerts);
+        assert!(record.announcement_notifications);
     }
 }

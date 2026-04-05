@@ -7,6 +7,10 @@ repository.workspace = true
 description = "Shared billing domain core for Aether Rust migration"
 
 [dependencies]
+aether-data.workspace = true
+aether-usage-runtime.workspace = true
+async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true

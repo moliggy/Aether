@@ -1,6 +1,3 @@
-#[path = "../video_tasks/mod.rs"]
-pub(crate) mod video;
-
 mod http;
 mod query;
 mod runtime;
@@ -18,5 +15,5 @@ pub(crate) use runtime::{
     execute_video_task_refresh_plan, finalize_video_task_if_terminal, spawn_video_task_poller,
     VideoTaskPollerConfig,
 };
-pub(crate) use video::VideoTaskService;
-pub use video::VideoTaskTruthSourceMode;
+pub(crate) use crate::video_tasks::VideoTaskService;
+pub use crate::video_tasks::VideoTaskTruthSourceMode;

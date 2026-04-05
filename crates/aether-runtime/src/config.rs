@@ -1,6 +1,6 @@
-use crate::observability::ServiceObservabilityConfig;
+use crate::observability::{FileLoggingConfig, LogDestination, ServiceObservabilityConfig};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceRuntimeConfig {
     pub service_name: &'static str,
     pub default_log_filter: &'static str,
@@ -18,6 +18,26 @@ impl ServiceRuntimeConfig {
 
     pub const fn with_log_format(mut self, log_format: crate::LogFormat) -> Self {
         self.observability.log_format = log_format;
+        self
+    }
+
+    pub const fn with_log_destination(mut self, log_destination: LogDestination) -> Self {
+        self.observability.log_destination = log_destination;
+        self
+    }
+
+    pub fn with_file_logging(mut self, file_logging: FileLoggingConfig) -> Self {
+        self.observability.file_logging = Some(file_logging);
+        self
+    }
+
+    pub fn with_node_role(mut self, node_role: impl Into<String>) -> Self {
+        self.observability.node_role = Some(node_role.into());
+        self
+    }
+
+    pub fn with_instance_id(mut self, instance_id: impl Into<String>) -> Self {
+        self.observability.instance_id = Some(instance_id.into());
         self
     }
 

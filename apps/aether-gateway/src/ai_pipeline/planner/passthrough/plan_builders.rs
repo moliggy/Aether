@@ -1,7 +1,7 @@
 use aether_contracts::{ExecutionPlan, RequestBody};
 
 use super::{augment_sync_report_context, LocalStreamPlanAndReport, LocalSyncPlanAndReport};
-use crate::gateway::{GatewayControlSyncDecisionResponse, GatewayError};
+use crate::{GatewayControlSyncDecisionResponse, GatewayError};
 
 pub(crate) fn build_passthrough_sync_plan_from_decision(
     parts: &http::request::Parts,

@@ -1,6 +1,8 @@
 use super::admin_stats_provider_quota_usage_empty_response;
-use crate::gateway::handlers::unix_secs_to_rfc3339;
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::unix_secs_to_rfc3339;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,

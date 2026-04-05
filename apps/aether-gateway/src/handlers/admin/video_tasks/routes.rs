@@ -1,6 +1,7 @@
-use crate::gateway;
-use crate::gateway::handlers::query_param_value;
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::async_task;
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::query_param_value;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,
@@ -9,7 +10,7 @@ use axum::{
 };
 use serde_json::json;
 
-use super::super::build_proxy_error_response;
+use super::super::{attach_admin_audit_response, build_proxy_error_response};
 use super::video_tasks_builders::{
     admin_video_task_detail_id_from_path, admin_video_task_nested_id_from_path,
     admin_video_task_status_name, admin_video_task_timestamp, build_admin_video_task_list_item,
@@ -68,8 +69,7 @@ pub(super) async fn maybe_build_local_admin_video_tasks_response(
             query_param_value(request_context.request_query_string.as_deref(), "page_size")
                 .and_then(|value| value.parse::<usize>().ok())
                 .unwrap_or(20);
-        let response =
-            gateway::async_task::read_video_task_page(state, &filter, page, page_size).await?;
+        let response = async_task::read_video_task_page(state, &filter, page, page_size).await?;
         let provider_names = build_admin_video_task_provider_names(state, &response.items).await?;
         return Ok(Some(
             Json(json!({
@@ -99,7 +99,7 @@ pub(super) async fn maybe_build_local_admin_video_tasks_response(
             model_substring: None,
             client_api_format: None,
         };
-        let stats = gateway::async_task::read_video_task_stats(
+        let stats = async_task::read_video_task_stats(
             state,
             &filter,
             current_admin_video_task_unix_secs(),
@@ -125,9 +125,9 @@ pub(super) async fn maybe_build_local_admin_video_tasks_response(
         else {
             return Ok(None);
         };
-        let stored = match gateway::async_task::cancel_video_task_record(state, task_id).await {
+        let stored = match async_task::cancel_video_task_record(state, task_id).await {
             Ok(stored) => stored,
-            Err(gateway::async_task::CancelVideoTaskError::NotFound) => {
+            Err(async_task::CancelVideoTaskError::NotFound) => {
                 return Ok(Some(
                     (
                         http::StatusCode::NOT_FOUND,
@@ -136,7 +136,7 @@ pub(super) async fn maybe_build_local_admin_video_tasks_response(
                         .into_response(),
                 ));
             }
-            Err(gateway::async_task::CancelVideoTaskError::InvalidStatus(status)) => {
+            Err(async_task::CancelVideoTaskError::InvalidStatus(status)) => {
                 return Ok(Some(
                     (
                         http::StatusCode::BAD_REQUEST,
@@ -150,21 +150,25 @@ pub(super) async fn maybe_build_local_admin_video_tasks_response(
                         .into_response(),
                 ));
             }
-            Err(gateway::async_task::CancelVideoTaskError::Response(response)) => {
+            Err(async_task::CancelVideoTaskError::Response(response)) => {
                 return Ok(Some(response));
             }
-            Err(gateway::async_task::CancelVideoTaskError::Gateway(err)) => {
+            Err(async_task::CancelVideoTaskError::Gateway(err)) => {
                 return Err(err);
             }
         };
-        return Ok(Some(
+        return Ok(Some(attach_admin_audit_response(
             Json(json!({
                 "id": stored.id,
                 "status": "cancelled",
                 "message": "Task cancelled successfully",
             }))
             .into_response(),
-        ));
+            "admin_video_task_cancelled",
+            "cancel_video_task",
+            "video_task",
+            &stored.id,
+        )));
     }
 
     if request_context.request_method == http::Method::GET {
@@ -175,7 +179,7 @@ pub(super) async fn maybe_build_local_admin_video_tasks_response(
             else {
                 return Ok(None);
             };
-            let Some(task) = gateway::async_task::read_video_task_detail(state, task_id).await?
+            let Some(task) = async_task::read_video_task_detail(state, task_id).await?
             else {
                 return Ok(Some(
                     (
@@ -300,11 +304,15 @@ pub(super) async fn maybe_build_local_admin_video_tasks_response(
             );
             payload.insert("request_metadata".to_string(), json!(task.request_metadata));
 
-            return Ok(Some(
+            return Ok(Some(attach_admin_audit_response(
                 Json(serde_json::Value::Object(payload)).into_response(),
-            ));
+                "admin_video_task_detail_viewed",
+                "view_video_task_detail",
+                "video_task",
+                &task.id,
+            )));
         };
-        let Some(task) = gateway::async_task::read_video_task_detail(state, task_id).await? else {
+        let Some(task) = async_task::read_video_task_detail(state, task_id).await? else {
             return Ok(Some(
                 (
                     http::StatusCode::NOT_FOUND,
@@ -329,7 +337,7 @@ pub(super) async fn maybe_build_local_admin_video_tasks_response(
             ));
         }
         let Some(source) =
-            gateway::async_task::read_video_task_video_source(state, task_id).await?
+            async_task::read_video_task_video_source(state, task_id).await?
         else {
             return Ok(Some(
                 (
@@ -339,9 +347,13 @@ pub(super) async fn maybe_build_local_admin_video_tasks_response(
                     .into_response(),
             ));
         };
-        return Ok(Some(
-            gateway::async_task::build_video_task_video_response(state, task_id, source).await?,
-        ));
+        return Ok(Some(attach_admin_audit_response(
+            async_task::build_video_task_video_response(state, task_id, source).await?,
+            "admin_video_task_video_viewed",
+            "view_video_task_video",
+            "video_task_video",
+            task_id,
+        )));
     }
 
     Ok(None)

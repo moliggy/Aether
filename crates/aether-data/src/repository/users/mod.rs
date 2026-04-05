@@ -5,6 +5,6 @@ mod types;
 pub use memory::InMemoryUserReadRepository;
 pub use sql::SqlxUserReadRepository;
 pub use types::{
-    StoredUserAuthRecord, StoredUserExportRow, StoredUserSummary, UserExportListQuery,
-    UserExportSummary, UserReadRepository,
+    StoredUserAuthRecord, StoredUserExportRow, StoredUserPreferenceRecord, StoredUserSessionRecord,
+    StoredUserSummary, UserExportListQuery, UserExportSummary, UserReadRepository,
 };

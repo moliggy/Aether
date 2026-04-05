@@ -11,7 +11,9 @@ use super::{
     hash_admin_user_api_key, masked_user_api_key_display, normalize_admin_optional_api_key_name,
     normalize_admin_user_api_formats, normalize_admin_user_string_list,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,
@@ -111,22 +113,28 @@ pub(super) async fn build_admin_create_api_key_response(
         return Ok(build_admin_api_keys_data_unavailable_response());
     };
 
-    Ok(Json(json!({
-        "id": created.api_key_id,
-        "key": plaintext_key,
-        "name": created.name,
-        "key_display": masked_user_api_key_display(state, created.key_encrypted.as_deref()),
-        "is_standalone": true,
-        "is_active": created.is_active,
-        "rate_limit": created.rate_limit,
-        "allowed_providers": created.allowed_providers,
-        "allowed_api_formats": created.allowed_api_formats,
-        "allowed_models": created.allowed_models,
-        "expires_at": format_optional_unix_secs_iso8601(created.expires_at_unix_secs),
-        "wallet": serde_json::Value::Null,
-        "message": "独立余额Key创建成功，请妥善保存完整密钥，后续将无法查看",
-    }))
-    .into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({
+            "id": created.api_key_id,
+            "key": plaintext_key,
+            "name": created.name,
+            "key_display": masked_user_api_key_display(state, created.key_encrypted.as_deref()),
+            "is_standalone": true,
+            "is_active": created.is_active,
+            "rate_limit": created.rate_limit,
+            "allowed_providers": created.allowed_providers,
+            "allowed_api_formats": created.allowed_api_formats,
+            "allowed_models": created.allowed_models,
+            "expires_at": format_optional_unix_secs_iso8601(created.expires_at_unix_secs),
+            "wallet": serde_json::Value::Null,
+            "message": "独立余额Key创建成功，请妥善保存完整密钥，后续将无法查看",
+        }))
+        .into_response(),
+        "admin_standalone_api_key_created",
+        "create_standalone_api_key",
+        "api_key",
+        &created.api_key_id,
+    ))
 }
 
 pub(super) async fn build_admin_update_api_key_response(
@@ -244,7 +252,13 @@ pub(super) async fn build_admin_update_api_key_response(
     let mut payload =
         build_admin_api_key_detail_payload(state, &updated, total_tokens, wallet.as_ref());
     payload["message"] = json!("API密钥已更新");
-    Ok(Json(payload).into_response())
+    Ok(attach_admin_audit_response(
+        Json(payload).into_response(),
+        "admin_standalone_api_key_updated",
+        "update_standalone_api_key",
+        "api_key",
+        &api_key_id,
+    ))
 }
 
 pub(super) async fn build_admin_toggle_api_key_response(
@@ -295,12 +309,18 @@ pub(super) async fn build_admin_toggle_api_key_response(
         return Ok(build_admin_api_keys_not_found_response());
     };
 
-    Ok(Json(json!({
-        "id": updated.api_key_id,
-        "is_active": updated.is_active,
-        "message": if updated.is_active { "API密钥已启用" } else { "API密钥已禁用" },
-    }))
-    .into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({
+            "id": updated.api_key_id,
+            "is_active": updated.is_active,
+            "message": if updated.is_active { "API密钥已启用" } else { "API密钥已禁用" },
+        }))
+        .into_response(),
+        "admin_standalone_api_key_toggled",
+        "toggle_standalone_api_key",
+        "api_key",
+        &api_key_id,
+    ))
 }
 
 pub(super) async fn build_admin_delete_api_key_response(
@@ -316,7 +336,13 @@ pub(super) async fn build_admin_delete_api_key_response(
     };
 
     match state.delete_standalone_api_key(&api_key_id).await? {
-        true => Ok(Json(json!({ "message": "API密钥已删除" })).into_response()),
+        true => Ok(attach_admin_audit_response(
+            Json(json!({ "message": "API密钥已删除" })).into_response(),
+            "admin_standalone_api_key_deleted",
+            "delete_standalone_api_key",
+            "api_key",
+            &api_key_id,
+        )),
         false => Ok(build_admin_api_keys_not_found_response()),
     }
 }

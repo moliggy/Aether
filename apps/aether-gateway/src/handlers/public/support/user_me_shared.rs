@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::gateway::gateway_data::StoredUserSessionRecord;
+use crate::data::state::StoredUserSessionRecord;
 
 pub(super) fn format_users_me_optional_datetime_iso8601(
     value: Option<DateTime<Utc>>,

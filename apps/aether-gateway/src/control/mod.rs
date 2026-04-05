@@ -1,13 +1,9 @@
 #[cfg(test)]
 use axum::http::Uri;
 
-#[path = "auth/mod.rs"]
 mod auth;
-#[path = "execute.rs"]
 mod execute;
-#[path = "public.rs"]
 mod public;
-#[path = "route.rs"]
 mod route;
 
 pub(crate) use auth::{

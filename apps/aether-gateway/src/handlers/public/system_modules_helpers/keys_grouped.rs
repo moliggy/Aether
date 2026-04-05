@@ -1,9 +1,17 @@
 use super::enabled_key_capability_short_names;
-use crate::gateway::handlers::{json_string_list, masked_catalog_api_key, unix_secs_to_rfc3339};
-use crate::gateway::AppState;
+use crate::handlers::{json_string_list, unix_secs_to_rfc3339};
+use crate::AppState;
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+fn grouped_key_masked_label(auth_type: &str) -> &'static str {
+    match auth_type.trim() {
+        "service_account" | "vertex_ai" => "[Service Account]",
+        "oauth" => "[OAuth Token]",
+        _ => "[API Key]",
+    }
+}
 
 pub(crate) async fn build_admin_keys_grouped_by_format_payload(
     state: &AppState,
@@ -21,14 +29,22 @@ pub(crate) async fn build_admin_keys_grouped_by_format_payload(
         .iter()
         .map(|provider| provider.id.clone())
         .collect::<Vec<_>>();
-    let provider_by_id = providers
+    let provider_metadata_by_id = providers
         .iter()
-        .map(|provider| (provider.id.clone(), provider.clone()))
-        .collect::<BTreeMap<_, _>>();
+        .map(|provider| {
+            (
+                provider.id.clone(),
+                (provider.name.clone(), provider.is_active),
+            )
+        })
+        .collect::<HashMap<_, _>>();
 
-    let endpoint_base_url_by_provider_and_format = state
-        .list_provider_catalog_endpoints_by_provider_ids(&provider_ids)
-        .await
+    let (endpoints_result, keys_result) = tokio::join!(
+        state.list_provider_catalog_endpoints_by_provider_ids(&provider_ids),
+        state.list_provider_catalog_keys_by_provider_ids(&provider_ids),
+    );
+
+    let endpoint_base_url_by_provider_and_format = endpoints_result
         .ok()
         .unwrap_or_default()
         .into_iter()
@@ -39,13 +55,9 @@ pub(crate) async fn build_admin_keys_grouped_by_format_payload(
                 endpoint.base_url,
             )
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<HashMap<_, _>>();
 
-    let mut keys = state
-        .list_provider_catalog_keys_by_provider_ids(&provider_ids)
-        .await
-        .ok()
-        .unwrap_or_default();
+    let mut keys = keys_result.ok().unwrap_or_default();
     keys.sort_by(|left, right| {
         left.internal_priority
             .cmp(&right.internal_priority)
@@ -60,7 +72,9 @@ pub(crate) async fn build_admin_keys_grouped_by_format_payload(
 
     let mut grouped = BTreeMap::<String, Vec<serde_json::Value>>::new();
     for key in keys {
-        let Some(provider) = provider_by_id.get(&key.provider_id) else {
+        let Some((provider_name, provider_is_active)) =
+            provider_metadata_by_id.get(&key.provider_id)
+        else {
             continue;
         };
         let request_count = u64::from(key.request_count.unwrap_or(0));
@@ -113,13 +127,13 @@ pub(crate) async fn build_admin_keys_grouped_by_format_payload(
                 "provider_id": key.provider_id,
                 "name": key.name,
                 "auth_type": key.auth_type,
-                "api_key_masked": masked_catalog_api_key(state, &key),
+                "api_key_masked": grouped_key_masked_label(&key.auth_type),
                 "internal_priority": key.internal_priority,
                 "global_priority_by_format": key.global_priority_by_format,
                 "rate_multipliers": key.rate_multipliers,
                 "is_active": key.is_active,
-                "provider_active": provider.is_active,
-                "provider_name": provider.name,
+                "provider_active": provider_is_active,
+                "provider_name": provider_name,
                 "api_formats": api_formats,
                 "capabilities": capability_names,
                 "success_rate": success_rate,
@@ -127,7 +141,7 @@ pub(crate) async fn build_admin_keys_grouped_by_format_payload(
                 "request_count": request_count,
                 "api_format": api_format,
                 "endpoint_base_url": endpoint_base_url_by_provider_and_format
-                    .get(&(provider.id.clone(), api_format.clone()))
+                    .get(&(key.provider_id.clone(), api_format.clone()))
                     .cloned(),
                 "format_priority": priority_by_format
                     .get(api_format)

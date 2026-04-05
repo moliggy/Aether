@@ -3,7 +3,7 @@ use axum::Router;
 use serde_json::json;
 
 use super::{claude, gemini, openai};
-use crate::gateway::{proxy_request, AppState};
+use crate::{handlers::proxy::proxy_request, state::AppState};
 
 // Router registration patterns live here so AI public ingress has a single mount registry.
 // They intentionally stay separate from manifest-facing route inventories in constants.rs,

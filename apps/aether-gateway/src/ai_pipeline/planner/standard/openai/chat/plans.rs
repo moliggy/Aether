@@ -8,15 +8,15 @@ use super::{
     maybe_build_local_openai_chat_decision_payload_for_candidate, AppState, GatewayControlDecision,
     GatewayError, LocalExecutionRuntimeMissDiagnostic, LocalOpenAiChatDecisionInput,
 };
-use crate::gateway::ai_pipeline::planner::plan_builders::{
+use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::ai_pipeline::planner::common::{
+    OPENAI_CHAT_STREAM_PLAN_KIND, OPENAI_CHAT_SYNC_PLAN_KIND,
+};
+use crate::ai_pipeline::planner::plan_builders::{
     build_openai_chat_stream_plan_from_decision, build_openai_chat_sync_plan_from_decision,
     LocalStreamPlanAndReport, LocalSyncPlanAndReport,
 };
-use crate::gateway::ai_pipeline::planner::prefer_local_tunnel_owner_candidates;
-use crate::gateway::ai_pipeline::planner::{
-    OPENAI_CHAT_STREAM_PLAN_KIND, OPENAI_CHAT_SYNC_PLAN_KIND,
-};
-use crate::gateway::scheduler::{
+use crate::scheduler::{
     list_selectable_candidates, GatewayMinimalCandidateSelectionCandidate,
 };
 
@@ -352,7 +352,7 @@ pub(super) async fn list_local_openai_chat_candidates(
 }
 
 fn auth_snapshot_allows_cross_format_openai_chat_candidate(
-    auth_snapshot: &crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot,
+    auth_snapshot: &crate::data::auth::GatewayAuthApiKeySnapshot,
     requested_model: &str,
     candidate: &GatewayMinimalCandidateSelectionCandidate,
 ) -> bool {

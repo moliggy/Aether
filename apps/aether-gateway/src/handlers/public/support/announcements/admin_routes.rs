@@ -6,7 +6,8 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayPublicRequestContext;
+use crate::{AppState, GatewayError};
 
 use super::announcements_shared::{
     announcements_bad_request_response, announcements_not_found_response,

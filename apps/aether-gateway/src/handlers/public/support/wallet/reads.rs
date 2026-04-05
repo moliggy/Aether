@@ -3,10 +3,9 @@ use super::{
     query_param_value, resolve_authenticated_local_user, unix_secs_to_rfc3339, AppState, Body,
     GatewayError, GatewayPublicRequestContext, Response, WALLET_LEGACY_TIMEZONE,
 };
-use crate::gateway::handlers::admin::round_to;
+use crate::handlers::round_to;
 use chrono::Utc;
 use serde_json::json;
-use sqlx::Row;
 
 const WALLET_TODAY_COST_UNAVAILABLE_DETAIL: &str = "钱包今日费用数据暂不可用";
 
@@ -135,31 +134,26 @@ pub(super) fn build_wallet_zero_today_entry() -> serde_json::Value {
     )
 }
 
-pub(super) fn wallet_transaction_payload_from_row(
-    row: &sqlx::postgres::PgRow,
-) -> Result<serde_json::Value, GatewayError> {
-    let created_at = row
-        .try_get::<Option<i64>, _>("created_at_unix_secs")
-        .map_err(|err| GatewayError::Internal(err.to_string()))?
-        .and_then(|value| u64::try_from(value).ok())
-        .and_then(unix_secs_to_rfc3339);
-    Ok(json!({
-        "id": row.try_get::<String, _>("id").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "category": row.try_get::<String, _>("category").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "reason_code": row.try_get::<String, _>("reason_code").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "amount": row.try_get::<f64, _>("amount").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "balance_before": row.try_get::<f64, _>("balance_before").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "balance_after": row.try_get::<f64, _>("balance_after").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "recharge_balance_before": row.try_get::<f64, _>("recharge_balance_before").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "recharge_balance_after": row.try_get::<f64, _>("recharge_balance_after").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "gift_balance_before": row.try_get::<f64, _>("gift_balance_before").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "gift_balance_after": row.try_get::<f64, _>("gift_balance_after").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "link_type": row.try_get::<Option<String>, _>("link_type").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "link_id": row.try_get::<Option<String>, _>("link_id").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "operator_id": row.try_get::<Option<String>, _>("operator_id").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "description": row.try_get::<Option<String>, _>("description").map_err(|err| GatewayError::Internal(err.to_string()))?,
-        "created_at": created_at,
-    }))
+pub(super) fn wallet_transaction_payload_from_record(
+    record: &aether_data::repository::wallet::StoredAdminWalletTransaction,
+) -> serde_json::Value {
+    json!({
+        "id": record.id.clone(),
+        "category": record.category.clone(),
+        "reason_code": record.reason_code.clone(),
+        "amount": record.amount,
+        "balance_before": record.balance_before,
+        "balance_after": record.balance_after,
+        "recharge_balance_before": record.recharge_balance_before,
+        "recharge_balance_after": record.recharge_balance_after,
+        "gift_balance_before": record.gift_balance_before,
+        "gift_balance_after": record.gift_balance_after,
+        "link_type": record.link_type.clone(),
+        "link_id": record.link_id.clone(),
+        "operator_id": record.operator_id.clone(),
+        "description": record.description.clone(),
+        "created_at": record.created_at_unix_secs.and_then(unix_secs_to_rfc3339),
+    })
 }
 
 pub(super) async fn handle_wallet_balance(
@@ -342,89 +336,23 @@ pub(super) async fn handle_wallet_transactions(
         );
     };
 
-    let mut total = 0_u64;
-    let mut items = Vec::new();
-    if let Some(pool) = state.postgres_pool() {
-        let count_row = match sqlx::query(
-            r#"
-SELECT COUNT(*) AS total
-FROM wallet_transactions
-WHERE wallet_id = $1
-            "#,
-        )
-        .bind(&wallet.id)
-        .fetch_one(&pool)
+    let (transactions, total) = match state
+        .list_admin_wallet_transactions(&wallet.id, limit, offset)
         .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                return build_auth_error_response(
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("wallet transaction count failed: {err}"),
-                    false,
-                )
-            }
-        };
-        total = count_row
-            .try_get::<i64, _>("total")
-            .ok()
-            .unwrap_or_default()
-            .max(0) as u64;
-        let rows = match sqlx::query(
-            r#"
-SELECT
-  id,
-  category,
-  reason_code,
-  CAST(amount AS DOUBLE PRECISION) AS amount,
-  CAST(balance_before AS DOUBLE PRECISION) AS balance_before,
-  CAST(balance_after AS DOUBLE PRECISION) AS balance_after,
-  CAST(recharge_balance_before AS DOUBLE PRECISION) AS recharge_balance_before,
-  CAST(recharge_balance_after AS DOUBLE PRECISION) AS recharge_balance_after,
-  CAST(gift_balance_before AS DOUBLE PRECISION) AS gift_balance_before,
-  CAST(gift_balance_after AS DOUBLE PRECISION) AS gift_balance_after,
-  link_type,
-  link_id,
-  operator_id,
-  description,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs
-FROM wallet_transactions
-WHERE wallet_id = $1
-ORDER BY created_at DESC
-OFFSET $2
-LIMIT $3
-            "#,
-        )
-        .bind(&wallet.id)
-        .bind(i64::try_from(offset).ok().unwrap_or_default())
-        .bind(i64::try_from(limit).ok().unwrap_or_default())
-        .fetch_all(&pool)
-        .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                return build_auth_error_response(
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("wallet transaction query failed: {err}"),
-                    false,
-                )
-            }
-        };
-        items = match rows
-            .iter()
-            .map(wallet_transaction_payload_from_row)
-            .collect::<Result<Vec<_>, GatewayError>>()
-        {
-            Ok(value) => value,
-            Err(err) => {
-                return build_auth_error_response(
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("wallet transaction payload failed: {err:?}"),
-                    false,
-                )
-            }
-        };
-    }
+    {
+        Ok(value) => value,
+        Err(err) => {
+            return build_auth_error_response(
+                http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("wallet transaction lookup failed: {err:?}"),
+                false,
+            )
+        }
+    };
+    let items = transactions
+        .iter()
+        .map(wallet_transaction_payload_from_record)
+        .collect::<Vec<_>>();
     let mut payload = json!({
         "items": items,
         "total": total,

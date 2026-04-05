@@ -1,8 +1,10 @@
 use super::super::build_admin_provider_models_payload;
-use crate::gateway::handlers::{
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     admin_provider_id_for_models_list, query_param_optional_bool, query_param_value,
 };
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,

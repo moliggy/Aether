@@ -11,11 +11,12 @@ use super::super::provider_oauth_state::{
     exchange_admin_provider_oauth_code, is_fixed_provider_type_for_provider_oauth,
     json_non_empty_string, json_u64_value, parse_provider_oauth_callback_params,
 };
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     admin_provider_oauth_complete_key_id, admin_provider_oauth_complete_provider_id,
     encrypt_catalog_secret_with_fallbacks,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,

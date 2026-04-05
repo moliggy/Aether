@@ -1,5 +1,5 @@
 use super::AdminMonitoringCacheAffinityRecord;
-use crate::gateway::{AppState, GatewayError};
+use crate::{AppState, GatewayError};
 
 fn parse_admin_monitoring_cache_affinity_key(raw_key: &str) -> Option<(String, String, String)> {
     let parts = raw_key.split(':').collect::<Vec<_>>();

@@ -1,6 +1,5 @@
-use crate::gateway::{
-    AppState, GatewayControlDecision, GatewayControlSyncDecisionResponse, GatewayError,
-};
+use crate::control::GatewayControlDecision;
+use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};
 
 use super::super::plans::{resolve_stream_spec, resolve_sync_spec};
 use super::candidates::{

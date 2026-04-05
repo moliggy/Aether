@@ -781,41 +781,46 @@ onMounted(async () => {
   await refreshApiKeys()
 })
 
-async function loadApiKeys() {
-  loading.value = true
-  try {
-    const response = await adminApi.getAllApiKeys({
-      skip: skip.value,
-      limit: limit.value
-    })
-    apiKeys.value = response.api_keys
-    total.value = response.total
-  } catch (err: unknown) {
-    log.error('加载独立Keys失败:', err)
-    error(parseApiError(err, '加载独立 Keys 失败'))
-  } finally {
-    loading.value = false
-  }
+async function fetchApiKeyWalletMap(): Promise<Record<string, AdminWallet>> {
+  const wallets = await adminWalletApi.listAllWallets({ owner_type: 'api_key' })
+  return wallets
+    .filter((wallet) => !!wallet.api_key_id)
+    .reduce<Record<string, AdminWallet>>((acc, wallet) => {
+      acc[wallet.api_key_id as string] = wallet
+      return acc
+    }, {})
 }
 
 async function loadApiKeyWallets() {
   try {
-    const wallets = await adminWalletApi.listAllWallets()
-    apiKeyWalletMap.value = wallets
-      .filter((wallet) => wallet.owner_type === 'api_key' && !!wallet.api_key_id)
-      .reduce<Record<string, AdminWallet>>((acc, wallet) => {
-        acc[wallet.api_key_id as string] = wallet
-        return acc
-      }, {})
+    apiKeyWalletMap.value = await fetchApiKeyWalletMap()
   } catch (err: unknown) {
     log.error('加载独立 Key 钱包失败:', err)
   }
 }
 
 async function refreshApiKeys() {
-  // 先拉取 Key 列表，再拉钱包，避免并发请求导致新钱包映射短暂缺失。
-  await loadApiKeys()
-  await loadApiKeyWallets()
+  loading.value = true
+  try {
+    const [response, walletMap] = await Promise.all([
+      adminApi.getAllApiKeys({
+        skip: skip.value,
+        limit: limit.value
+      }),
+      fetchApiKeyWalletMap().catch((err: unknown) => {
+        log.error('加载独立 Key 钱包失败:', err)
+        return apiKeyWalletMap.value
+      })
+    ])
+    apiKeys.value = response.api_keys
+    total.value = response.total
+    apiKeyWalletMap.value = walletMap
+  } catch (err: unknown) {
+    log.error('加载独立Keys失败:', err)
+    error(parseApiError(err, '加载独立 Keys 失败'))
+  } finally {
+    loading.value = false
+  }
 }
 
 function handlePageChange(page: number) {

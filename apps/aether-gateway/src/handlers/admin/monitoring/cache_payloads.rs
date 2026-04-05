@@ -1,4 +1,4 @@
-use crate::gateway::AppState;
+use crate::AppState;
 use aether_crypto::decrypt_python_fernet_ciphertext;
 #[cfg(test)]
 use aether_crypto::DEVELOPMENT_ENCRYPTION_KEY;

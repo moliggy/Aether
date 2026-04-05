@@ -5,7 +5,7 @@ use super::{
     resolve_admin_provider_ops_base_url, AdminProviderOpsCheckinOutcome,
     ADMIN_PROVIDER_OPS_ACTION_RUST_ONLY_MESSAGE,
 };
-use crate::gateway::AppState;
+use crate::AppState;
 use aether_data::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogProvider,
 };

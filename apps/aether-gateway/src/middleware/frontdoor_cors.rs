@@ -3,8 +3,8 @@ use axum::extract::{Request, State};
 use axum::http::{self, HeaderValue, Response};
 use axum::middleware::Next;
 
-use crate::gateway::headers::header_value_str;
-use crate::gateway::{AppState, FrontdoorCorsConfig};
+use crate::headers::header_value_str;
+use crate::state::{AppState, FrontdoorCorsConfig};
 
 fn append_vary(headers: &mut http::HeaderMap, value: &'static str) {
     headers.append(http::header::VARY, HeaderValue::from_static(value));

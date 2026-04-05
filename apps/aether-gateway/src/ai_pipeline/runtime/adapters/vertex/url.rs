@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use url::form_urlencoded;
 
-use crate::gateway::provider_transport::url::build_passthrough_path_url;
+use crate::provider_transport::url::build_passthrough_path_url;
 
 pub(crate) const VERTEX_API_KEY_BASE_URL: &str = "https://aiplatform.googleapis.com";
 

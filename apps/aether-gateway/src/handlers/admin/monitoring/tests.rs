@@ -58,7 +58,7 @@ async fn admin_monitoring_cache_affinity_returns_not_found_without_runtime_or_te
     let state = AppState::new()
         .expect("state should build")
         .with_data_state_for_tests(
-            crate::gateway::gateway_data::GatewayDataState::with_user_reader_for_tests(
+            crate::data::GatewayDataState::with_user_reader_for_tests(
                 user_repository,
             )
             .with_auth_api_key_reader(auth_repository),
@@ -106,7 +106,7 @@ async fn admin_monitoring_cache_affinities_and_affinity_return_local_payload_fro
     let state = AppState::new()
         .expect("state should build")
         .with_data_state_for_tests(
-            crate::gateway::gateway_data::GatewayDataState::with_provider_catalog_reader_for_tests(
+            crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
                 provider_catalog,
             )
             .with_user_reader(user_repository)
@@ -212,7 +212,7 @@ async fn admin_monitoring_cache_users_delete_returns_local_payload_from_test_sto
     let state = AppState::new()
         .expect("state should build")
         .with_data_state_for_tests(
-            crate::gateway::gateway_data::GatewayDataState::with_user_reader_for_tests(
+            crate::data::GatewayDataState::with_user_reader_for_tests(
                 user_repository,
             )
             .with_auth_api_key_reader(auth_repository),
@@ -600,7 +600,7 @@ async fn admin_monitoring_cache_affinity_delete_returns_local_payload_from_test_
     let state = AppState::new()
         .expect("state should build")
         .with_data_state_for_tests(
-            crate::gateway::gateway_data::GatewayDataState::with_user_reader_for_tests(
+            crate::data::GatewayDataState::with_user_reader_for_tests(
                 user_repository,
             )
             .with_auth_api_key_reader(auth_repository),
@@ -720,7 +720,7 @@ async fn admin_monitoring_cache_metrics_returns_local_payload() {
     let state = AppState::new()
         .expect("state should build")
         .with_data_state_for_tests(
-            crate::gateway::gateway_data::GatewayDataState::with_usage_reader_for_tests(
+            crate::data::GatewayDataState::with_usage_reader_for_tests(
                 usage_repository,
             )
             .with_system_config_values_for_tests([
@@ -852,7 +852,7 @@ async fn admin_monitoring_reset_error_stats_returns_local_payload_and_clears_fut
     let state = AppState::new()
         .expect("state should build")
         .with_data_state_for_tests(
-            crate::gateway::gateway_data::GatewayDataState::with_provider_catalog_and_usage_reader_for_tests(
+            crate::data::GatewayDataState::with_provider_catalog_and_usage_reader_for_tests(
                 provider_catalog,
                 usage_repository,
             ),
@@ -969,7 +969,7 @@ async fn admin_monitoring_circuit_history_returns_local_payload() {
     let state = AppState::new()
         .expect("state should build")
         .with_data_state_for_tests(
-            crate::gateway::gateway_data::GatewayDataState::with_provider_catalog_reader_for_tests(
+            crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
                 provider_catalog,
             ),
         );

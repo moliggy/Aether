@@ -5,9 +5,9 @@ use serde_json::{json, Value};
 use super::converter::convert_claude_messages_to_conversation_state;
 use super::credentials::KiroAuthConfig;
 use super::headers::build_generate_assistant_headers;
-use crate::gateway::headers::should_skip_upstream_passthrough_header;
+use crate::provider_transport::should_skip_upstream_passthrough_header;
 
-pub(crate) use crate::gateway::provider_transport::rules::{
+pub(crate) use crate::provider_transport::rules::{
     apply_local_body_rules, apply_local_header_rules, body_rules_are_locally_supported,
     header_rules_are_locally_supported,
 };
@@ -131,11 +131,11 @@ pub(crate) fn build_kiro_provider_headers(
 mod tests {
     use serde_json::json;
 
+    use super::super::credentials::KiroAuthConfig;
     use super::{
         build_kiro_provider_headers, build_kiro_provider_request_body,
         supports_local_kiro_request_shape,
     };
-    use crate::gateway::provider_transport::adapters::kiro::credentials::KiroAuthConfig;
 
     #[test]
     fn supports_empty_local_request_shape() {

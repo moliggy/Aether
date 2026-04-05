@@ -5,10 +5,17 @@ use axum::body::Body;
 use axum::http::Response;
 use serde_json::json;
 
-use crate::gateway::api::response::build_client_response_from_parts;
-use crate::gateway::video_tasks::{LocalVideoTaskSnapshot, VideoTaskSyncReportMode};
-use crate::gateway::VideoTaskService;
-use crate::gateway::{GatewayControlDecision, GatewayError, GatewaySyncReportRequest};
+use crate::api::response::build_client_response_from_parts;
+use crate::async_task::VideoTaskService;
+use crate::control::GatewayControlDecision;
+use crate::video_tasks::{
+    build_local_sync_finalize_read_response, LocalVideoTaskSnapshot, VideoTaskSyncReportMode,
+};
+pub(crate) use crate::video_tasks::{
+    resolve_local_sync_error_background_report_kind,
+    resolve_local_sync_success_background_report_kind,
+};
+use crate::{usage::GatewaySyncReportRequest, GatewayError};
 
 pub(crate) struct LocalVideoSyncSuccessOutcome {
     pub(crate) response: Response<Body>,
@@ -104,47 +111,22 @@ pub(crate) fn maybe_build_local_sync_finalize_response(
     decision: &GatewayControlDecision,
     payload: &GatewaySyncReportRequest,
 ) -> Result<Option<Response<Body>>, GatewayError> {
-    let (status_code, body_json) = match payload.report_kind.as_str() {
-        "openai_video_delete_sync_finalize" => {
-            if payload.status_code >= 400 && payload.status_code != 404 {
-                return Ok(None);
-            }
-            let Some(task_id) = payload
-                .report_context
-                .as_ref()
-                .and_then(|value| value.get("task_id"))
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            else {
-                return Ok(None);
-            };
-            (
-                http::StatusCode::OK,
-                json!({
-                    "id": task_id,
-                    "object": "video",
-                    "deleted": true,
-                }),
-            )
-        }
-        "openai_video_cancel_sync_finalize" | "gemini_video_cancel_sync_finalize" => {
-            if payload.status_code >= 400 {
-                return Ok(None);
-            }
-            (http::StatusCode::OK, json!({}))
-        }
-        _ => return Ok(None),
+    let Some(read_response) = build_local_sync_finalize_read_response(
+        payload.report_kind.as_str(),
+        payload.status_code,
+        payload.report_context.as_ref(),
+    ) else {
+        return Ok(None);
     };
 
-    let body_bytes =
-        serde_json::to_vec(&body_json).map_err(|err| GatewayError::Internal(err.to_string()))?;
+    let body_bytes = serde_json::to_vec(&read_response.body_json)
+        .map_err(|err| GatewayError::Internal(err.to_string()))?;
     let mut headers = BTreeMap::new();
     headers.insert("content-type".to_string(), "application/json".to_string());
     headers.insert("content-length".to_string(), body_bytes.len().to_string());
 
     Ok(Some(build_client_response_from_parts(
-        status_code.as_u16(),
+        read_response.status_code,
         &headers,
         Body::from(body_bytes),
         trace_id,
@@ -157,15 +139,7 @@ pub(crate) fn maybe_build_local_video_error_response(
     decision: &GatewayControlDecision,
     payload: &GatewaySyncReportRequest,
 ) -> Result<Option<Response<Body>>, GatewayError> {
-    if !matches!(
-        payload.report_kind.as_str(),
-        "openai_video_create_sync_finalize"
-            | "openai_video_remix_sync_finalize"
-            | "gemini_video_create_sync_finalize"
-            | "openai_video_delete_sync_finalize"
-            | "openai_video_cancel_sync_finalize"
-            | "gemini_video_cancel_sync_finalize"
-    ) {
+    if resolve_local_sync_error_background_report_kind(payload.report_kind.as_str()).is_none() {
         return Ok(None);
     }
 
@@ -190,29 +164,4 @@ pub(crate) fn maybe_build_local_video_error_response(
         trace_id,
         Some(decision),
     )?))
-}
-
-pub(crate) fn resolve_local_sync_success_background_report_kind(
-    report_kind: &str,
-) -> Option<String> {
-    let mapped = match report_kind {
-        "openai_video_delete_sync_finalize" => "openai_video_delete_sync_success",
-        "openai_video_cancel_sync_finalize" => "openai_video_cancel_sync_success",
-        "gemini_video_cancel_sync_finalize" => "gemini_video_cancel_sync_success",
-        _ => return None,
-    };
-    Some(mapped.to_string())
-}
-
-pub(crate) fn resolve_local_sync_error_background_report_kind(report_kind: &str) -> Option<String> {
-    let mapped = match report_kind {
-        "openai_video_create_sync_finalize" => "openai_video_create_sync_error",
-        "openai_video_remix_sync_finalize" => "openai_video_remix_sync_error",
-        "gemini_video_create_sync_finalize" => "gemini_video_create_sync_error",
-        "openai_video_delete_sync_finalize" => "openai_video_delete_sync_error",
-        "openai_video_cancel_sync_finalize" => "openai_video_cancel_sync_error",
-        "gemini_video_cancel_sync_finalize" => "gemini_video_cancel_sync_error",
-        _ => return None,
-    };
-    Some(mapped.to_string())
 }

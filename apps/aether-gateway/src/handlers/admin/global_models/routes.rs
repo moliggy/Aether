@@ -9,13 +9,15 @@ use super::global_models_helpers::{
     build_admin_global_models_data_unavailable_response,
     ADMIN_GLOBAL_MODELS_DATA_UNAVAILABLE_DETAIL,
 };
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::{
     admin_global_model_assign_to_providers_id, admin_global_model_id_from_path,
     admin_global_model_providers_id, admin_global_model_routing_id, is_admin_global_models_root,
     query_param_optional_bool, query_param_value, AdminBatchAssignToProvidersRequest,
     AdminBatchDeleteIdsRequest, AdminGlobalModelCreateRequest, AdminGlobalModelUpdateRequest,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
     http,
@@ -170,15 +172,21 @@ pub(crate) async fn maybe_build_local_admin_global_models_response(
                         .ok()
                         .map(|duration| duration.as_secs())
                         .unwrap_or(0);
-                    (
-                        http::StatusCode::CREATED,
-                        Json(build_admin_global_model_response(
-                            &created,
-                            &provider_models,
-                            now_unix_secs,
-                        )),
+                    attach_admin_audit_response(
+                        (
+                            http::StatusCode::CREATED,
+                            Json(build_admin_global_model_response(
+                                &created,
+                                &provider_models,
+                                now_unix_secs,
+                            )),
+                        )
+                            .into_response(),
+                        "admin_global_model_created",
+                        "create_global_model",
+                        "global_model",
+                        &created.id,
                     )
-                        .into_response()
                 }
                 None => (
                     http::StatusCode::SERVICE_UNAVAILABLE,
@@ -288,12 +296,18 @@ pub(crate) async fn maybe_build_local_admin_global_models_response(
                         .ok()
                         .map(|duration| duration.as_secs())
                         .unwrap_or(0);
-                    Json(build_admin_global_model_response(
-                        &updated,
-                        &provider_models,
-                        now_unix_secs,
-                    ))
-                    .into_response()
+                    attach_admin_audit_response(
+                        Json(build_admin_global_model_response(
+                            &updated,
+                            &provider_models,
+                            now_unix_secs,
+                        ))
+                        .into_response(),
+                        "admin_global_model_updated",
+                        "update_global_model",
+                        "global_model",
+                        &updated.id,
+                    )
                 }
                 None => (
                     http::StatusCode::NOT_FOUND,
@@ -343,7 +357,13 @@ pub(crate) async fn maybe_build_local_admin_global_models_response(
                     .into_response(),
             ));
         }
-        return Ok(Some(http::StatusCode::NO_CONTENT.into_response()));
+        return Ok(Some(attach_admin_audit_response(
+            http::StatusCode::NO_CONTENT.into_response(),
+            "admin_global_model_deleted",
+            "delete_global_model",
+            "global_model",
+            &existing.id,
+        )));
     }
 
     if decision.route_family.as_deref() == Some("global_models_manage")
@@ -393,13 +413,17 @@ pub(crate) async fn maybe_build_local_admin_global_models_response(
                 failed.push(json!({"id": existing.id, "error": "delete failed"}));
             }
         }
-        return Ok(Some(
+        return Ok(Some(attach_admin_audit_response(
             Json(json!({
                 "success_count": success_count,
                 "failed": failed,
             }))
             .into_response(),
-        ));
+            "admin_global_models_batch_deleted",
+            "batch_delete_global_models",
+            "global_models_batch",
+            "batch",
+        )));
     }
 
     if decision.route_family.as_deref() == Some("global_models_manage")
@@ -458,7 +482,13 @@ pub(crate) async fn maybe_build_local_admin_global_models_response(
                 ));
             }
         };
-        return Ok(Some(Json(payload).into_response()));
+        return Ok(Some(attach_admin_audit_response(
+            Json(payload).into_response(),
+            "admin_global_model_assigned_to_providers",
+            "assign_global_model_to_providers",
+            "global_model",
+            &global_model_id,
+        )));
     }
 
     if decision.route_family.as_deref() == Some("global_models_manage")

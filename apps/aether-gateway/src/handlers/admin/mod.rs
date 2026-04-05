@@ -10,11 +10,11 @@ mod billing;
 mod catalog_write_helpers;
 mod core;
 mod endpoints;
-mod endpoints_health_helpers;
+pub(crate) mod endpoints_health_helpers;
 mod gemini_files;
 mod global_models;
 mod ldap;
-mod misc_helpers;
+pub(crate) mod misc_helpers;
 mod models_helpers;
 mod monitoring;
 mod oauth_helpers;
@@ -26,17 +26,17 @@ mod provider_oauth_dispatch;
 #[path = "provider_oauth/quota.rs"]
 mod provider_oauth_quota;
 #[path = "provider_oauth/refresh.rs"]
-mod provider_oauth_refresh;
+pub(crate) mod provider_oauth_refresh;
 #[path = "provider_oauth/state.rs"]
 mod provider_oauth_state;
-mod provider_ops;
+pub(crate) mod provider_ops;
 mod provider_query;
 mod provider_strategy;
 mod providers;
 mod providers_helpers;
 mod proxy_nodes;
 mod security;
-mod stats;
+pub(crate) mod stats;
 mod usage;
 mod users;
 mod video_tasks;
@@ -53,21 +53,28 @@ pub(crate) use self::core::maybe_build_local_admin_core_response;
 use self::core::*;
 pub(crate) use self::endpoints::maybe_build_local_admin_endpoints_response;
 use self::endpoints::*;
-pub(crate) use self::endpoints_health_helpers::build_admin_endpoint_health_status_payload;
-use self::endpoints_health_helpers::*;
+use self::endpoints_health_helpers::{
+    build_admin_create_provider_endpoint_record, build_admin_endpoint_health_status_payload,
+    build_admin_endpoint_payload, build_admin_health_summary_payload,
+    build_admin_key_health_payload, build_admin_key_rpm_payload,
+    build_admin_provider_endpoints_payload, build_admin_update_provider_endpoint_record,
+    recover_admin_key_health, recover_all_admin_key_health,
+};
 pub(crate) use self::gemini_files::maybe_build_local_admin_gemini_files_response;
 use self::gemini_files::*;
 pub(crate) use self::global_models::maybe_build_local_admin_global_models_response;
 use self::global_models::*;
 pub(crate) use self::ldap::maybe_build_local_admin_ldap_response;
 use self::ldap::*;
-use self::misc_helpers::*;
-pub(crate) use self::misc_helpers::{
-    build_admin_proxy_auth_required_response, build_unhandled_admin_proxy_response,
-    provider_catalog_key_supports_format,
+use self::misc_helpers::{
+    admin_default_body_rules_api_format, admin_endpoint_id, admin_health_key_id,
+    admin_provider_id_for_endpoints, admin_recover_key_id, admin_rpm_key_id,
+    attach_admin_audit_response, build_admin_provider_endpoint_response,
+    endpoint_key_counts_by_format, endpoint_timestamp_or_now, json_truthy,
+    key_api_formats_without_entry,
 };
 use self::models_helpers::*;
-pub(crate) use self::monitoring::maybe_build_local_admin_monitoring_root_response as maybe_build_local_admin_monitoring_response;
+pub(crate) use self::monitoring::maybe_build_local_admin_monitoring_response;
 use self::oauth_helpers::*;
 pub(crate) use self::payments::maybe_build_local_admin_payments_response;
 use self::payments::*;
@@ -77,10 +84,13 @@ pub(crate) use self::provider_models::maybe_build_local_admin_provider_models_re
 use self::provider_models::*;
 pub(crate) use self::provider_oauth_dispatch::maybe_build_local_admin_provider_oauth_response;
 use self::provider_oauth_dispatch::*;
-use self::provider_oauth_quota::*;
-pub(crate) use self::provider_oauth_refresh::build_internal_control_error_response;
-use self::provider_oauth_refresh::*;
-use self::provider_oauth_state::*;
+use self::provider_oauth_quota::{
+    normalize_string_id_list, refresh_antigravity_provider_quota_locally,
+    refresh_codex_provider_quota_locally, refresh_kiro_provider_quota_locally,
+};
+use self::provider_oauth_refresh::{
+    build_internal_control_error_response, normalize_provider_oauth_refresh_error_message,
+};
 pub(crate) use self::provider_ops::admin_provider_ops_local_action_response;
 pub(crate) use self::provider_ops::maybe_build_local_admin_provider_ops_response;
 pub(crate) use self::provider_query::maybe_build_local_admin_provider_query_response;
@@ -94,11 +104,10 @@ pub(crate) use self::proxy_nodes::maybe_build_local_admin_proxy_nodes_response;
 use self::proxy_nodes::*;
 pub(crate) use self::security::maybe_build_local_admin_security_response;
 use self::security::*;
-use self::stats::*;
-pub(crate) use self::stats::{
-    admin_stats_bad_request_response, list_usage_for_optional_range,
-    maybe_build_local_admin_stats_response, parse_bounded_u32, round_to, AdminStatsTimeRange,
-    AdminStatsUsageFilter,
+pub(crate) use self::stats::maybe_build_local_admin_stats_response;
+use self::stats::{
+    aggregate_usage_stats, list_usage_for_optional_range, parse_bounded_u32, round_to,
+    AdminStatsTimeRange, AdminStatsUsageFilter,
 };
 pub(crate) use self::usage::maybe_build_local_admin_usage_response;
 use self::usage::*;

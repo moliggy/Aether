@@ -262,6 +262,31 @@ pub(crate) fn wallet_payment_order_payload_from_row(
     ))
 }
 
+fn wallet_payment_order_payload_from_record(
+    record: &aether_data::repository::wallet::StoredAdminPaymentOrder,
+) -> serde_json::Value {
+    build_wallet_payment_order_payload(
+        record.id.clone(),
+        record.order_no.clone(),
+        record.wallet_id.clone(),
+        record.user_id.clone(),
+        record.amount_usd,
+        record.pay_amount,
+        record.pay_currency.clone(),
+        record.exchange_rate,
+        record.refunded_amount_usd,
+        record.refundable_amount_usd,
+        record.payment_method.clone(),
+        record.gateway_order_id.clone(),
+        record.gateway_response.clone(),
+        record.status.clone(),
+        Some(unix_secs_to_rfc3339(record.created_at_unix_secs)).flatten(),
+        record.paid_at_unix_secs.and_then(unix_secs_to_rfc3339),
+        record.credited_at_unix_secs.and_then(unix_secs_to_rfc3339),
+        record.expires_at_unix_secs.and_then(unix_secs_to_rfc3339),
+    )
+}
+
 pub(super) async fn handle_wallet_create_recharge(
     state: &AppState,
     request_context: &GatewayPublicRequestContext,
@@ -311,7 +336,7 @@ pub(super) async fn handle_wallet_create_recharge(
         }
     };
 
-    let Some(pool) = state.postgres_pool() else {
+    if state.postgres_pool().is_none() {
         #[cfg(test)]
         {
             let Some(wallet) = wallet else {
@@ -375,239 +400,56 @@ pub(super) async fn handle_wallet_create_recharge(
         }
         #[cfg(not(test))]
         return build_wallet_recharge_storage_unavailable_response();
-    };
-
-    let mut tx = match pool.begin().await {
-        Ok(value) => value,
-        Err(err) => {
-            return build_auth_error_response(
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("wallet recharge transaction failed: {err}"),
-                false,
-            )
-        }
-    };
-
-    let wallet_row = match sqlx::query(
-        r#"
-SELECT id, status
-FROM wallets
-WHERE user_id = $1
-LIMIT 1
-FOR UPDATE
-        "#,
-    )
-    .bind(&auth.user.id)
-    .fetch_optional(&mut *tx)
-    .await
-    {
-        Ok(Some(value)) => Some(value),
-        Ok(None) => {
-            let wallet_id = wallet
-                .as_ref()
-                .map(|value| value.id.clone())
-                .unwrap_or_else(|| Uuid::new_v4().to_string());
-            match sqlx::query(
-                r#"
-INSERT INTO wallets (
-  id,
-  user_id,
-  balance,
-  gift_balance,
-  limit_mode,
-  currency,
-  status,
-  total_recharged,
-  total_consumed,
-  total_refunded,
-  total_adjusted,
-  created_at,
-  updated_at
-)
-VALUES (
-  $1,
-  $2,
-  0,
-  0,
-  'finite',
-  'USD',
-  'active',
-  0,
-  0,
-  0,
-  0,
-  NOW(),
-  NOW()
-)
-ON CONFLICT (user_id) DO UPDATE
-SET updated_at = wallets.updated_at
-RETURNING id, status
-                "#,
-            )
-            .bind(&wallet_id)
-            .bind(&auth.user.id)
-            .fetch_one(&mut *tx)
-            .await
-            {
-                Ok(value) => Some(value),
-                Err(err) => {
-                    let _ = tx.rollback().await;
-                    return build_auth_error_response(
-                        http::StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("wallet recharge wallet bootstrap failed: {err}"),
-                        false,
-                    );
-                }
-            }
-        }
-        Err(err) => {
-            let _ = tx.rollback().await;
-            return build_auth_error_response(
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("wallet recharge wallet lookup failed: {err}"),
-                false,
-            );
-        }
-    };
-    let Some(wallet_row) = wallet_row else {
-        let _ = tx.rollback().await;
-        return build_auth_error_response(
-            http::StatusCode::BAD_REQUEST,
-            "wallet not available",
-            false,
-        );
-    };
-    let wallet_id = wallet_row
-        .try_get::<String, _>("id")
-        .ok()
-        .unwrap_or_default();
-    let wallet_status = wallet_row
-        .try_get::<String, _>("status")
-        .ok()
-        .unwrap_or_default();
-    if wallet_status != "active" {
-        let _ = tx.rollback().await;
-        return build_auth_error_response(
-            http::StatusCode::BAD_REQUEST,
-            "wallet is not active",
-            false,
-        );
     }
 
     let now = Utc::now();
-    let order_id = Uuid::new_v4().to_string();
     let order_no = wallet_build_order_no(now);
     let expires_at = now + chrono::Duration::minutes(30);
     let (gateway_order_id, gateway_response) =
         match wallet_checkout_payload(&payload.payment_method, &order_no, expires_at) {
             Ok(value) => value,
             Err(detail) => {
-                let _ = tx.rollback().await;
                 return build_auth_error_response(http::StatusCode::BAD_REQUEST, detail, false);
             }
         };
-
-    let row = match sqlx::query(
-        r#"
-INSERT INTO payment_orders (
-  id,
-  order_no,
-  wallet_id,
-  user_id,
-  amount_usd,
-  pay_amount,
-  pay_currency,
-  exchange_rate,
-  refunded_amount_usd,
-  refundable_amount_usd,
-  payment_method,
-  gateway_order_id,
-  gateway_response,
-  status,
-  created_at,
-  expires_at
-)
-VALUES (
-  $1,
-  $2,
-  $3,
-  $4,
-  $5,
-  $6,
-  $7,
-  $8,
-  0,
-  0,
-  $9,
-  $10,
-  $11,
-  'pending',
-  NOW(),
-  to_timestamp($12)
-)
-RETURNING
-  id,
-  order_no,
-  wallet_id,
-  user_id,
-  CAST(amount_usd AS DOUBLE PRECISION) AS amount_usd,
-  CAST(pay_amount AS DOUBLE PRECISION) AS pay_amount,
-  pay_currency,
-  CAST(exchange_rate AS DOUBLE PRECISION) AS exchange_rate,
-  CAST(refunded_amount_usd AS DOUBLE PRECISION) AS refunded_amount_usd,
-  CAST(refundable_amount_usd AS DOUBLE PRECISION) AS refundable_amount_usd,
-  payment_method,
-  gateway_order_id,
-  gateway_response,
-  status AS effective_status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
-        "#,
-    )
-    .bind(&order_id)
-    .bind(&order_no)
-    .bind(&wallet_id)
-    .bind(&auth.user.id)
-    .bind(payload.amount_usd)
-    .bind(payload.pay_amount)
-    .bind(payload.pay_currency.as_deref())
-    .bind(payload.exchange_rate)
-    .bind(&payload.payment_method)
-    .bind(&gateway_order_id)
-    .bind(&gateway_response)
-    .bind(expires_at.timestamp())
-    .fetch_one(&mut *tx)
-    .await
+    let outcome = match state
+        .create_wallet_recharge_order(
+            aether_data::repository::wallet::CreateWalletRechargeOrderInput {
+                preferred_wallet_id: wallet.as_ref().map(|value| value.id.clone()),
+                user_id: auth.user.id.clone(),
+                amount_usd: payload.amount_usd,
+                pay_amount: payload.pay_amount,
+                pay_currency: payload.pay_currency.clone(),
+                exchange_rate: payload.exchange_rate,
+                payment_method: payload.payment_method.clone(),
+                gateway_order_id,
+                gateway_response: gateway_response.clone(),
+                order_no,
+                expires_at_unix_secs: expires_at.timestamp().max(0) as u64,
+            },
+        )
+        .await
     {
-        Ok(value) => value,
+        Ok(Some(value)) => value,
+        Ok(None) => return build_wallet_recharge_storage_unavailable_response(),
         Err(err) => {
-            let _ = tx.rollback().await;
             return build_auth_error_response(
                 http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("wallet recharge create failed: {err}"),
+                format!("wallet recharge create failed: {err:?}"),
                 false,
-            );
+            )
         }
     };
-
-    if let Err(err) = tx.commit().await {
-        return build_auth_error_response(
-            http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("wallet recharge commit failed: {err}"),
-            false,
-        );
-    }
-
-    let order_payload = match wallet_payment_order_payload_from_row(&row) {
-        Ok(value) => value,
-        Err(err) => {
+    let order_payload = match outcome {
+        aether_data::repository::wallet::CreateWalletRechargeOrderOutcome::Created(order) => {
+            wallet_payment_order_payload_from_record(&order)
+        }
+        aether_data::repository::wallet::CreateWalletRechargeOrderOutcome::WalletInactive => {
             return build_auth_error_response(
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("wallet recharge payload failed: {err:?}"),
+                http::StatusCode::BAD_REQUEST,
+                "wallet is not active",
                 false,
-            );
+            )
         }
     };
     build_auth_json_response(
@@ -658,103 +500,31 @@ pub(super) async fn handle_wallet_recharge_list(
         }
     };
 
-    let mut total = 0_u64;
-    let mut items = Vec::new();
-    if let Some(pool) = state.postgres_pool() {
-        let count_row = match sqlx::query(
-            r#"
-SELECT COUNT(*) AS total
-FROM payment_orders
-WHERE user_id = $1
-            "#,
-        )
-        .bind(&auth.user.id)
-        .fetch_one(&pool)
+    let (items, total) = match state
+        .list_wallet_payment_orders_by_user_id(&auth.user.id, limit, offset)
         .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                return build_auth_error_response(
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("wallet recharge count failed: {err}"),
-                    false,
-                )
-            }
-        };
-        total = count_row
-            .try_get::<i64, _>("total")
-            .ok()
-            .unwrap_or_default()
-            .max(0) as u64;
-        let rows = match sqlx::query(
-            r#"
-SELECT
-  id,
-  order_no,
-  wallet_id,
-  user_id,
-  CAST(amount_usd AS DOUBLE PRECISION) AS amount_usd,
-  CAST(pay_amount AS DOUBLE PRECISION) AS pay_amount,
-  pay_currency,
-  CAST(exchange_rate AS DOUBLE PRECISION) AS exchange_rate,
-  CAST(refunded_amount_usd AS DOUBLE PRECISION) AS refunded_amount_usd,
-  CAST(refundable_amount_usd AS DOUBLE PRECISION) AS refundable_amount_usd,
-  payment_method,
-  gateway_order_id,
-  gateway_response,
-  CASE
-    WHEN status = 'pending' AND expires_at IS NOT NULL AND expires_at < now() THEN 'expired'
-    ELSE status
-  END AS effective_status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
-FROM payment_orders
-WHERE user_id = $1
-ORDER BY created_at DESC
-OFFSET $2
-LIMIT $3
-            "#,
-        )
-        .bind(&auth.user.id)
-        .bind(i64::try_from(offset).ok().unwrap_or_default())
-        .bind(i64::try_from(limit).ok().unwrap_or_default())
-        .fetch_all(&pool)
-        .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                return build_auth_error_response(
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("wallet recharge query failed: {err}"),
-                    false,
-                )
-            }
-        };
-        items = match rows
-            .iter()
-            .map(wallet_payment_order_payload_from_row)
-            .collect::<Result<Vec<_>, GatewayError>>()
-        {
-            Ok(value) => value,
-            Err(err) => {
-                return build_auth_error_response(
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("wallet recharge payload failed: {err:?}"),
-                    false,
-                )
-            }
-        };
-    } else {
-        #[cfg(test)]
-        {
-            let (test_items, test_total) =
-                wallet_test_recharge_orders_for_user(&auth.user.id, limit, offset);
-            items = test_items;
-            total = test_total;
+    {
+        Ok(page) => (
+            page.items
+                .iter()
+                .map(wallet_payment_order_payload_from_record)
+                .collect::<Vec<_>>(),
+            page.total,
+        ),
+        Err(err) => {
+            return build_auth_error_response(
+                http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("wallet recharge lookup failed: {err:?}"),
+                false,
+            )
         }
-    }
+    };
+    #[cfg(test)]
+    let (items, total) = if state.postgres_pool().is_none() && items.is_empty() && total == 0 {
+        wallet_test_recharge_orders_for_user(&auth.user.id, limit, offset)
+    } else {
+        (items, total)
+    };
 
     let mut payload = json!({
         "items": items,
@@ -786,9 +556,17 @@ pub(super) async fn handle_wallet_recharge_detail(
             false,
         );
     };
-    let Some(pool) = state.postgres_pool() else {
-        #[cfg(test)]
-        {
+    match state
+        .find_wallet_payment_order_by_user_id(&auth.user.id, &order_id)
+        .await
+    {
+        Ok(Some(order)) => build_auth_json_response(
+            http::StatusCode::OK,
+            json!({ "order": wallet_payment_order_payload_from_record(&order) }),
+            None,
+        ),
+        Ok(None) => {
+            #[cfg(test)]
             if let Some(order) = wallet_test_recharge_order_by_id(&auth.user.id, &order_id) {
                 return build_auth_json_response(
                     http::StatusCode::OK,
@@ -796,72 +574,16 @@ pub(super) async fn handle_wallet_recharge_detail(
                     None,
                 );
             }
-        }
-        return build_auth_error_response(
-            http::StatusCode::NOT_FOUND,
-            "Payment order not found",
-            false,
-        );
-    };
-    let row = match sqlx::query(
-        r#"
-SELECT
-  id,
-  order_no,
-  wallet_id,
-  user_id,
-  CAST(amount_usd AS DOUBLE PRECISION) AS amount_usd,
-  CAST(pay_amount AS DOUBLE PRECISION) AS pay_amount,
-  pay_currency,
-  CAST(exchange_rate AS DOUBLE PRECISION) AS exchange_rate,
-  CAST(refunded_amount_usd AS DOUBLE PRECISION) AS refunded_amount_usd,
-  CAST(refundable_amount_usd AS DOUBLE PRECISION) AS refundable_amount_usd,
-  payment_method,
-  gateway_order_id,
-  gateway_response,
-  CASE
-    WHEN status = 'pending' AND expires_at IS NOT NULL AND expires_at < now() THEN 'expired'
-    ELSE status
-  END AS effective_status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
-FROM payment_orders
-WHERE id = $1 AND user_id = $2
-LIMIT 1
-        "#,
-    )
-    .bind(&order_id)
-    .bind(&auth.user.id)
-    .fetch_optional(&pool)
-    .await
-    {
-        Ok(value) => value,
-        Err(err) => {
-            return build_auth_error_response(
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("wallet recharge detail query failed: {err}"),
+            build_auth_error_response(
+                http::StatusCode::NOT_FOUND,
+                "Payment order not found",
                 false,
             )
         }
-    };
-    let Some(row) = row else {
-        return build_auth_error_response(
-            http::StatusCode::NOT_FOUND,
-            "Payment order not found",
+        Err(err) => build_auth_error_response(
+            http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("wallet recharge detail lookup failed: {err:?}"),
             false,
-        );
-    };
-    let payload = match wallet_payment_order_payload_from_row(&row) {
-        Ok(value) => json!({ "order": value }),
-        Err(err) => {
-            return build_auth_error_response(
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("wallet recharge detail payload failed: {err:?}"),
-                false,
-            )
-        }
-    };
-    build_auth_json_response(http::StatusCode::OK, payload, None)
+        ),
+    }
 }

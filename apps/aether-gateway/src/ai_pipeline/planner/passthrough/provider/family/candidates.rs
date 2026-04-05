@@ -3,11 +3,11 @@ use serde_json::json;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::gateway::scheduler::{current_unix_secs, list_selectable_candidates};
-use crate::gateway::{
-    append_execution_contract_fields_to_value, AppState, ConversionMode, ExecutionStrategy,
-    GatewayControlDecision, GatewayError,
-};
+use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::control::GatewayControlDecision;
+use crate::execution_runtime::{ConversionMode, ExecutionStrategy};
+use crate::scheduler::{current_unix_secs, list_selectable_candidates};
+use crate::{append_execution_contract_fields_to_value, AppState, GatewayError};
 
 use super::types::{
     LocalSameFormatProviderCandidateAttempt, LocalSameFormatProviderDecisionInput,
@@ -83,10 +83,7 @@ pub(crate) async fn materialize_local_same_format_provider_candidate_attempts(
         current_unix_secs(),
     )
     .await?;
-    let candidates = crate::gateway::ai_pipeline::planner::prefer_local_tunnel_owner_candidates(
-        state, candidates,
-    )
-    .await;
+    let candidates = prefer_local_tunnel_owner_candidates(state, candidates).await;
 
     let created_at_unix_secs = current_unix_secs();
     let mut attempts = Vec::with_capacity(candidates.len());

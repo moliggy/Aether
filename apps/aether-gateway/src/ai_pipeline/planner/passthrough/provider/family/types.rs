@@ -15,14 +15,14 @@ pub(crate) struct LocalSameFormatProviderSpec {
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalSameFormatProviderDecisionInput {
-    pub(crate) auth_context: crate::gateway::GatewayControlAuthContext,
+    pub(crate) auth_context: crate::control::GatewayControlAuthContext,
     pub(crate) requested_model: String,
-    pub(crate) auth_snapshot: crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot,
+    pub(crate) auth_snapshot: crate::data::auth::GatewayAuthApiKeySnapshot,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalSameFormatProviderCandidateAttempt {
-    pub(crate) candidate: crate::gateway::scheduler::GatewayMinimalCandidateSelectionCandidate,
+    pub(crate) candidate: crate::scheduler::GatewayMinimalCandidateSelectionCandidate,
     pub(crate) candidate_index: u32,
     pub(crate) candidate_id: String,
 }

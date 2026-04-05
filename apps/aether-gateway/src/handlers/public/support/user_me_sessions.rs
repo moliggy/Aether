@@ -34,7 +34,7 @@ pub(super) fn users_me_session_detail_path_matches(request_path: &str) -> bool {
 }
 
 fn build_users_me_session_payload(
-    session: crate::gateway::gateway_data::StoredUserSessionRecord,
+    session: crate::data::state::StoredUserSessionRecord,
     current_session_id: &str,
 ) -> serde_json::Value {
     json!({

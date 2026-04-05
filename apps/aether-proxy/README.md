@@ -124,6 +124,18 @@ sudo aether-proxy uninstall
 |------|----------|--------|------|
 | `--log-level` | `AETHER_PROXY_LOG_LEVEL` | `info` | 日志级别 |
 | `--log-json` | `AETHER_PROXY_LOG_JSON` | `false` | JSON 格式日志 |
+| `--log-destination` | `AETHER_PROXY_LOG_DESTINATION` | `stdout` | 输出到 `stdout`、文件或两者同时输出 |
+| `--log-dir` | `AETHER_PROXY_LOG_DIR` | 空 | 文件日志目录，`file/both` 时必填 |
+| `--log-rotation` | `AETHER_PROXY_LOG_ROTATION` | `daily` | 文件日志按小时或按天轮转 |
+| `--log-retention-days` | `AETHER_PROXY_LOG_RETENTION_DAYS` | `7` | 文件日志保留天数 |
+| `--log-max-files` | `AETHER_PROXY_LOG_MAX_FILES` | `30` | 文件日志最多保留文件数 |
+
+### 日志落点
+
+- 默认 `AETHER_PROXY_LOG_DESTINATION=stdout`，日志交给容器日志驱动或 `journald`
+- 需要落盘时改成 `file` 或 `both`，并设置 `AETHER_PROXY_LOG_DIR`
+- 文件日志支持 `hourly/daily` 轮转，并按 `AETHER_PROXY_LOG_RETENTION_DAYS` 和 `AETHER_PROXY_LOG_MAX_FILES` 自动清理
+- `docker compose` 默认保持 `stdout`，避免和容器自带日志重复；systemd 安装默认会额外打开文件日志到 `/var/log/aether-proxy`
 
 ### 多服务器配置
 

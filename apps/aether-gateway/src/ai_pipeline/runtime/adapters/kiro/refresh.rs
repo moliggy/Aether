@@ -8,11 +8,11 @@ use super::auth::{
     PROVIDER_TYPE,
 };
 use super::credentials::{generate_machine_id, KiroAuthConfig};
-use crate::gateway::provider_transport::oauth_refresh::{
+use crate::provider_transport::oauth_refresh::{
     CachedOAuthEntry, LocalOAuthRefreshAdapter, LocalOAuthRefreshError,
     LocalResolvedOAuthRequestAuth,
 };
-use crate::gateway::provider_transport::snapshot::GatewayProviderTransportSnapshot;
+use crate::provider_transport::snapshot::GatewayProviderTransportSnapshot;
 
 const IDC_AMZ_USER_AGENT: &str = "aws-sdk-js/3.738.0 ua/2.1 os/other lang/js md/browser#unknown_unknown api/sso-oidc#3.738.0 m/E KiroIDE";
 
@@ -415,11 +415,11 @@ fn truncate_body(body: &str) -> String {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use super::{IDC_AMZ_USER_AGENT, KiroOAuthRefreshAdapter};
-    use crate::gateway::provider_transport::oauth_refresh::{
+    use super::{KiroOAuthRefreshAdapter, IDC_AMZ_USER_AGENT};
+    use crate::provider_transport::oauth_refresh::{
         LocalOAuthRefreshAdapter, LocalResolvedOAuthRequestAuth,
     };
-    use crate::gateway::provider_transport::snapshot::{
+    use crate::provider_transport::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
     };

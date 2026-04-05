@@ -7,11 +7,12 @@ use super::{
     system_config_bool, system_config_string, ApiFormatHealthMonitorOptions,
     PUBLIC_CAPABILITY_DEFINITIONS,
 };
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::{
     decrypt_catalog_secret_with_fallbacks, encrypt_catalog_secret_with_fallbacks, query_param_bool,
     query_param_optional_bool, query_param_value, unix_secs_to_rfc3339,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::body::{Body, Bytes};
 use axum::http::{self, Response};
 use axum::response::IntoResponse;

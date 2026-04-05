@@ -1,4 +1,5 @@
 use aether_http::{build_http_client, jittered_delay_for_retry, HttpClientConfig, HttpRetryConfig};
+use aether_runtime::summarize_text_payload;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
@@ -132,7 +133,13 @@ impl AetherClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("register failed (HTTP {}): {}", status, text);
+            let summary = summarize_text_payload(&text);
+            anyhow::bail!(
+                "register failed (HTTP {}): response body redacted (bytes={}, sha256={})",
+                status,
+                summary.bytes,
+                summary.sha256
+            );
         }
 
         let data: RegisterResponse = resp.json().await?;
@@ -167,9 +174,21 @@ impl AetherClient {
                 Ok(())
             }
             Ok(r) => {
+                let status = r.status();
                 let text = r.text().await.unwrap_or_default();
-                error!(body = %text, "unregister failed");
-                anyhow::bail!("unregister failed: {}", text);
+                let summary = summarize_text_payload(&text);
+                error!(
+                    status = %status,
+                    body_bytes = summary.bytes,
+                    body_sha256 = %summary.sha256,
+                    "unregister failed"
+                );
+                anyhow::bail!(
+                    "unregister failed (HTTP {}): response body redacted (bytes={}, sha256={})",
+                    status,
+                    summary.bytes,
+                    summary.sha256
+                );
             }
             Err(e) => {
                 // Best-effort during shutdown

@@ -89,6 +89,7 @@ export interface RefundCompleteRequest {
 export const adminWalletApi = {
   async listWallets(params?: {
     status?: string
+    owner_type?: 'user' | 'api_key'
     limit?: number
     offset?: number
   }): Promise<AdminWalletListResponse> {
@@ -98,6 +99,7 @@ export const adminWalletApi = {
 
   async listAllWallets(params?: {
     status?: string
+    owner_type?: 'user' | 'api_key'
   }): Promise<AdminWallet[]> {
     const items: AdminWallet[] = []
     const limit = 200

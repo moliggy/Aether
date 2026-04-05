@@ -1,7 +1,7 @@
 use axum::http::Uri;
 
-use crate::gateway::headers::header_value_str;
-use crate::gateway::{AppState, GatewayError};
+use crate::headers::header_value_str;
+use crate::{AppState, GatewayError};
 
 use super::{resolve_control_route, GatewayControlDecision};
 

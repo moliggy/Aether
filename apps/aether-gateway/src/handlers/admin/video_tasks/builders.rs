@@ -1,4 +1,4 @@
-use crate::{gateway::GatewayError, AppState};
+use crate::{AppState, GatewayError};
 use axum::http;
 use chrono::{SecondsFormat, Utc};
 use serde_json::json;

@@ -1,5 +1,5 @@
-use crate::gateway::handlers::unix_secs_to_rfc3339;
-use crate::gateway::{AppState, GatewayError};
+use crate::handlers::unix_secs_to_rfc3339;
+use crate::{AppState, GatewayError};
 use aether_data::repository::global_models::{
     AdminProviderModelListQuery, StoredAdminProviderModel,
 };

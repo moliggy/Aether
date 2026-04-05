@@ -2,7 +2,7 @@ use super::{
     AdminStatsLeaderboardItem, AdminStatsLeaderboardMetric, AdminStatsSortOrder,
     AdminStatsUserMetadata,
 };
-use crate::gateway::{AppState, GatewayError};
+use crate::{AppState, GatewayError};
 
 pub(super) fn build_model_leaderboard_items(
     items: &[aether_data::repository::usage::StoredRequestUsageAudit],

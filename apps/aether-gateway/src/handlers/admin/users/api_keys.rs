@@ -3,11 +3,13 @@ use super::{
     build_admin_users_read_only_response, AdminCreateUserApiKeyRequest,
     AdminToggleUserApiKeyLockRequest, AdminUpdateUserApiKeyRequest,
 };
-use crate::gateway::handlers::{
+use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::{
     decrypt_catalog_secret_with_fallbacks, encrypt_catalog_secret_with_fallbacks,
     query_param_optional_bool,
 };
-use crate::gateway::{AppState, GatewayError, GatewayPublicRequestContext};
+use crate::{AppState, GatewayError};
 use axum::{
     body::Body,
     http,
@@ -355,17 +357,23 @@ pub(super) async fn build_admin_create_user_api_key_response(
         created
     };
 
-    Ok(Json(json!({
-        "id": created.api_key_id,
-        "key": plaintext_key,
-        "name": created.name,
-        "key_display": masked_user_api_key_display(state, created.key_encrypted.as_deref()),
-        "rate_limit": created.rate_limit,
-        "expires_at": format_optional_unix_secs_iso8601(created.expires_at_unix_secs),
-        "created_at": chrono::Utc::now().to_rfc3339(),
-        "message": "API Key创建成功，请妥善保存完整密钥",
-    }))
-    .into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({
+            "id": created.api_key_id,
+            "key": plaintext_key,
+            "name": created.name,
+            "key_display": masked_user_api_key_display(state, created.key_encrypted.as_deref()),
+            "rate_limit": created.rate_limit,
+            "expires_at": format_optional_unix_secs_iso8601(created.expires_at_unix_secs),
+            "created_at": chrono::Utc::now().to_rfc3339(),
+            "message": "API Key创建成功，请妥善保存完整密钥",
+        }))
+        .into_response(),
+        "admin_user_api_key_created",
+        "create_user_api_key",
+        "user_api_key",
+        &created.api_key_id,
+    ))
 }
 
 pub(super) async fn build_admin_update_user_api_key_response(
@@ -445,7 +453,13 @@ pub(super) async fn build_admin_update_user_api_key_response(
         .unwrap_or(false);
     let mut payload = build_admin_user_api_key_detail_payload(state, &updated, is_locked);
     payload["message"] = json!("API Key更新成功");
-    Ok(Json(payload).into_response())
+    Ok(attach_admin_audit_response(
+        Json(payload).into_response(),
+        "admin_user_api_key_updated",
+        "update_user_api_key",
+        "user_api_key",
+        &api_key_id,
+    ))
 }
 
 pub(super) async fn build_admin_delete_user_api_key_response(
@@ -466,7 +480,13 @@ pub(super) async fn build_admin_delete_user_api_key_response(
     };
 
     match state.delete_user_api_key(&user_id, &api_key_id).await? {
-        true => Ok(Json(json!({ "message": "API Key已删除" })).into_response()),
+        true => Ok(attach_admin_audit_response(
+            Json(json!({ "message": "API Key已删除" })).into_response(),
+            "admin_user_api_key_deleted",
+            "delete_user_api_key",
+            "user_api_key",
+            &api_key_id,
+        )),
         false => Ok((
             http::StatusCode::NOT_FOUND,
             Json(json!({ "detail": "API Key不存在或不属于该用户" })),
@@ -540,16 +560,22 @@ pub(super) async fn build_admin_toggle_user_api_key_lock_response(
             .into_response());
     }
 
-    Ok(Json(json!({
-        "id": api_key_id,
-        "is_locked": desired_is_locked,
-        "message": if desired_is_locked {
-            "API密钥已锁定"
-        } else {
-            "API密钥已解锁"
-        },
-    }))
-    .into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({
+            "id": api_key_id,
+            "is_locked": desired_is_locked,
+            "message": if desired_is_locked {
+                "API密钥已锁定"
+            } else {
+                "API密钥已解锁"
+            },
+        }))
+        .into_response(),
+        "admin_user_api_key_lock_toggled",
+        "toggle_user_api_key_lock",
+        "user_api_key",
+        &api_key_id,
+    ))
 }
 
 pub(super) async fn build_admin_reveal_user_api_key_response(
@@ -601,5 +627,11 @@ pub(super) async fn build_admin_reveal_user_api_key_response(
             .into_response());
     };
 
-    Ok(Json(json!({ "key": full_key })).into_response())
+    Ok(attach_admin_audit_response(
+        Json(json!({ "key": full_key })).into_response(),
+        "admin_user_api_key_revealed",
+        "reveal_user_api_key",
+        "user_api_key",
+        &key_id,
+    ))
 }

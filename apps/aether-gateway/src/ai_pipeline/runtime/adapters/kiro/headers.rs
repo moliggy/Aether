@@ -83,8 +83,8 @@ pub(crate) fn build_generate_assistant_headers(
 
 #[cfg(test)]
 mod tests {
+    use super::super::credentials::KiroAuthConfig;
     use super::{build_generate_assistant_headers, AWS_EVENTSTREAM_CONTENT_TYPE};
-    use crate::gateway::provider_transport::adapters::kiro::credentials::KiroAuthConfig;
 
     #[test]
     fn builds_generate_assistant_headers_for_region() {

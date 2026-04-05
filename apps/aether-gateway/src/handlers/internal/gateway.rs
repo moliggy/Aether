@@ -8,19 +8,29 @@ use super::{
     maybe_build_internal_finalize_video_response, parse_internal_tunnel_heartbeat_request,
     parse_internal_tunnel_node_status_request,
 };
-use crate::gateway::ai_pipeline::planner as ai_planner;
-use crate::gateway::constants::{
+use crate::ai_pipeline::finalize::maybe_build_sync_finalize_outcome;
+use crate::ai_pipeline::planner as ai_planner;
+use crate::ai_pipeline::planner::{
+    maybe_build_stream_plan_payload, maybe_build_sync_plan_payload,
+};
+use crate::constants::{
     CONTROL_EXECUTED_HEADER, EXECUTION_PATH_EXECUTION_RUNTIME_STREAM,
     EXECUTION_PATH_EXECUTION_RUNTIME_SYNC,
 };
-use crate::gateway::handlers::{
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayPublicRequestContext;
+use crate::execution_runtime::{
+    execute_execution_runtime_stream, execute_execution_runtime_sync,
+};
+use crate::handlers::{
     InternalGatewayAuthContextRequest, InternalGatewayExecuteRequest, InternalGatewayResolveRequest,
 };
-use crate::gateway::{
-    execute_execution_runtime_stream, execute_execution_runtime_sync,
-    maybe_build_stream_plan_payload, maybe_build_sync_finalize_outcome,
-    maybe_build_sync_plan_payload, AppState, GatewayControlDecision, GatewayError,
-    GatewayPublicRequestContext, ProxyNodeHeartbeatMutation, ProxyNodeTunnelStatusMutation,
+use crate::tunnel::{
+    is_tunnel_heartbeat_path, is_tunnel_node_status_path, TUNNEL_ROUTE_FAMILY,
+};
+use crate::{AppState, GatewayError};
+use aether_data::repository::proxy_nodes::{
+    ProxyNodeHeartbeatMutation, ProxyNodeTunnelStatusMutation,
 };
 use axum::body::{Body, Bytes};
 use axum::http::{self, HeaderName, HeaderValue, Response};
@@ -85,7 +95,7 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                     Ok(uri) => uri,
                     Err(response) => return Ok(Some(response)),
                 };
-                let resolved = crate::gateway::control::resolve_control_route(
+                let resolved = crate::control::resolve_control_route(
                     state,
                     &method,
                     &uri,
@@ -137,7 +147,7 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                     Some(payload.auth_endpoint_signature),
                 );
                 synthetic_decision.public_query_string = uri.query().map(ToOwned::to_owned);
-                let auth_context = crate::gateway::resolve_execution_runtime_auth_context(
+                let auth_context = crate::control::resolve_execution_runtime_auth_context(
                     state,
                     &synthetic_decision,
                     &headers,
@@ -191,7 +201,7 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                         .as_object()
                         .map(|value| value.is_empty())
                         .unwrap_or(false);
-                let Some(mut resolved) = crate::gateway::resolve_control_route(
+                let Some(mut resolved) = crate::control::resolve_control_route(
                     state,
                     &parts.method,
                     &parts.uri,
@@ -293,7 +303,7 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                         .as_object()
                         .map(|value| value.is_empty())
                         .unwrap_or(false);
-                let Some(mut resolved) = crate::gateway::resolve_control_route(
+                let Some(mut resolved) = crate::control::resolve_control_route(
                     state,
                     &parts.method,
                     &parts.uri,
@@ -393,7 +403,7 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                         .as_object()
                         .map(|value| value.is_empty())
                         .unwrap_or(false);
-                let Some(mut resolved) = crate::gateway::resolve_control_route(
+                let Some(mut resolved) = crate::control::resolve_control_route(
                     state,
                     &parts.method,
                     &parts.uri,
@@ -459,7 +469,7 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                     .as_deref()
                     .unwrap_or(request_context.trace_id.as_str())
                     .to_string();
-                let Some(mut resolved) = crate::gateway::resolve_control_route(
+                let Some(mut resolved) = crate::control::resolve_control_route(
                     state,
                     &parts.method,
                     &parts.uri,
@@ -529,7 +539,7 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                         .as_object()
                         .map(|value| value.is_empty())
                         .unwrap_or(false);
-                let Some(mut resolved) = crate::gateway::resolve_control_route(
+                let Some(mut resolved) = crate::control::resolve_control_route(
                     state,
                     &parts.method,
                     &parts.uri,
@@ -613,7 +623,7 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                     .as_deref()
                     .unwrap_or(request_context.trace_id.as_str())
                     .to_string();
-                let Some(mut resolved) = crate::gateway::resolve_control_route(
+                let Some(mut resolved) = crate::control::resolve_control_route(
                     state,
                     &parts.method,
                     &parts.uri,
@@ -670,9 +680,10 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                         "invalid internal gateway report-sync payload",
                     )));
                 };
-                let payload = match serde_json::from_slice::<crate::gateway::GatewaySyncReportRequest>(
-                    request_body,
-                ) {
+                let payload = match serde_json::from_slice::<
+                    crate::usage::GatewaySyncReportRequest,
+                >(request_body)
+                {
                     Ok(payload) => payload,
                     Err(_) => {
                         return Ok(Some(build_internal_control_error_response(
@@ -682,7 +693,7 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                     }
                 };
                 let trace_id = payload.trace_id.clone();
-                crate::gateway::usage::submit_sync_report(state, &trace_id, payload).await?;
+                crate::usage::submit_sync_report(state, &trace_id, payload).await?;
                 return Ok(Some(Json(json!({ "ok": true })).into_response()));
             }
             Some("report_stream")
@@ -695,7 +706,7 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                     )));
                 };
                 let payload = match serde_json::from_slice::<
-                    crate::gateway::GatewayStreamReportRequest,
+                    crate::usage::GatewayStreamReportRequest,
                 >(request_body)
                 {
                     Ok(payload) => payload,
@@ -707,7 +718,7 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                     }
                 };
                 let trace_id = payload.trace_id.clone();
-                crate::gateway::usage::submit_stream_report(state, &trace_id, payload).await?;
+                crate::usage::submit_stream_report(state, &trace_id, payload).await?;
                 return Ok(Some(Json(json!({ "ok": true })).into_response()));
             }
             Some("finalize_sync")
@@ -719,9 +730,10 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                         "invalid internal gateway finalize-sync payload",
                     )));
                 };
-                let payload = match serde_json::from_slice::<crate::gateway::GatewaySyncReportRequest>(
-                    request_body,
-                ) {
+                let payload = match serde_json::from_slice::<
+                    crate::usage::GatewaySyncReportRequest,
+                >(request_body)
+                {
                     Ok(payload) => payload,
                     Err(_) => {
                         return Ok(Some(build_internal_control_error_response(
@@ -741,7 +753,7 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                     maybe_build_sync_finalize_outcome(&trace_id, &synthetic_decision, &payload)?
                 {
                     if let Some(background_report) = outcome.background_report {
-                        crate::gateway::usage::spawn_sync_report(
+                        crate::usage::spawn_sync_report(
                             state.clone(),
                             trace_id.clone(),
                             background_report,
@@ -784,16 +796,14 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
         )));
     }
 
-    if decision.route_family.as_deref() != Some(crate::gateway::TUNNEL_ROUTE_FAMILY)
+    if decision.route_family.as_deref() != Some(TUNNEL_ROUTE_FAMILY)
         || request_context.request_method != http::Method::POST
     {
         return Ok(None);
     }
 
     match decision.route_kind.as_deref() {
-        Some("heartbeat")
-            if crate::gateway::is_tunnel_heartbeat_path(request_context.request_path.as_str()) =>
-        {
+        Some("heartbeat") if is_tunnel_heartbeat_path(request_context.request_path.as_str()) => {
             let Some(request_body) = request_body else {
                 return Ok(Some(build_internal_control_error_response(
                     http::StatusCode::BAD_REQUEST,
@@ -832,9 +842,7 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
             return Ok(Some(response));
         }
         Some("node_status")
-            if crate::gateway::is_tunnel_node_status_path(
-                request_context.request_path.as_str(),
-            ) =>
+            if is_tunnel_node_status_path(request_context.request_path.as_str()) =>
         {
             let Some(request_body) = request_body else {
                 return Ok(Some(build_internal_control_error_response(

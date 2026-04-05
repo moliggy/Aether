@@ -6,12 +6,12 @@ use axum::http::Response;
 use axum::http::StatusCode;
 use serde_json::json;
 
-use crate::gateway::constants::*;
-use crate::gateway::headers::should_skip_response_header;
-use crate::gateway::rate_limit::FrontdoorUserRpmRejection;
-use crate::gateway::{
-    insert_header_if_missing, GatewayControlDecision, GatewayError, GatewayLocalAuthRejection,
-};
+use crate::constants::*;
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayLocalAuthRejection;
+use crate::headers::should_skip_response_header;
+use crate::rate_limit::FrontdoorUserRpmRejection;
+use crate::{insert_header_if_missing, GatewayError};
 
 fn execution_runtime_candidate_header_value(decision: &GatewayControlDecision) -> &'static str {
     if decision.is_execution_runtime_candidate() {
@@ -27,6 +27,28 @@ fn insert_execution_runtime_candidate_headers(
 ) -> Result<(), GatewayError> {
     let value = execution_runtime_candidate_header_value(decision);
     insert_header_if_missing(headers, CONTROL_EXECUTION_RUNTIME_HEADER, value)
+}
+
+fn response_is_sse(headers: &http::HeaderMap) -> bool {
+    headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+}
+
+pub(crate) fn apply_streaming_response_headers(headers: &mut http::HeaderMap) {
+    if !response_is_sse(headers) {
+        return;
+    }
+
+    headers.insert(
+        http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache, no-transform"),
+    );
+    headers.insert(
+        HeaderName::from_static("x-accel-buffering"),
+        HeaderValue::from_static("no"),
+    );
 }
 
 pub(crate) fn build_client_response(
@@ -77,6 +99,7 @@ pub(crate) fn build_client_response_from_parts(
             HeaderValue::from_str(value).map_err(|err| GatewayError::Internal(err.to_string()))?;
         response.headers_mut().insert(header_name, header_value);
     }
+    apply_streaming_response_headers(response.headers_mut());
     insert_header_if_missing(response.headers_mut(), TRACE_ID_HEADER, trace_id)?;
     insert_header_if_missing(response.headers_mut(), GATEWAY_HEADER, "rust-phase3b")?;
     if let Some(decision) = control_decision {
@@ -102,6 +125,40 @@ pub(crate) fn build_client_response_from_parts(
         }
     }
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_client_response_from_parts;
+    use axum::body::Body;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn sse_responses_disable_proxy_buffering() {
+        let response = build_client_response_from_parts(
+            200,
+            &BTreeMap::from([("content-type".to_string(), "text/event-stream".to_string())]),
+            Body::from("data: hello\n\n"),
+            "trace-sse-buffering-1",
+            None,
+        )
+        .expect("response should build");
+
+        assert_eq!(
+            response
+                .headers()
+                .get(http::header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-cache, no-transform")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-accel-buffering")
+                .and_then(|value| value.to_str().ok()),
+            Some("no")
+        );
+    }
 }
 
 pub(crate) fn insert_candidate_id_header_if_present(

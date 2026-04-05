@@ -8,8 +8,8 @@ use aether_gateway::{
     GatewayDataConfig, UsageRuntimeConfig, VideoTaskTruthSourceMode,
 };
 use aether_runtime::{
-    init_service_runtime, DistributedConcurrencyGate, RedisDistributedConcurrencyConfig,
-    ServiceRuntimeConfig,
+    init_service_runtime, DistributedConcurrencyGate, FileLoggingConfig, LogDestination, LogFormat,
+    LogRotation, RedisDistributedConcurrencyConfig, ServiceRuntimeConfig,
 };
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -27,6 +27,115 @@ impl From<VideoTaskTruthSourceArg> for VideoTaskTruthSourceMode {
             }
         }
     }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum DeploymentTopologyArg {
+    SingleNode,
+    MultiNode,
+}
+
+impl DeploymentTopologyArg {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::SingleNode => "single-node",
+            Self::MultiNode => "multi-node",
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum NodeRoleArg {
+    All,
+    Frontdoor,
+    Background,
+}
+
+impl NodeRoleArg {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Frontdoor => "frontdoor",
+            Self::Background => "background",
+        }
+    }
+
+    const fn spawns_background_tasks(self) -> bool {
+        matches!(self, Self::All | Self::Background)
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum GatewayLogFormatArg {
+    Pretty,
+    Json,
+}
+
+impl From<GatewayLogFormatArg> for LogFormat {
+    fn from(value: GatewayLogFormatArg) -> Self {
+        match value {
+            GatewayLogFormatArg::Pretty => LogFormat::Pretty,
+            GatewayLogFormatArg::Json => LogFormat::Json,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum GatewayLogDestinationArg {
+    Stdout,
+    File,
+    Both,
+}
+
+impl GatewayLogDestinationArg {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::File => "file",
+            Self::Both => "both",
+        }
+    }
+}
+
+impl From<GatewayLogDestinationArg> for LogDestination {
+    fn from(value: GatewayLogDestinationArg) -> Self {
+        match value {
+            GatewayLogDestinationArg::Stdout => LogDestination::Stdout,
+            GatewayLogDestinationArg::File => LogDestination::File,
+            GatewayLogDestinationArg::Both => LogDestination::Both,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum GatewayLogRotationArg {
+    Hourly,
+    Daily,
+}
+
+impl GatewayLogRotationArg {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hourly => "hourly",
+            Self::Daily => "daily",
+        }
+    }
+}
+
+impl From<GatewayLogRotationArg> for LogRotation {
+    fn from(value: GatewayLogRotationArg) -> Self {
+        match value {
+            GatewayLogRotationArg::Hourly => LogRotation::Hourly,
+            GatewayLogRotationArg::Daily => LogRotation::Daily,
+        }
+    }
+}
+
+fn env_var_trimmed(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 #[derive(ClapArgs, Debug, Clone)]
@@ -312,6 +421,66 @@ impl GatewayRateLimitArgs {
     }
 }
 
+#[derive(ClapArgs, Debug, Clone)]
+struct GatewayLoggingArgs {
+    #[arg(long, env = "AETHER_LOG_FORMAT", value_enum, default_value = "pretty")]
+    log_format: GatewayLogFormatArg,
+
+    #[arg(
+        long,
+        env = "AETHER_LOG_DESTINATION",
+        value_enum,
+        default_value = "stdout"
+    )]
+    log_destination: GatewayLogDestinationArg,
+
+    #[arg(long, env = "AETHER_LOG_DIR")]
+    log_dir: Option<String>,
+
+    #[arg(long, env = "AETHER_LOG_ROTATION", value_enum, default_value = "daily")]
+    log_rotation: GatewayLogRotationArg,
+
+    #[arg(long, env = "AETHER_LOG_RETENTION_DAYS", default_value_t = 7)]
+    log_retention_days: u64,
+
+    #[arg(long, env = "AETHER_LOG_MAX_FILES", default_value_t = 30)]
+    log_max_files: usize,
+}
+
+impl GatewayLoggingArgs {
+    fn apply_to_runtime_config(
+        &self,
+        mut config: ServiceRuntimeConfig,
+    ) -> Result<ServiceRuntimeConfig, std::io::Error> {
+        config = config
+            .with_log_format(self.log_format.into())
+            .with_log_destination(self.log_destination.into());
+        if matches!(
+            self.log_destination,
+            GatewayLogDestinationArg::File | GatewayLogDestinationArg::Both
+        ) {
+            let log_dir = self
+                .log_dir
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "AETHER_LOG_DIR is required when AETHER_LOG_DESTINATION=file|both",
+                    )
+                })?;
+            config = config.with_file_logging(FileLoggingConfig::new(
+                log_dir,
+                self.log_rotation.into(),
+                self.log_retention_days,
+                self.log_max_files,
+            ));
+        }
+        Ok(config)
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "aether-gateway",
@@ -320,6 +489,22 @@ impl GatewayRateLimitArgs {
 struct Args {
     #[arg(long, env = "AETHER_GATEWAY_BIND", default_value = "0.0.0.0:80")]
     bind: String,
+
+    #[arg(
+        long,
+        env = "AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY",
+        value_enum,
+        default_value = "single-node"
+    )]
+    deployment_topology: DeploymentTopologyArg,
+
+    #[arg(
+        long,
+        env = "AETHER_GATEWAY_NODE_ROLE",
+        value_enum,
+        default_value = "all"
+    )]
+    node_role: NodeRoleArg,
 
     /// Path to frontend static files directory (SPA). When set, the gateway
     /// serves the frontend directly without nginx.
@@ -395,19 +580,122 @@ struct Args {
 
     #[command(flatten)]
     rate_limit: GatewayRateLimitArgs,
+
+    #[command(flatten)]
+    logging: GatewayLoggingArgs,
+}
+
+impl Args {
+    fn runtime_config(&self) -> Result<ServiceRuntimeConfig, std::io::Error> {
+        let config = self
+            .logging
+            .apply_to_runtime_config(ServiceRuntimeConfig::new(
+                "aether-gateway",
+                "aether_gateway=info",
+            ))?;
+        Ok(config
+            .with_node_role(self.node_role.as_str())
+            .with_instance_id(resolve_gateway_log_instance_id()))
+    }
+}
+
+fn resolve_gateway_log_instance_id() -> String {
+    env_var_trimmed("AETHER_GATEWAY_INSTANCE_ID")
+        .or_else(|| env_var_trimmed("HOSTNAME"))
+        .unwrap_or_else(|| "local".to_string())
+}
+
+fn validate_deployment_topology(
+    args: &Args,
+    data_postgres_url: Option<&str>,
+    data_redis_url: Option<&str>,
+) -> Result<(), std::io::Error> {
+    if matches!(args.deployment_topology, DeploymentTopologyArg::SingleNode) {
+        if data_postgres_url.is_none() && data_redis_url.is_none() {
+            warn!(
+                "single-node deployment is starting without Postgres or Redis; local-only mode is allowed, but admin/auth/billing persistence will be limited"
+            );
+        }
+        return Ok(());
+    }
+
+    if matches!(args.node_role, NodeRoleArg::All) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "AETHER_GATEWAY_NODE_ROLE=all is only valid for single-node deployment; use frontdoor or background when AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=multi-node",
+        ));
+    }
+
+    let mut missing = Vec::new();
+    if data_postgres_url.is_none() {
+        missing.push("DATABASE_URL or AETHER_GATEWAY_DATA_POSTGRES_URL");
+    }
+    if data_redis_url.is_none() {
+        missing.push("REDIS_URL or AETHER_GATEWAY_DATA_REDIS_URL");
+    }
+
+    if !missing.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "multi-node deployment requires shared data backends; missing {}",
+                missing.join(", ")
+            ),
+        ));
+    }
+
+    if args
+        .video_task_store_path
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "AETHER_GATEWAY_VIDEO_TASK_STORE_PATH must be unset when AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=multi-node; use shared Postgres-backed state instead",
+        ));
+    }
+
+    if env_var_trimmed("AETHER_GATEWAY_INSTANCE_ID").is_none() {
+        warn!(
+            "multi-node deployment started without AETHER_GATEWAY_INSTANCE_ID; this is acceptable for stateless frontdoor replicas, but tunnel owner routing should set an explicit per-node instance id"
+        );
+    }
+    if env_var_trimmed("AETHER_TUNNEL_RELAY_BASE_URL").is_none() {
+        warn!(
+            "multi-node deployment started without AETHER_TUNNEL_RELAY_BASE_URL; frontdoor replicas are fine, but proxy tunnel owner relay cannot forward across nodes until a per-node reachable base URL is configured"
+        );
+    }
+    if !matches!(
+        args.video_task_truth_source_mode,
+        VideoTaskTruthSourceArg::RustAuthoritative
+    ) {
+        warn!(
+            "multi-node deployment is still using python-sync-report video task truth source; keep rust-authoritative as the long-term cluster baseline"
+        );
+    }
+
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    init_service_runtime(ServiceRuntimeConfig::new(
-        "aether-gateway",
-        "aether_gateway=info",
-    ))?;
-
     let args = Args::parse();
+    init_service_runtime(args.runtime_config()?)?;
     let data_postgres_url = args.data.effective_postgres_url();
     let data_redis_url = args.data.effective_redis_url();
+    validate_deployment_topology(
+        &args,
+        data_postgres_url.as_deref(),
+        data_redis_url.as_deref(),
+    )?;
     let data_config = args.data.to_config();
+    let rate_limit_config = if matches!(args.deployment_topology, DeploymentTopologyArg::MultiNode)
+    {
+        args.rate_limit.config().with_local_fallback(false)
+    } else {
+        args.rate_limit.config()
+    };
     if args.data.configured_encryption_key_mismatch() {
         warn!(
             "AETHER_GATEWAY_DATA_ENCRYPTION_KEY differs from ENCRYPTION_KEY; aether-gateway will prefer the gateway-specific value"
@@ -416,6 +704,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!(
         bind = %args.bind,
         environment = %args.frontdoor.environment,
+        deployment_topology = args.deployment_topology.as_str(),
+        node_role = args.node_role.as_str(),
+        log_format = ?args.logging.log_format,
+        log_destination = args.logging.log_destination.as_str(),
+        log_dir = args.logging.log_dir.as_deref().unwrap_or("-"),
+        log_rotation = args.logging.log_rotation.as_str(),
+        log_retention_days = args.logging.log_retention_days,
+        log_max_files = args.logging.log_max_files,
         frontdoor_mode = "compatibility_frontdoor",
         static_dir = args.static_dir.as_deref().unwrap_or("-"),
         cors_origins = args.frontdoor.cors_origins.as_deref().unwrap_or("-"),
@@ -423,6 +719,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         frontdoor_rpm_bucket_seconds = args.rate_limit.bucket_seconds,
         frontdoor_rpm_key_ttl_seconds = args.rate_limit.key_ttl_seconds,
         frontdoor_rpm_fail_open = args.rate_limit.fail_open,
+        frontdoor_rpm_allow_local_fallback = rate_limit_config.allow_local_fallback(),
         video_task_truth_source_mode = ?args.video_task_truth_source_mode,
         video_task_poller_interval_ms = args.video_task_poller_interval_ms,
         video_task_poller_batch_size = args.video_task_poller_batch_size,
@@ -432,6 +729,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         distributed_request_redis_url = args
             .distributed_request_redis_url
             .as_deref()
+            .or(data_redis_url.as_deref())
             .unwrap_or("-"),
         data_postgres_url = data_postgres_url.as_deref().unwrap_or("-"),
         data_redis_url = data_redis_url.as_deref().unwrap_or("-"),
@@ -447,7 +745,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(cors_config) = args.frontdoor.cors_config() {
         state = state.with_frontdoor_cors_config(cors_config);
     }
-    state = state.with_frontdoor_user_rpm_config(args.rate_limit.config());
+    state = state.with_frontdoor_user_rpm_config(rate_limit_config);
     if matches!(
         args.video_task_truth_source_mode,
         VideoTaskTruthSourceArg::RustAuthoritative
@@ -474,10 +772,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
+            .or_else(|| data_redis_url.as_deref())
             .ok_or_else(|| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "AETHER_GATEWAY_DISTRIBUTED_REQUEST_REDIS_URL is required when distributed request limit is enabled",
+                    "AETHER_GATEWAY_DISTRIBUTED_REQUEST_REDIS_URL or REDIS_URL/AETHER_GATEWAY_DATA_REDIS_URL is required when distributed request limit is enabled",
                 )
             })?;
         state =
@@ -498,12 +797,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
             )?);
     }
-    if !state.has_usage_data_writer() {
+    if matches!(args.deployment_topology, DeploymentTopologyArg::MultiNode)
+        && !state.has_usage_data_writer()
+    {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "usage persistence requires a configured Postgres data backend; set AETHER_GATEWAY_DATA_POSTGRES_URL before starting aether-gateway",
         )
         .into());
+    }
+    if matches!(args.deployment_topology, DeploymentTopologyArg::SingleNode)
+        && !state.has_usage_data_writer()
+    {
+        warn!(
+            "usage persistence backend is not configured; single-node local-only mode will run without durable usage records"
+        );
     }
     info!(
         has_data_backends = state.has_data_backends(),
@@ -520,7 +828,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("database migrations complete");
     }
 
-    let background_tasks = state.spawn_background_tasks();
+    let background_tasks = if args.node_role.spawns_background_tasks() {
+        state.spawn_background_tasks()
+    } else {
+        info!(
+            node_role = args.node_role.as_str(),
+            "background workers disabled for this node role"
+        );
+        Vec::new()
+    };
     let listener = tokio::net::TcpListener::bind(&args.bind).await?;
     let api_router = build_router_with_state(state);
 

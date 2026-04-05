@@ -1,1 +1,1 @@
-pub(crate) use crate::gateway::LocalExecutionRuntimeMissDiagnostic;
+pub(crate) use crate::LocalExecutionRuntimeMissDiagnostic;

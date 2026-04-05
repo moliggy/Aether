@@ -18,7 +18,7 @@ pub(super) fn build_same_format_provider_request_body(
     spec: LocalSameFormatProviderSpec,
     body_rules: Option<&Value>,
     upstream_is_stream: bool,
-    kiro_auth: Option<&crate::gateway::provider_transport::KiroRequestAuth>,
+    kiro_auth: Option<&crate::provider_transport::kiro::KiroRequestAuth>,
     is_claude_code: bool,
 ) -> Option<Value> {
     if let Some(kiro_auth) = kiro_auth {
@@ -60,11 +60,11 @@ pub(super) fn build_same_format_provider_request_body(
 
 pub(super) fn build_same_format_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
     mapped_model: &str,
     spec: LocalSameFormatProviderSpec,
     upstream_is_stream: bool,
-    kiro_auth: Option<&crate::gateway::provider_transport::KiroRequestAuth>,
+    kiro_auth: Option<&crate::provider_transport::kiro::KiroRequestAuth>,
 ) -> Option<String> {
     if let Some(kiro_auth) = kiro_auth {
         return build_kiro_generate_assistant_response_url(

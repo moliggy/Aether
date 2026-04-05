@@ -1,0 +1,1744 @@
+use super::{
+    any, build_router_with_state, build_state_with_execution_runtime_override,
+    encrypt_python_fernet_plaintext, json, start_server, to_bytes, AppState, Arc, Body, Digest,
+    InMemoryAuthApiKeySnapshotRepository, InMemoryMinimalCandidateSelectionReadRepository,
+    InMemoryProviderCatalogReadRepository, InMemoryRequestCandidateRepository, Json, Mutex,
+    Request, RequestCandidateReadRepository, RequestCandidateStatus, Router, Sha256, StatusCode,
+    StoredAuthApiKeySnapshot, StoredMinimalCandidateSelectionRow, StoredProviderCatalogEndpoint,
+    StoredProviderCatalogKey, StoredProviderCatalogProvider, StoredProviderModelMapping,
+    DEVELOPMENT_ENCRYPTION_KEY, EXECUTION_PATH_EXECUTION_RUNTIME_SYNC, EXECUTION_PATH_HEADER,
+    TRACE_ID_HEADER,
+};
+
+#[tokio::test]
+async fn gateway_executes_openai_chat_sync_via_local_decision_gate_without_execution_runtime_override(
+) {
+    #[derive(Debug, Clone)]
+    struct SeenUpstreamSyncRequest {
+        model: String,
+        authorization: String,
+        content_type: String,
+    }
+
+    fn hash_api_key(value: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(value.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn sample_auth_snapshot(api_key_id: &str, user_id: &str) -> StoredAuthApiKeySnapshot {
+        StoredAuthApiKeySnapshot::new(
+            user_id.to_string(),
+            "alice".to_string(),
+            Some("alice@example.com".to_string()),
+            "user".to_string(),
+            "local".to_string(),
+            true,
+            false,
+            Some(serde_json::json!(["openai"])),
+            Some(serde_json::json!(["openai:chat"])),
+            Some(serde_json::json!(["gpt-5"])),
+            api_key_id.to_string(),
+            Some("default".to_string()),
+            true,
+            false,
+            false,
+            Some(60),
+            Some(5),
+            Some(4_102_444_800),
+            Some(serde_json::json!(["openai"])),
+            Some(serde_json::json!(["openai:chat"])),
+            Some(serde_json::json!(["gpt-5"])),
+        )
+        .expect("auth snapshot should build")
+    }
+
+    fn sample_candidate_row() -> StoredMinimalCandidateSelectionRow {
+        StoredMinimalCandidateSelectionRow {
+            provider_id: "provider-openai-local-1".to_string(),
+            provider_name: "openai".to_string(),
+            provider_type: "custom".to_string(),
+            provider_priority: 10,
+            provider_is_active: true,
+            endpoint_id: "endpoint-openai-local-1".to_string(),
+            endpoint_api_format: "openai:chat".to_string(),
+            endpoint_api_family: Some("openai".to_string()),
+            endpoint_kind: Some("chat".to_string()),
+            endpoint_is_active: true,
+            key_id: "key-openai-local-1".to_string(),
+            key_name: "prod".to_string(),
+            key_auth_type: "api_key".to_string(),
+            key_is_active: true,
+            key_api_formats: Some(vec!["openai:chat".to_string()]),
+            key_allowed_models: None,
+            key_capabilities: None,
+            key_internal_priority: 5,
+            key_global_priority_by_format: Some(serde_json::json!({"openai:chat": 1})),
+            model_id: "model-openai-local-1".to_string(),
+            global_model_id: "global-model-openai-local-1".to_string(),
+            global_model_name: "gpt-5".to_string(),
+            global_model_mappings: None,
+            global_model_supports_streaming: Some(true),
+            model_provider_model_name: "gpt-5-upstream".to_string(),
+            model_provider_model_mappings: Some(vec![StoredProviderModelMapping {
+                name: "gpt-5-upstream".to_string(),
+                priority: 1,
+                api_formats: Some(vec!["openai:chat".to_string()]),
+            }]),
+            model_supports_streaming: Some(true),
+            model_is_active: true,
+            model_is_available: true,
+        }
+    }
+
+    fn sample_provider_catalog_provider() -> StoredProviderCatalogProvider {
+        StoredProviderCatalogProvider::new(
+            "provider-openai-local-1".to_string(),
+            "openai".to_string(),
+            Some("https://example.com".to_string()),
+            "custom".to_string(),
+        )
+        .expect("provider should build")
+        .with_transport_fields(
+            true,
+            false,
+            false,
+            None,
+            Some(2),
+            None,
+            Some(20.0),
+            None,
+            None,
+        )
+    }
+
+    fn sample_provider_catalog_endpoint() -> StoredProviderCatalogEndpoint {
+        StoredProviderCatalogEndpoint::new(
+            "endpoint-openai-local-1".to_string(),
+            "provider-openai-local-1".to_string(),
+            "openai:chat".to_string(),
+            Some("openai".to_string()),
+            Some("chat".to_string()),
+            true,
+        )
+        .expect("endpoint should build")
+        .with_transport_fields(
+            "https://api.openai.example".to_string(),
+            None,
+            None,
+            Some(2),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("endpoint transport should build")
+    }
+
+    fn sample_provider_catalog_key() -> StoredProviderCatalogKey {
+        StoredProviderCatalogKey::new(
+            "key-openai-local-1".to_string(),
+            "provider-openai-local-1".to_string(),
+            "prod".to_string(),
+            "api_key".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build")
+        .with_transport_fields(
+            Some(serde_json::json!(["openai:chat"])),
+            encrypt_python_fernet_plaintext(DEVELOPMENT_ENCRYPTION_KEY, "sk-upstream-openai")
+                .expect("api key should encrypt"),
+            None,
+            None,
+            Some(serde_json::json!({"openai:chat": 1})),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("key transport should build")
+    }
+
+    let seen_upstream = Arc::new(Mutex::new(None::<SeenUpstreamSyncRequest>));
+    let seen_upstream_clone = Arc::clone(&seen_upstream);
+    let seen_report = Arc::new(Mutex::new(false));
+    let seen_report_clone = Arc::clone(&seen_report);
+    let decision_hits = Arc::new(Mutex::new(0usize));
+    let decision_hits_clone = Arc::clone(&decision_hits);
+    let plan_hits = Arc::new(Mutex::new(0usize));
+    let plan_hits_clone = Arc::clone(&plan_hits);
+    let public_hits = Arc::new(Mutex::new(0usize));
+    let public_hits_clone = Arc::clone(&public_hits);
+
+    let upstream = Router::new()
+        .route(
+            "/api/internal/gateway/decision-sync",
+            any(move |_request: Request| {
+                let decision_hits_inner = Arc::clone(&decision_hits_clone);
+                async move {
+                    *decision_hits_inner.lock().expect("mutex should lock") += 1;
+                    Json(json!({"action": "proxy_public"}))
+                }
+            }),
+        )
+        .route(
+            "/api/internal/gateway/plan-sync",
+            any(move |_request: Request| {
+                let plan_hits_inner = Arc::clone(&plan_hits_clone);
+                async move {
+                    *plan_hits_inner.lock().expect("mutex should lock") += 1;
+                    Json(json!({"action": "proxy_public"}))
+                }
+            }),
+        )
+        .route(
+            "/api/internal/gateway/report-sync",
+            any(move |request: Request| {
+                let seen_report_inner = Arc::clone(&seen_report_clone);
+                async move {
+                    let (_parts, body) = request.into_parts();
+                    let _raw_body = to_bytes(body, usize::MAX).await.expect("body should read");
+                    *seen_report_inner.lock().expect("mutex should lock") = true;
+                    Json(json!({"ok": true}))
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            any(move |_request: Request| {
+                let public_hits_inner = Arc::clone(&public_hits_clone);
+                async move {
+                    *public_hits_inner.lock().expect("mutex should lock") += 1;
+                    (StatusCode::IM_A_TEAPOT, Body::from("public-route-hit"))
+                }
+            }),
+        );
+
+    let provider = Router::new().route(
+        "/v1/chat/completions",
+        any(move |request: Request| {
+            let seen_upstream_inner = Arc::clone(&seen_upstream_clone);
+            async move {
+                let (parts, body) = request.into_parts();
+                let raw_body = to_bytes(body, usize::MAX).await.expect("body should read");
+                let payload: serde_json::Value =
+                    serde_json::from_slice(&raw_body).expect("upstream payload should parse");
+                *seen_upstream_inner.lock().expect("mutex should lock") =
+                    Some(SeenUpstreamSyncRequest {
+                        model: payload
+                            .get("model")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        authorization: parts
+                            .headers
+                            .get(http::header::AUTHORIZATION)
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or_default()
+                            .to_string(),
+                        content_type: parts
+                            .headers
+                            .get(http::header::CONTENT_TYPE)
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or_default()
+                            .to_string(),
+                    });
+                Json(json!({
+                    "id": "chatcmpl-local-123",
+                    "object": "chat.completion",
+                    "model": "gpt-5-upstream",
+                    "choices": [],
+                    "usage": {
+                        "prompt_tokens": 2,
+                        "completion_tokens": 3,
+                        "total_tokens": 5
+                    }
+                }))
+            }
+        }),
+    );
+
+    let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
+        Some(hash_api_key("sk-client-openai-local")),
+        sample_auth_snapshot("api-key-openai-local-1", "user-openai-local-1"),
+    )]));
+    let mut backup_candidate_row = sample_candidate_row();
+    backup_candidate_row.provider_id = "provider-openai-local-2".to_string();
+    backup_candidate_row.endpoint_id = "endpoint-openai-local-2".to_string();
+    backup_candidate_row.key_id = "key-openai-local-2".to_string();
+    backup_candidate_row.key_name = "backup".to_string();
+    backup_candidate_row.key_internal_priority = 6;
+    backup_candidate_row.model_id = "model-openai-local-2".to_string();
+    backup_candidate_row.global_model_id = "global-model-openai-local-2".to_string();
+    backup_candidate_row.model_provider_model_name = "gpt-5-upstream-backup".to_string();
+    backup_candidate_row.model_provider_model_mappings = Some(vec![StoredProviderModelMapping {
+        name: "gpt-5-upstream-backup".to_string(),
+        priority: 1,
+        api_formats: Some(vec!["openai:chat".to_string()]),
+    }]);
+    let candidate_selection_repository =
+        Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+            sample_candidate_row(),
+            backup_candidate_row,
+        ]));
+    let request_candidate_repository = Arc::new(InMemoryRequestCandidateRepository::default());
+    let mut backup_provider = sample_provider_catalog_provider();
+    backup_provider.id = "provider-openai-local-2".to_string();
+    let mut backup_endpoint = sample_provider_catalog_endpoint();
+    backup_endpoint.id = "endpoint-openai-local-2".to_string();
+    backup_endpoint.provider_id = "provider-openai-local-2".to_string();
+    backup_endpoint.base_url = "https://api.openai.backup.example".to_string();
+    let mut backup_key = sample_provider_catalog_key();
+    backup_key.id = "key-openai-local-2".to_string();
+    backup_key.provider_id = "provider-openai-local-2".to_string();
+    backup_key.name = "backup".to_string();
+    backup_key.encrypted_api_key =
+        encrypt_python_fernet_plaintext(DEVELOPMENT_ENCRYPTION_KEY, "sk-upstream-openai-backup")
+            .expect("api key should encrypt");
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let (provider_url, provider_handle) = start_server(provider).await;
+    let mut primary_endpoint = sample_provider_catalog_endpoint();
+    primary_endpoint.base_url = provider_url.clone();
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![sample_provider_catalog_provider(), backup_provider],
+        {
+            backup_endpoint.base_url = "http://127.0.0.1:9".to_string();
+            vec![primary_endpoint, backup_endpoint]
+        },
+        vec![sample_provider_catalog_key(), backup_key],
+    ));
+    let gateway_state = AppState::new()
+        .expect("gateway state should build")
+        .with_data_state_for_tests(
+            crate::data::GatewayDataState::with_auth_candidate_selection_provider_catalog_and_request_candidate_repository_for_tests(
+                auth_repository,
+                candidate_selection_repository,
+                provider_catalog_repository,
+                Arc::clone(&request_candidate_repository),
+                DEVELOPMENT_ENCRYPTION_KEY,
+            ),
+        );
+    let gateway = build_router_with_state(gateway_state);
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/chat/completions"))
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(http::header::AUTHORIZATION, "Bearer sk-client-openai-local")
+        .header(TRACE_ID_HEADER, "trace-openai-chat-local-123")
+        .body("{\"model\":\"gpt-5\",\"messages\":[]}")
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(EXECUTION_PATH_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some(EXECUTION_PATH_EXECUTION_RUNTIME_SYNC)
+    );
+    let response_json: serde_json::Value = response.json().await.expect("body should parse");
+    assert_eq!(response_json["model"], "gpt-5-upstream");
+
+    let seen_upstream_request = seen_upstream
+        .lock()
+        .expect("mutex should lock")
+        .clone()
+        .expect("upstream sync should be captured");
+    assert_eq!(seen_upstream_request.model, "gpt-5-upstream");
+    assert_eq!(
+        seen_upstream_request.authorization,
+        "Bearer sk-upstream-openai"
+    );
+    assert_eq!(seen_upstream_request.content_type, "application/json");
+    let stored_candidates = request_candidate_repository
+        .list_by_request_id("trace-openai-chat-local-123")
+        .await
+        .expect("request candidate trace should read");
+    assert_eq!(stored_candidates.len(), 2);
+    assert_eq!(
+        stored_candidates
+            .iter()
+            .filter(|candidate| candidate.status == RequestCandidateStatus::Success)
+            .count(),
+        1
+    );
+    assert_eq!(
+        stored_candidates
+            .iter()
+            .filter(|candidate| candidate.status == RequestCandidateStatus::Failed)
+            .count(),
+        0
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        !*seen_report.lock().expect("mutex should lock"),
+        "report-sync should stay local when request candidate persistence is available"
+    );
+
+    assert_eq!(*decision_hits.lock().expect("mutex should lock"), 0);
+    assert_eq!(*plan_hits.lock().expect("mutex should lock"), 0);
+    assert_eq!(*public_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    provider_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_executes_openai_chat_sync_via_local_cross_format_gemini_candidate_without_external_control_config(
+) {
+    #[derive(Debug, Clone)]
+    struct SeenExecutionRuntimeSyncRequest {
+        trace_id: String,
+        url: String,
+        provider_model: String,
+        auth_header_value: String,
+        endpoint_tag: String,
+        system_text: String,
+        user_text: String,
+        max_output_tokens: u64,
+        temperature: f64,
+    }
+
+    fn hash_api_key(value: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(value.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn sample_auth_snapshot(api_key_id: &str, user_id: &str) -> StoredAuthApiKeySnapshot {
+        StoredAuthApiKeySnapshot::new(
+            user_id.to_string(),
+            "alice".to_string(),
+            Some("alice@example.com".to_string()),
+            "user".to_string(),
+            "local".to_string(),
+            true,
+            false,
+            Some(serde_json::json!(["openai", "gemini"])),
+            Some(serde_json::json!(["openai:chat"])),
+            Some(serde_json::json!(["gpt-5"])),
+            api_key_id.to_string(),
+            Some("default".to_string()),
+            true,
+            false,
+            false,
+            Some(60),
+            Some(5),
+            Some(4_102_444_800),
+            Some(serde_json::json!(["openai", "gemini"])),
+            Some(serde_json::json!(["openai:chat"])),
+            Some(serde_json::json!(["gpt-5"])),
+        )
+        .expect("auth snapshot should build")
+    }
+
+    fn sample_candidate_row() -> StoredMinimalCandidateSelectionRow {
+        StoredMinimalCandidateSelectionRow {
+            provider_id: "provider-openai-chat-gemini-local-1".to_string(),
+            provider_name: "gemini".to_string(),
+            provider_type: "custom".to_string(),
+            provider_priority: 10,
+            provider_is_active: true,
+            endpoint_id: "endpoint-openai-chat-gemini-local-1".to_string(),
+            endpoint_api_format: "gemini:chat".to_string(),
+            endpoint_api_family: Some("gemini".to_string()),
+            endpoint_kind: Some("chat".to_string()),
+            endpoint_is_active: true,
+            key_id: "key-openai-chat-gemini-local-1".to_string(),
+            key_name: "prod".to_string(),
+            key_auth_type: "api_key".to_string(),
+            key_is_active: true,
+            key_api_formats: Some(vec!["gemini:chat".to_string()]),
+            key_allowed_models: None,
+            key_capabilities: None,
+            key_internal_priority: 5,
+            key_global_priority_by_format: Some(serde_json::json!({"gemini:chat": 1})),
+            model_id: "model-openai-chat-gemini-local-1".to_string(),
+            global_model_id: "global-model-openai-chat-gemini-local-1".to_string(),
+            global_model_name: "gpt-5".to_string(),
+            global_model_mappings: None,
+            global_model_supports_streaming: Some(true),
+            model_provider_model_name: "gemini-2.5-pro-upstream".to_string(),
+            model_provider_model_mappings: Some(vec![StoredProviderModelMapping {
+                name: "gemini-2.5-pro-upstream".to_string(),
+                priority: 1,
+                api_formats: Some(vec!["gemini:chat".to_string()]),
+            }]),
+            model_supports_streaming: Some(true),
+            model_is_active: true,
+            model_is_available: true,
+        }
+    }
+
+    fn sample_provider_catalog_provider() -> StoredProviderCatalogProvider {
+        StoredProviderCatalogProvider::new(
+            "provider-openai-chat-gemini-local-1".to_string(),
+            "gemini".to_string(),
+            Some("https://example.com".to_string()),
+            "custom".to_string(),
+        )
+        .expect("provider should build")
+        .with_transport_fields(
+            true,
+            false,
+            false,
+            None,
+            Some(2),
+            None,
+            Some(20.0),
+            None,
+            None,
+        )
+    }
+
+    fn sample_provider_catalog_endpoint() -> StoredProviderCatalogEndpoint {
+        StoredProviderCatalogEndpoint::new(
+            "endpoint-openai-chat-gemini-local-1".to_string(),
+            "provider-openai-chat-gemini-local-1".to_string(),
+            "gemini:chat".to_string(),
+            Some("gemini".to_string()),
+            Some("chat".to_string()),
+            true,
+        )
+        .expect("endpoint should build")
+        .with_transport_fields(
+            "https://generativelanguage.googleapis.com".to_string(),
+            Some(serde_json::json!([
+                {"action":"set","key":"x-endpoint-tag","value":"openai-chat-gemini-cross-format"}
+            ])),
+            None,
+            Some(2),
+            Some("/custom/v1beta/models/gemini-2.5-pro-upstream:generateContent".to_string()),
+            None,
+            None,
+            None,
+        )
+        .expect("endpoint transport should build")
+    }
+
+    fn sample_provider_catalog_key() -> StoredProviderCatalogKey {
+        StoredProviderCatalogKey::new(
+            "key-openai-chat-gemini-local-1".to_string(),
+            "provider-openai-chat-gemini-local-1".to_string(),
+            "prod".to_string(),
+            "api_key".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build")
+        .with_transport_fields(
+            Some(serde_json::json!(["gemini:chat"])),
+            encrypt_python_fernet_plaintext(
+                DEVELOPMENT_ENCRYPTION_KEY,
+                "sk-upstream-openai-chat-gemini",
+            )
+            .expect("api key should encrypt"),
+            None,
+            None,
+            Some(serde_json::json!({"gemini:chat": 1})),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("key transport should build")
+    }
+
+    let seen_execution_runtime = Arc::new(Mutex::new(None::<SeenExecutionRuntimeSyncRequest>));
+    let seen_execution_runtime_clone = Arc::clone(&seen_execution_runtime);
+    let seen_report = Arc::new(Mutex::new(false));
+    let seen_report_clone = Arc::clone(&seen_report);
+    let decision_hits = Arc::new(Mutex::new(0usize));
+    let decision_hits_clone = Arc::clone(&decision_hits);
+    let plan_hits = Arc::new(Mutex::new(0usize));
+    let plan_hits_clone = Arc::clone(&plan_hits);
+    let public_hits = Arc::new(Mutex::new(0usize));
+    let public_hits_clone = Arc::clone(&public_hits);
+    let request_candidate_repository = Arc::new(InMemoryRequestCandidateRepository::default());
+
+    let upstream = Router::new()
+        .route(
+            "/api/internal/gateway/decision-sync",
+            any(move |_request: Request| {
+                let decision_hits_inner = Arc::clone(&decision_hits_clone);
+                async move {
+                    *decision_hits_inner.lock().expect("mutex should lock") += 1;
+                    Json(json!({"action": "proxy_public"}))
+                }
+            }),
+        )
+        .route(
+            "/api/internal/gateway/plan-sync",
+            any(move |_request: Request| {
+                let plan_hits_inner = Arc::clone(&plan_hits_clone);
+                async move {
+                    *plan_hits_inner.lock().expect("mutex should lock") += 1;
+                    Json(json!({"action": "proxy_public"}))
+                }
+            }),
+        )
+        .route(
+            "/api/internal/gateway/report-sync",
+            any(move |request: Request| {
+                let seen_report_inner = Arc::clone(&seen_report_clone);
+                async move {
+                    let (_parts, body) = request.into_parts();
+                    let _raw_body = to_bytes(body, usize::MAX).await.expect("body should read");
+                    *seen_report_inner.lock().expect("mutex should lock") = true;
+                    Json(json!({"ok": true}))
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            any(move |_request: Request| {
+                let public_hits_inner = Arc::clone(&public_hits_clone);
+                async move {
+                    *public_hits_inner.lock().expect("mutex should lock") += 1;
+                    (StatusCode::IM_A_TEAPOT, Body::from("public-route-hit"))
+                }
+            }),
+        );
+
+    let execution_runtime = Router::new().route(
+        "/v1/execute/sync",
+        any(move |request: Request| {
+            let seen_execution_runtime_inner = Arc::clone(&seen_execution_runtime_clone);
+            async move {
+                let (parts, body) = request.into_parts();
+                let raw_body = to_bytes(body, usize::MAX).await.expect("body should read");
+                let payload: serde_json::Value = serde_json::from_slice(&raw_body)
+                    .expect("execution runtime payload should parse");
+                *seen_execution_runtime_inner
+                    .lock()
+                    .expect("mutex should lock") = Some(SeenExecutionRuntimeSyncRequest {
+                    trace_id: parts
+                        .headers
+                        .get(TRACE_ID_HEADER)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string(),
+                    url: payload
+                        .get("url")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    provider_model: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("model"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    auth_header_value: payload
+                        .get("headers")
+                        .and_then(|value| value.get("x-goog-api-key"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    endpoint_tag: payload
+                        .get("headers")
+                        .and_then(|value| value.get("x-endpoint-tag"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    system_text: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("systemInstruction"))
+                        .and_then(|value| value.get("parts"))
+                        .and_then(|value| value.as_array())
+                        .and_then(|value| value.first())
+                        .and_then(|value| value.get("text"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    user_text: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("contents"))
+                        .and_then(|value| value.as_array())
+                        .and_then(|value| value.first())
+                        .and_then(|value| value.get("parts"))
+                        .and_then(|value| value.as_array())
+                        .and_then(|value| value.first())
+                        .and_then(|value| value.get("text"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    max_output_tokens: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("generationConfig"))
+                        .and_then(|value| value.get("maxOutputTokens"))
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                    temperature: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("generationConfig"))
+                        .and_then(|value| value.get("temperature"))
+                        .and_then(|value| value.as_f64())
+                        .unwrap_or_default(),
+                });
+                Json(json!({
+                    "request_id": "trace-openai-chat-gemini-local-123",
+                    "status_code": 200,
+                    "headers": {
+                        "content-type": "application/json"
+                    },
+                    "body": {
+                        "json_body": {
+                            "responseId": "resp_openai_chat_gemini_local_123",
+                            "candidates": [{
+                                "content": {
+                                    "parts": [{"text": "Hello Gemini direct"}],
+                                    "role": "model"
+                                },
+                                "finishReason": "STOP",
+                                "index": 0
+                            }],
+                            "modelVersion": "gemini-2.5-pro-upstream",
+                            "usageMetadata": {
+                                "promptTokenCount": 1,
+                                "candidatesTokenCount": 2,
+                                "totalTokenCount": 3
+                            }
+                        }
+                    },
+                    "telemetry": {
+                        "elapsed_ms": 25
+                    }
+                }))
+            }
+        }),
+    );
+
+    let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
+        Some(hash_api_key("sk-client-openai-chat-gemini")),
+        sample_auth_snapshot(
+            "api-key-openai-chat-gemini-local-1",
+            "user-openai-chat-gemini-local-1",
+        ),
+    )]));
+    let candidate_selection_repository =
+        Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+            sample_candidate_row(),
+        ]));
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![sample_provider_catalog_provider()],
+        vec![sample_provider_catalog_endpoint()],
+        vec![sample_provider_catalog_key()],
+    ));
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
+    let gateway_state =
+        build_state_with_execution_runtime_override(execution_runtime_url.clone())
+    .with_data_state_for_tests(
+        crate::data::GatewayDataState::with_auth_candidate_selection_provider_catalog_and_request_candidate_repository_for_tests(
+            auth_repository,
+            candidate_selection_repository,
+            provider_catalog_repository,
+            Arc::clone(&request_candidate_repository),
+            DEVELOPMENT_ENCRYPTION_KEY,
+        ),
+    );
+    let gateway = build_router_with_state(gateway_state);
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/chat/completions"))
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            "Bearer sk-client-openai-chat-gemini",
+        )
+        .header(TRACE_ID_HEADER, "trace-openai-chat-gemini-local-123")
+        .body(
+            "{\"model\":\"gpt-5\",\"messages\":[{\"role\":\"system\",\"content\":\"You are terse.\"},{\"role\":\"user\",\"content\":\"Say hello\"}],\"temperature\":0.2,\"max_tokens\":64}",
+        )
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(EXECUTION_PATH_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some(EXECUTION_PATH_EXECUTION_RUNTIME_SYNC)
+    );
+    let response_json: serde_json::Value = response.json().await.expect("body should parse");
+    assert_eq!(
+        response_json,
+        json!({
+            "id": "resp_openai_chat_gemini_local_123",
+            "object": "chat.completion",
+            "model": "gemini-2.5-pro-upstream",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello Gemini direct"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 1,
+                "completion_tokens": 2,
+                "total_tokens": 3
+            }
+        })
+    );
+
+    let seen_execution_runtime_request = seen_execution_runtime
+        .lock()
+        .expect("mutex should lock")
+        .clone()
+        .expect("execution runtime sync should be captured");
+    assert_eq!(
+        seen_execution_runtime_request.trace_id,
+        "trace-openai-chat-gemini-local-123"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.url,
+        "https://generativelanguage.googleapis.com/custom/v1beta/models/gemini-2.5-pro-upstream:generateContent"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.provider_model,
+        "gemini-2.5-pro-upstream"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.auth_header_value,
+        "sk-upstream-openai-chat-gemini"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.endpoint_tag,
+        "openai-chat-gemini-cross-format"
+    );
+    assert_eq!(seen_execution_runtime_request.system_text, "You are terse.");
+    assert_eq!(seen_execution_runtime_request.user_text, "Say hello");
+    assert_eq!(seen_execution_runtime_request.max_output_tokens, 64);
+    assert!((seen_execution_runtime_request.temperature - 0.2).abs() < f64::EPSILON);
+
+    let stored_candidates = request_candidate_repository
+        .list_by_request_id("trace-openai-chat-gemini-local-123")
+        .await
+        .expect("request candidate trace should read");
+    assert_eq!(stored_candidates.len(), 1);
+    assert_eq!(stored_candidates[0].status, RequestCandidateStatus::Success);
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        !*seen_report.lock().expect("mutex should lock"),
+        "report-sync should stay local when request candidate persistence is available"
+    );
+
+    assert_eq!(*decision_hits.lock().expect("mutex should lock"), 0);
+    assert_eq!(*plan_hits.lock().expect("mutex should lock"), 0);
+    assert_eq!(*public_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    execution_runtime_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_executes_openai_chat_sync_via_local_openai_compact_cross_format_candidate() {
+    #[derive(Debug, Clone)]
+    struct SeenExecutionRuntimeSyncRequest {
+        trace_id: String,
+        url: String,
+        provider_model: String,
+        api_key: String,
+        instructions: String,
+        user_text: String,
+        stream_present: bool,
+    }
+
+    fn hash_api_key(value: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(value.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn sample_auth_snapshot(api_key_id: &str, user_id: &str) -> StoredAuthApiKeySnapshot {
+        StoredAuthApiKeySnapshot::new(
+            user_id.to_string(),
+            "alice".to_string(),
+            Some("alice@example.com".to_string()),
+            "user".to_string(),
+            "local".to_string(),
+            true,
+            false,
+            Some(serde_json::json!(["openai", "codex"])),
+            Some(serde_json::json!(["openai:chat"])),
+            Some(serde_json::json!(["gpt-5.4"])),
+            api_key_id.to_string(),
+            Some("default".to_string()),
+            true,
+            false,
+            false,
+            Some(60),
+            Some(5),
+            Some(4_102_444_800),
+            Some(serde_json::json!(["openai", "codex"])),
+            Some(serde_json::json!(["openai:chat"])),
+            Some(serde_json::json!(["gpt-5.4"])),
+        )
+        .expect("auth snapshot should build")
+    }
+
+    fn sample_candidate_row() -> StoredMinimalCandidateSelectionRow {
+        StoredMinimalCandidateSelectionRow {
+            provider_id: "provider-openai-chat-compact-local-1".to_string(),
+            provider_name: "codex".to_string(),
+            provider_type: "codex".to_string(),
+            provider_priority: 10,
+            provider_is_active: true,
+            endpoint_id: "endpoint-openai-chat-compact-local-1".to_string(),
+            endpoint_api_format: "openai:compact".to_string(),
+            endpoint_api_family: Some("openai".to_string()),
+            endpoint_kind: Some("compact".to_string()),
+            endpoint_is_active: true,
+            key_id: "key-openai-chat-compact-local-1".to_string(),
+            key_name: "prod".to_string(),
+            key_auth_type: "api_key".to_string(),
+            key_is_active: true,
+            key_api_formats: Some(vec!["openai:compact".to_string()]),
+            key_allowed_models: None,
+            key_capabilities: None,
+            key_internal_priority: 5,
+            key_global_priority_by_format: Some(serde_json::json!({"openai:compact": 1})),
+            model_id: "model-openai-chat-compact-local-1".to_string(),
+            global_model_id: "global-model-openai-chat-compact-local-1".to_string(),
+            global_model_name: "gpt-5.4".to_string(),
+            global_model_mappings: None,
+            global_model_supports_streaming: Some(false),
+            model_provider_model_name: "gpt-5.4".to_string(),
+            model_provider_model_mappings: Some(vec![StoredProviderModelMapping {
+                name: "gpt-5.4".to_string(),
+                priority: 1,
+                api_formats: Some(vec!["openai:compact".to_string()]),
+            }]),
+            model_supports_streaming: Some(false),
+            model_is_active: true,
+            model_is_available: true,
+        }
+    }
+
+    fn sample_provider_catalog_provider() -> StoredProviderCatalogProvider {
+        StoredProviderCatalogProvider::new(
+            "provider-openai-chat-compact-local-1".to_string(),
+            "codex".to_string(),
+            Some("https://chatgpt.com".to_string()),
+            "codex".to_string(),
+        )
+        .expect("provider should build")
+        .with_transport_fields(
+            true,
+            false,
+            false,
+            None,
+            Some(2),
+            None,
+            Some(20.0),
+            None,
+            None,
+        )
+    }
+
+    fn sample_provider_catalog_endpoint() -> StoredProviderCatalogEndpoint {
+        StoredProviderCatalogEndpoint::new(
+            "endpoint-openai-chat-compact-local-1".to_string(),
+            "provider-openai-chat-compact-local-1".to_string(),
+            "openai:compact".to_string(),
+            Some("openai".to_string()),
+            Some("compact".to_string()),
+            true,
+        )
+        .expect("endpoint should build")
+        .with_transport_fields(
+            "https://chatgpt.com/backend-api/codex".to_string(),
+            None,
+            None,
+            Some(2),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("endpoint transport should build")
+    }
+
+    fn sample_provider_catalog_key() -> StoredProviderCatalogKey {
+        StoredProviderCatalogKey::new(
+            "key-openai-chat-compact-local-1".to_string(),
+            "provider-openai-chat-compact-local-1".to_string(),
+            "prod".to_string(),
+            "api_key".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build")
+        .with_transport_fields(
+            Some(serde_json::json!(["openai:compact"])),
+            encrypt_python_fernet_plaintext(
+                DEVELOPMENT_ENCRYPTION_KEY,
+                "sk-upstream-openai-chat-compact",
+            )
+            .expect("api key should encrypt"),
+            None,
+            None,
+            Some(serde_json::json!({"openai:compact": 1})),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("key transport should build")
+    }
+
+    let seen_execution_runtime = Arc::new(Mutex::new(None::<SeenExecutionRuntimeSyncRequest>));
+    let seen_execution_runtime_clone = Arc::clone(&seen_execution_runtime);
+    let seen_report = Arc::new(Mutex::new(false));
+    let seen_report_clone = Arc::clone(&seen_report);
+    let decision_hits = Arc::new(Mutex::new(0usize));
+    let decision_hits_clone = Arc::clone(&decision_hits);
+    let plan_hits = Arc::new(Mutex::new(0usize));
+    let plan_hits_clone = Arc::clone(&plan_hits);
+    let public_hits = Arc::new(Mutex::new(0usize));
+    let public_hits_clone = Arc::clone(&public_hits);
+    let request_candidate_repository = Arc::new(InMemoryRequestCandidateRepository::default());
+
+    let upstream = Router::new()
+        .route(
+            "/api/internal/gateway/decision-sync",
+            any(move |_request: Request| {
+                let decision_hits_inner = Arc::clone(&decision_hits_clone);
+                async move {
+                    *decision_hits_inner.lock().expect("mutex should lock") += 1;
+                    Json(json!({"action": "proxy_public"}))
+                }
+            }),
+        )
+        .route(
+            "/api/internal/gateway/plan-sync",
+            any(move |_request: Request| {
+                let plan_hits_inner = Arc::clone(&plan_hits_clone);
+                async move {
+                    *plan_hits_inner.lock().expect("mutex should lock") += 1;
+                    Json(json!({"action": "proxy_public"}))
+                }
+            }),
+        )
+        .route(
+            "/api/internal/gateway/report-sync",
+            any(move |request: Request| {
+                let seen_report_inner = Arc::clone(&seen_report_clone);
+                async move {
+                    let (_parts, body) = request.into_parts();
+                    let _raw_body = to_bytes(body, usize::MAX).await.expect("body should read");
+                    *seen_report_inner.lock().expect("mutex should lock") = true;
+                    Json(json!({"ok": true}))
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            any(move |_request: Request| {
+                let public_hits_inner = Arc::clone(&public_hits_clone);
+                async move {
+                    *public_hits_inner.lock().expect("mutex should lock") += 1;
+                    (StatusCode::IM_A_TEAPOT, Body::from("public-route-hit"))
+                }
+            }),
+        );
+
+    let execution_runtime = Router::new().route(
+        "/v1/execute/sync",
+        any(move |request: Request| {
+            let seen_execution_runtime_inner = Arc::clone(&seen_execution_runtime_clone);
+            async move {
+                let (parts, body) = request.into_parts();
+                let raw_body = to_bytes(body, usize::MAX).await.expect("body should read");
+                let payload: serde_json::Value = serde_json::from_slice(&raw_body)
+                    .expect("execution runtime payload should parse");
+                *seen_execution_runtime_inner
+                    .lock()
+                    .expect("mutex should lock") = Some(SeenExecutionRuntimeSyncRequest {
+                    trace_id: parts
+                        .headers
+                        .get(TRACE_ID_HEADER)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string(),
+                    url: payload
+                        .get("url")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    provider_model: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("model"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    api_key: payload
+                        .get("headers")
+                        .and_then(|value| value.get("x-api-key"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    instructions: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("instructions"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    user_text: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("input"))
+                        .and_then(|value| value.as_array())
+                        .and_then(|value| value.first())
+                        .and_then(|value| value.get("content"))
+                        .and_then(|value| value.as_array())
+                        .and_then(|value| value.first())
+                        .and_then(|value| value.get("text"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    stream_present: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("stream"))
+                        .is_some(),
+                });
+                Json(json!({
+                    "request_id": "trace-openai-chat-compact-local-123",
+                    "status_code": 200,
+                    "headers": {
+                        "content-type": "application/json"
+                    },
+                    "body": {
+                        "json_body": {
+                            "id": "resp_openai_chat_compact_local_123",
+                            "object": "response",
+                            "status": "completed",
+                            "model": "gpt-5.4",
+                            "output": [{
+                                "type": "message",
+                                "id": "msg_openai_chat_compact_local_123",
+                                "role": "assistant",
+                                "status": "completed",
+                                "content": [{
+                                    "type": "output_text",
+                                    "text": "Hello Compact",
+                                    "annotations": []
+                                }]
+                            }],
+                            "usage": {
+                                "input_tokens": 1,
+                                "output_tokens": 2,
+                                "total_tokens": 3
+                            }
+                        }
+                    },
+                    "telemetry": {
+                        "elapsed_ms": 25
+                    }
+                }))
+            }
+        }),
+    );
+
+    let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
+        Some(hash_api_key("sk-client-openai-chat-compact")),
+        sample_auth_snapshot(
+            "api-key-openai-chat-compact-local-1",
+            "user-openai-chat-compact-local-1",
+        ),
+    )]));
+    let candidate_selection_repository =
+        Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+            sample_candidate_row(),
+        ]));
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![sample_provider_catalog_provider()],
+        vec![sample_provider_catalog_endpoint()],
+        vec![sample_provider_catalog_key()],
+    ));
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
+    let gateway_state =
+        build_state_with_execution_runtime_override(execution_runtime_url.clone())
+    .with_data_state_for_tests(
+        crate::data::GatewayDataState::with_auth_candidate_selection_provider_catalog_and_request_candidate_repository_for_tests(
+            auth_repository,
+            candidate_selection_repository,
+            provider_catalog_repository,
+            Arc::clone(&request_candidate_repository),
+            DEVELOPMENT_ENCRYPTION_KEY,
+        ),
+    );
+    let gateway = build_router_with_state(gateway_state);
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/chat/completions"))
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            "Bearer sk-client-openai-chat-compact",
+        )
+        .header(TRACE_ID_HEADER, "trace-openai-chat-compact-local-123")
+        .body(
+            "{\"model\":\"gpt-5.4\",\"messages\":[{\"role\":\"system\",\"content\":\"You are terse.\"},{\"role\":\"user\",\"content\":\"Say hello\"}]}",
+        )
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(EXECUTION_PATH_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some(EXECUTION_PATH_EXECUTION_RUNTIME_SYNC)
+    );
+    let response_json: serde_json::Value = response.json().await.expect("body should parse");
+    assert_eq!(
+        response_json,
+        json!({
+            "id": "resp_openai_chat_compact_local_123",
+            "object": "chat.completion",
+            "model": "gpt-5.4",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello Compact"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 1,
+                "completion_tokens": 2,
+                "total_tokens": 3
+            }
+        })
+    );
+
+    let seen_execution_runtime_request = seen_execution_runtime
+        .lock()
+        .expect("mutex should lock")
+        .clone()
+        .expect("execution runtime sync should be captured");
+    assert_eq!(
+        seen_execution_runtime_request.trace_id,
+        "trace-openai-chat-compact-local-123"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.url,
+        "https://chatgpt.com/backend-api/codex/responses/compact"
+    );
+    assert_eq!(seen_execution_runtime_request.provider_model, "gpt-5.4");
+    assert_eq!(
+        seen_execution_runtime_request.api_key,
+        "sk-upstream-openai-chat-compact"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.instructions,
+        "You are terse."
+    );
+    assert_eq!(seen_execution_runtime_request.user_text, "Say hello");
+    assert!(!seen_execution_runtime_request.stream_present);
+
+    let stored_candidates = request_candidate_repository
+        .list_by_request_id("trace-openai-chat-compact-local-123")
+        .await
+        .expect("request candidate trace should read");
+    assert_eq!(stored_candidates.len(), 1);
+    assert_eq!(stored_candidates[0].status, RequestCandidateStatus::Success);
+    let extra_data = stored_candidates[0]
+        .extra_data
+        .as_ref()
+        .expect("request candidate extra_data should exist");
+    assert_eq!(extra_data["execution_strategy"], "local_cross_format");
+    assert_eq!(extra_data["conversion_mode"], "bidirectional");
+    assert_eq!(extra_data["client_contract"], "openai:chat");
+    assert_eq!(extra_data["provider_contract"], "openai:compact");
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        !*seen_report.lock().expect("mutex should lock"),
+        "report-sync should stay local when request candidate persistence is available"
+    );
+
+    assert_eq!(*decision_hits.lock().expect("mutex should lock"), 0);
+    assert_eq!(*plan_hits.lock().expect("mutex should lock"), 0);
+    assert_eq!(*public_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    execution_runtime_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_executes_openai_chat_sync_with_custom_path_via_local_decision_gate_with_local_sync_decision(
+) {
+    #[derive(Debug, Clone)]
+    struct SeenExecutionRuntimeSyncRequest {
+        trace_id: String,
+        url: String,
+        model: String,
+        authorization: String,
+        endpoint_tag: String,
+        renamed_header: String,
+        dropped_header_present: bool,
+        metadata_mode: String,
+        metadata_source: String,
+        temperature_present: bool,
+        proxy_node_id: String,
+        tls_profile: String,
+    }
+
+    fn hash_api_key(value: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(value.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn sample_auth_snapshot(api_key_id: &str, user_id: &str) -> StoredAuthApiKeySnapshot {
+        StoredAuthApiKeySnapshot::new(
+            user_id.to_string(),
+            "alice".to_string(),
+            Some("alice@example.com".to_string()),
+            "user".to_string(),
+            "local".to_string(),
+            true,
+            false,
+            Some(serde_json::json!(["openai"])),
+            Some(serde_json::json!(["openai:chat"])),
+            Some(serde_json::json!(["gpt-5"])),
+            api_key_id.to_string(),
+            Some("default".to_string()),
+            true,
+            false,
+            false,
+            Some(60),
+            Some(5),
+            Some(4_102_444_800),
+            Some(serde_json::json!(["openai"])),
+            Some(serde_json::json!(["openai:chat"])),
+            Some(serde_json::json!(["gpt-5"])),
+        )
+        .expect("auth snapshot should build")
+    }
+
+    fn sample_candidate_row() -> StoredMinimalCandidateSelectionRow {
+        StoredMinimalCandidateSelectionRow {
+            provider_id: "provider-openai-custom-path-1".to_string(),
+            provider_name: "openai".to_string(),
+            provider_type: "custom".to_string(),
+            provider_priority: 10,
+            provider_is_active: true,
+            endpoint_id: "endpoint-openai-custom-path-1".to_string(),
+            endpoint_api_format: "openai:chat".to_string(),
+            endpoint_api_family: Some("openai".to_string()),
+            endpoint_kind: Some("chat".to_string()),
+            endpoint_is_active: true,
+            key_id: "key-openai-custom-path-1".to_string(),
+            key_name: "prod".to_string(),
+            key_auth_type: "api_key".to_string(),
+            key_is_active: true,
+            key_api_formats: Some(vec!["openai:chat".to_string()]),
+            key_allowed_models: None,
+            key_capabilities: None,
+            key_internal_priority: 5,
+            key_global_priority_by_format: Some(serde_json::json!({"openai:chat": 1})),
+            model_id: "model-openai-custom-path-1".to_string(),
+            global_model_id: "global-model-openai-custom-path-1".to_string(),
+            global_model_name: "gpt-5".to_string(),
+            global_model_mappings: None,
+            global_model_supports_streaming: Some(true),
+            model_provider_model_name: "gpt-5-upstream".to_string(),
+            model_provider_model_mappings: Some(vec![StoredProviderModelMapping {
+                name: "gpt-5-upstream".to_string(),
+                priority: 1,
+                api_formats: Some(vec!["openai:chat".to_string()]),
+            }]),
+            model_supports_streaming: Some(true),
+            model_is_active: true,
+            model_is_available: true,
+        }
+    }
+
+    fn sample_provider_catalog_provider() -> StoredProviderCatalogProvider {
+        StoredProviderCatalogProvider::new(
+            "provider-openai-custom-path-1".to_string(),
+            "openai".to_string(),
+            Some("https://example.com".to_string()),
+            "custom".to_string(),
+        )
+        .expect("provider should build")
+        .with_transport_fields(
+            true,
+            false,
+            false,
+            None,
+            Some(2),
+            Some(serde_json::json!({"url":"http://provider-proxy.internal:8080"})),
+            Some(20.0),
+            None,
+            None,
+        )
+    }
+
+    fn sample_provider_catalog_endpoint() -> StoredProviderCatalogEndpoint {
+        StoredProviderCatalogEndpoint::new(
+            "endpoint-openai-custom-path-1".to_string(),
+            "provider-openai-custom-path-1".to_string(),
+            "openai:chat".to_string(),
+            Some("openai".to_string()),
+            Some("chat".to_string()),
+            true,
+        )
+        .expect("endpoint should build")
+        .with_transport_fields(
+            "https://api.openai.example".to_string(),
+            Some(serde_json::json!([
+                {"action":"set","key":"x-endpoint-tag","value":"openai-chat-local"},
+                {"action":"rename","from":"x-client-rename","to":"x-upstream-rename"},
+                {"action":"drop","key":"x-drop-me"}
+            ])),
+            Some(serde_json::json!([
+                {"action":"set","path":"metadata.mode","value":"safe"},
+                {"action":"rename","from":"metadata.client","to":"metadata.source"},
+                {"action":"drop","path":"temperature"}
+            ])),
+            Some(2),
+            Some("/custom/v1/chat/completions".to_string()),
+            None,
+            None,
+            None,
+        )
+        .expect("endpoint transport should build")
+    }
+
+    fn sample_provider_catalog_key() -> StoredProviderCatalogKey {
+        StoredProviderCatalogKey::new(
+            "key-openai-custom-path-1".to_string(),
+            "provider-openai-custom-path-1".to_string(),
+            "prod".to_string(),
+            "api_key".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build")
+        .with_transport_fields(
+            Some(serde_json::json!(["openai:chat"])),
+            encrypt_python_fernet_plaintext(DEVELOPMENT_ENCRYPTION_KEY, "sk-upstream-openai")
+                .expect("api key should encrypt"),
+            None,
+            None,
+            Some(serde_json::json!({"openai:chat": 1})),
+            None,
+            None,
+            Some(serde_json::json!({"enabled": true, "node_id":"proxy-node-openai-custom-path"})),
+            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+        )
+        .expect("key transport should build")
+    }
+
+    let seen_execution_runtime = Arc::new(Mutex::new(None::<SeenExecutionRuntimeSyncRequest>));
+    let seen_execution_runtime_clone = Arc::clone(&seen_execution_runtime);
+    let seen_report = Arc::new(Mutex::new(false));
+    let seen_report_clone = Arc::clone(&seen_report);
+    let decision_hits = Arc::new(Mutex::new(0usize));
+    let decision_hits_clone = Arc::clone(&decision_hits);
+    let plan_hits = Arc::new(Mutex::new(0usize));
+    let plan_hits_clone = Arc::clone(&plan_hits);
+    let public_hits = Arc::new(Mutex::new(0usize));
+    let public_hits_clone = Arc::clone(&public_hits);
+
+    let upstream = Router::new()
+        .route(
+            "/api/internal/gateway/decision-sync",
+            any(move |_request: Request| {
+                let decision_hits_inner = Arc::clone(&decision_hits_clone);
+                async move {
+                    *decision_hits_inner.lock().expect("mutex should lock") += 1;
+                    Json(json!({"action": "proxy_public"}))
+                }
+            }),
+        )
+        .route(
+            "/api/internal/gateway/plan-sync",
+            any(move |_request: Request| {
+                let plan_hits_inner = Arc::clone(&plan_hits_clone);
+                async move {
+                    *plan_hits_inner.lock().expect("mutex should lock") += 1;
+                    Json(json!({"action": "proxy_public"}))
+                }
+            }),
+        )
+        .route(
+            "/api/internal/gateway/report-sync",
+            any(move |request: Request| {
+                let seen_report_inner = Arc::clone(&seen_report_clone);
+                async move {
+                    let (_parts, body) = request.into_parts();
+                    let _raw_body = to_bytes(body, usize::MAX).await.expect("body should read");
+                    *seen_report_inner.lock().expect("mutex should lock") = true;
+                    Json(json!({"ok": true}))
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            any(move |_request: Request| {
+                let public_hits_inner = Arc::clone(&public_hits_clone);
+                async move {
+                    *public_hits_inner.lock().expect("mutex should lock") += 1;
+                    (StatusCode::IM_A_TEAPOT, Body::from("public-route-hit"))
+                }
+            }),
+        );
+
+    let execution_runtime = Router::new().route(
+        "/v1/execute/sync",
+        any(move |request: Request| {
+            let seen_execution_runtime_inner = Arc::clone(&seen_execution_runtime_clone);
+            async move {
+                let (parts, body) = request.into_parts();
+                let raw_body = to_bytes(body, usize::MAX).await.expect("body should read");
+                let payload: serde_json::Value = serde_json::from_slice(&raw_body)
+                    .expect("execution runtime payload should parse");
+                *seen_execution_runtime_inner
+                    .lock()
+                    .expect("mutex should lock") = Some(SeenExecutionRuntimeSyncRequest {
+                    trace_id: parts
+                        .headers
+                        .get(TRACE_ID_HEADER)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string(),
+                    url: payload
+                        .get("url")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    model: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("model"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    authorization: payload
+                        .get("headers")
+                        .and_then(|value| value.get("authorization"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    endpoint_tag: payload
+                        .get("headers")
+                        .and_then(|value| value.get("x-endpoint-tag"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    renamed_header: payload
+                        .get("headers")
+                        .and_then(|value| value.get("x-upstream-rename"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    dropped_header_present: payload
+                        .get("headers")
+                        .and_then(|value| value.get("x-drop-me"))
+                        .is_some(),
+                    metadata_mode: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("metadata"))
+                        .and_then(|value| value.get("mode"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    metadata_source: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("metadata"))
+                        .and_then(|value| value.get("source"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    temperature_present: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("temperature"))
+                        .is_some(),
+                    proxy_node_id: payload
+                        .get("proxy")
+                        .and_then(|value| value.get("node_id"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    tls_profile: payload
+                        .get("tls_profile")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                });
+                Json(json!({
+                    "request_id": "trace-openai-chat-custom-path-123",
+                    "status_code": 200,
+                    "headers": {
+                        "content-type": "application/json"
+                    },
+                    "body": {
+                        "json_body": {
+                            "id": "chatcmpl-local-custom-path-123",
+                            "object": "chat.completion",
+                            "model": "gpt-5-upstream",
+                            "choices": [],
+                            "usage": {
+                                "prompt_tokens": 2,
+                                "completion_tokens": 3,
+                                "total_tokens": 5
+                            }
+                        }
+                    },
+                    "telemetry": {
+                        "elapsed_ms": 25
+                    }
+                }))
+            }
+        }),
+    );
+
+    let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
+        Some(hash_api_key("sk-client-openai-custom-path")),
+        sample_auth_snapshot("api-key-openai-custom-path-1", "user-openai-custom-path-1"),
+    )]));
+    let candidate_selection_repository =
+        Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+            sample_candidate_row(),
+        ]));
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![sample_provider_catalog_provider()],
+        vec![sample_provider_catalog_endpoint()],
+        vec![sample_provider_catalog_key()],
+    ));
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
+    let gateway_state =
+        build_state_with_execution_runtime_override(execution_runtime_url.clone())
+    .with_data_state_for_tests(
+        crate::data::GatewayDataState::with_auth_candidate_selection_provider_catalog_and_request_candidate_repository_for_tests(
+            auth_repository,
+            candidate_selection_repository,
+            provider_catalog_repository,
+            Arc::new(InMemoryRequestCandidateRepository::default()),
+            DEVELOPMENT_ENCRYPTION_KEY,
+        ),
+    );
+    let gateway = build_router_with_state(gateway_state);
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/chat/completions"))
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            "Bearer sk-client-openai-custom-path",
+        )
+        .header("x-client-rename", "rename-openai-chat")
+        .header("x-drop-me", "drop-openai-chat")
+        .header(TRACE_ID_HEADER, "trace-openai-chat-custom-path-123")
+        .body(
+            "{\"model\":\"gpt-5\",\"messages\":[],\"metadata\":{\"client\":\"desktop-openai\"},\"temperature\":0.3}",
+        )
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(EXECUTION_PATH_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some(EXECUTION_PATH_EXECUTION_RUNTIME_SYNC)
+    );
+    let response_json: serde_json::Value = response.json().await.expect("body should parse");
+    assert_eq!(response_json["model"], "gpt-5-upstream");
+
+    let seen_execution_runtime_request = seen_execution_runtime
+        .lock()
+        .expect("mutex should lock")
+        .clone()
+        .expect("execution runtime sync should be captured");
+    assert_eq!(
+        seen_execution_runtime_request.trace_id,
+        "trace-openai-chat-custom-path-123"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.url,
+        "https://api.openai.example/custom/v1/chat/completions"
+    );
+    assert_eq!(seen_execution_runtime_request.model, "gpt-5-upstream");
+    assert_eq!(
+        seen_execution_runtime_request.authorization,
+        "Bearer sk-upstream-openai"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.endpoint_tag,
+        "openai-chat-local"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.renamed_header,
+        "rename-openai-chat"
+    );
+    assert!(!seen_execution_runtime_request.dropped_header_present);
+    assert_eq!(seen_execution_runtime_request.metadata_mode, "safe");
+    assert_eq!(
+        seen_execution_runtime_request.metadata_source,
+        "desktop-openai"
+    );
+    assert!(!seen_execution_runtime_request.temperature_present);
+    assert_eq!(
+        seen_execution_runtime_request.proxy_node_id,
+        "proxy-node-openai-custom-path"
+    );
+    assert_eq!(seen_execution_runtime_request.tls_profile, "chrome_136");
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        !*seen_report.lock().expect("mutex should lock"),
+        "report-sync should stay local when request candidate persistence is available"
+    );
+
+    assert_eq!(*decision_hits.lock().expect("mutex should lock"), 0);
+    assert_eq!(*plan_hits.lock().expect("mutex should lock"), 0);
+    assert_eq!(*public_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    execution_runtime_handle.abort();
+    upstream_handle.abort();
+}

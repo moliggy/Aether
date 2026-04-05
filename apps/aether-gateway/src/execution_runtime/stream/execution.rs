@@ -23,35 +23,35 @@ use self::execution_failures::{
     build_stream_failure_from_execution_error, build_stream_failure_report,
     handle_prefetch_stream_failure, submit_midstream_stream_failure, StreamFailureReport,
 };
-use crate::gateway::ai_pipeline::runtime::{
+use crate::ai_pipeline::adaptation::private_envelope::{
     maybe_build_provider_private_stream_normalizer, normalize_provider_private_report_context,
 };
-use crate::gateway::api::response::{
+use crate::ai_pipeline::finalize::maybe_build_stream_response_rewriter;
+use crate::api::response::{
     attach_control_metadata_headers, build_client_response, build_client_response_from_parts,
 };
-use crate::gateway::constants::{CONTROL_CANDIDATE_ID_HEADER, CONTROL_REQUEST_ID_HEADER};
-use crate::gateway::execution_runtime::build_direct_execution_frame_stream;
+use crate::constants::{CONTROL_CANDIDATE_ID_HEADER, CONTROL_REQUEST_ID_HEADER};
+use crate::control::GatewayControlDecision;
+use crate::execution_runtime::build_direct_execution_frame_stream;
 #[cfg(test)]
-use crate::gateway::execution_runtime::remote_compat::post_stream_plan_to_remote_execution_runtime;
-use crate::gateway::execution_runtime::submission::{
+use crate::execution_runtime::remote_compat::post_stream_plan_to_remote_execution_runtime;
+use crate::execution_runtime::submission::{
     resolve_core_error_background_report_kind, submit_local_core_error_or_sync_finalize,
 };
-use crate::gateway::execution_runtime::transport::{
+use crate::execution_runtime::transport::{
     DirectSyncExecutionRuntime, DirectUpstreamStreamExecution,
 };
-use crate::gateway::scheduler::{
+use crate::execution_runtime::{MAX_STREAM_PREFETCH_BYTES, MAX_STREAM_PREFETCH_FRAMES};
+use crate::scheduler::{
     current_unix_secs as current_request_candidate_unix_secs,
     ensure_execution_request_candidate_slot, record_local_request_candidate_status,
     resolve_core_stream_direct_finalize_report_kind,
     resolve_core_stream_error_finalize_report_kind, should_fallback_to_control_stream,
     should_retry_next_local_candidate_stream,
 };
-use crate::gateway::usage::submit_stream_report;
-use crate::gateway::{
-    maybe_build_stream_response_rewriter, AppState, GatewayControlDecision, GatewayError,
-    GatewayStreamReportRequest, GatewaySyncReportRequest, MAX_STREAM_PREFETCH_BYTES,
-    MAX_STREAM_PREFETCH_FRAMES,
-};
+use crate::usage::submit_stream_report;
+use crate::usage::{GatewayStreamReportRequest, GatewaySyncReportRequest};
+use crate::{AppState, GatewayError};
 
 #[allow(clippy::too_many_arguments)] // internal function, grouping would add unnecessary indirection
 pub(crate) async fn execute_execution_runtime_stream(
@@ -73,6 +73,8 @@ pub(crate) async fn execute_execution_runtime_stream(
             Ok(execution) => execution,
             Err(err) => {
                 warn!(
+                    event_name = "stream_execution_runtime_unavailable",
+                    log_type = "ops",
                     trace_id = %trace_id,
                     request_id = %plan.request_id,
                     candidate_id = ?plan.candidate_id,
@@ -108,6 +110,8 @@ pub(crate) async fn execute_execution_runtime_stream(
                 Ok(execution) => execution,
                 Err(err) => {
                     warn!(
+                        event_name = "stream_execution_runtime_unavailable",
+                        log_type = "ops",
                         trace_id = %trace_id,
                         request_id = %plan.request_id,
                         candidate_id = ?plan.candidate_id,
@@ -142,7 +146,11 @@ pub(crate) async fn execute_execution_runtime_stream(
             Ok(response) => response,
             Err(err) => {
                 warn!(
+                    event_name = "stream_execution_runtime_remote_unavailable",
+                    log_type = "ops",
                     trace_id = %trace_id,
+                    request_id = %plan.request_id,
+                    candidate_id = ?plan.candidate_id,
                     error = ?err,
                     "gateway remote execution runtime stream unavailable"
                 );
@@ -239,6 +247,8 @@ async fn execute_stream_from_frame_stream(
         )
         .await;
         warn!(
+            event_name = "local_stream_candidate_retry_scheduled",
+            log_type = "event",
             trace_id = %trace_id,
             request_id,
             status_code,
@@ -566,7 +576,15 @@ async fn execute_stream_from_frame_stream(
                     break;
                 }
                 StreamFramePayload::Error { error } => {
-                    warn!(trace_id = %trace_id, error = %error.message, "execution runtime stream emitted error frame during prefetch");
+                    warn!(
+                        event_name = "stream_execution_prefetch_error_frame",
+                        log_type = "ops",
+                        trace_id = %trace_id,
+                        request_id,
+                        candidate_id = ?candidate_id,
+                        error = %error.message,
+                        "execution runtime stream emitted error frame during prefetch"
+                    );
                     return handle_prefetch_stream_failure(
                         state,
                         trace_id,
@@ -634,6 +652,8 @@ async fn execute_stream_from_frame_stream(
     let initial_reached_eof = reached_eof;
     let direct_stream_finalize_kind_owned = direct_stream_finalize_kind.clone();
     let candidate_started_unix_secs_for_report = candidate_started_unix_secs;
+    let request_id_for_report = request_id.to_string();
+    let candidate_id_for_report = candidate_id.map(ToOwned::to_owned);
     tokio::spawn(async move {
         let mut provider_buffered_body = provider_prefetched_body_for_report;
         let mut buffered_body = prefetched_body_for_report;
@@ -647,7 +667,15 @@ async fn execute_stream_from_frame_stream(
                 let next_frame = match read_next_frame(&mut lines).await {
                     Ok(frame) => frame,
                     Err(err) => {
-                        warn!(trace_id = %trace_id_owned, error = ?err, "gateway failed to decode execution runtime stream frame");
+                        warn!(
+                            event_name = "stream_execution_frame_decode_failed",
+                            log_type = "ops",
+                            trace_id = %trace_id_owned,
+                            request_id = %request_id_for_report,
+                            candidate_id = ?candidate_id_for_report.as_deref(),
+                            error = ?err,
+                            "gateway failed to decode execution runtime stream frame"
+                        );
                         terminal_failure = Some(build_stream_failure_report(
                             "execution_runtime_stream_frame_decode_error",
                             format!("failed to decode execution runtime stream frame: {err:?}"),
@@ -665,7 +693,15 @@ async fn execute_stream_from_frame_stream(
                             match base64::engine::general_purpose::STANDARD.decode(chunk_b64) {
                                 Ok(decoded) => decoded,
                                 Err(err) => {
-                                    warn!(trace_id = %trace_id_owned, error = %err, "gateway failed to decode execution runtime chunk");
+                                    warn!(
+                                        event_name = "stream_execution_chunk_decode_failed",
+                                        log_type = "ops",
+                                        trace_id = %trace_id_owned,
+                                        request_id = %request_id_for_report,
+                                        candidate_id = ?candidate_id_for_report.as_deref(),
+                                        error = %err,
+                                        "gateway failed to decode execution runtime chunk"
+                                    );
                                     terminal_failure = Some(build_stream_failure_report(
                                         "execution_runtime_stream_chunk_decode_error",
                                         format!("failed to decode execution runtime stream chunk: {err}"),
@@ -691,7 +727,15 @@ async fn execute_stream_from_frame_stream(
                             match normalizer.push_chunk(&chunk) {
                                 Ok(normalized_chunk) => normalized_chunk,
                                 Err(err) => {
-                                    warn!(trace_id = %trace_id_owned, error = ?err, "gateway failed to normalize execution runtime stream chunk");
+                                    warn!(
+                                        event_name = "stream_execution_chunk_normalize_failed",
+                                        log_type = "ops",
+                                        trace_id = %trace_id_owned,
+                                        request_id = %request_id_for_report,
+                                        candidate_id = ?candidate_id_for_report.as_deref(),
+                                        error = ?err,
+                                        "gateway failed to normalize execution runtime stream chunk"
+                                    );
                                     terminal_failure = Some(build_stream_failure_report(
                                             "execution_runtime_stream_rewrite_error",
                                             format!("failed to normalize execution runtime stream chunk: {err:?}"),
@@ -708,7 +752,15 @@ async fn execute_stream_from_frame_stream(
                             match rewriter.push_chunk(&normalized_chunk) {
                                 Ok(rewritten_chunk) => rewritten_chunk,
                                 Err(err) => {
-                                    warn!(trace_id = %trace_id_owned, error = ?err, "gateway failed to rewrite execution runtime stream chunk");
+                                    warn!(
+                                        event_name = "stream_execution_chunk_rewrite_failed",
+                                        log_type = "ops",
+                                        trace_id = %trace_id_owned,
+                                        request_id = %request_id_for_report,
+                                        candidate_id = ?candidate_id_for_report.as_deref(),
+                                        error = ?err,
+                                        "gateway failed to rewrite execution runtime stream chunk"
+                                    );
                                     terminal_failure = Some(build_stream_failure_report(
                                         "execution_runtime_stream_rewrite_error",
                                         format!("failed to rewrite execution runtime stream chunk: {err:?}"),
@@ -728,7 +780,11 @@ async fn execute_stream_from_frame_stream(
                         buffered_body.extend_from_slice(&rewritten_chunk);
                         if tx.send(Ok(Bytes::from(rewritten_chunk))).await.is_err() {
                             warn!(
+                                event_name = "stream_execution_downstream_disconnected",
+                                log_type = "ops",
                                 trace_id = %trace_id_owned,
+                                request_id = %request_id_for_report,
+                                candidate_id = ?candidate_id_for_report.as_deref(),
                                 "gateway stream downstream dropped; stopping execution runtime stream forwarding"
                             );
                             downstream_dropped = true;
@@ -744,7 +800,15 @@ async fn execute_stream_from_frame_stream(
                         break;
                     }
                     StreamFramePayload::Error { error } => {
-                        warn!(trace_id = %trace_id_owned, error = %error.message, "execution runtime stream emitted error frame");
+                        warn!(
+                            event_name = "stream_execution_error_frame",
+                            log_type = "ops",
+                            trace_id = %trace_id_owned,
+                            request_id = %request_id_for_report,
+                            candidate_id = ?candidate_id_for_report.as_deref(),
+                            error = %error.message,
+                            "execution runtime stream emitted error frame"
+                        );
                         terminal_failure = Some(build_stream_failure_from_execution_error(&error));
                         break;
                     }
@@ -755,6 +819,10 @@ async fn execute_stream_from_frame_stream(
 
         if downstream_dropped {
             debug!(
+                event_name = "execution_runtime_stream_flush_skipped",
+                log_type = "debug",
+                debug_context = "redacted",
+                stream_status = "downstream_disconnected",
                 trace_id = %trace_id_owned,
                 "gateway skipped local stream flush after downstream disconnect"
             );
@@ -767,7 +835,15 @@ async fn execute_stream_from_frame_stream(
                             match rewriter.push_chunk(&normalized_chunk) {
                                 Ok(rewritten_chunk) => rewritten_chunk,
                                 Err(err) => {
-                                    warn!(trace_id = %trace_id_owned, error = ?err, "gateway failed to rewrite normalized private stream chunk during flush");
+                                    warn!(
+                                        event_name = "stream_execution_normalized_flush_rewrite_failed",
+                                        log_type = "ops",
+                                        trace_id = %trace_id_owned,
+                                        request_id = %request_id_for_report,
+                                        candidate_id = ?candidate_id_for_report.as_deref(),
+                                        error = ?err,
+                                        "gateway failed to rewrite normalized private stream chunk during flush"
+                                    );
                                     terminal_failure.get_or_insert_with(|| {
                                         build_stream_failure_report(
                                             "execution_runtime_stream_rewrite_flush_error",
@@ -785,7 +861,11 @@ async fn execute_stream_from_frame_stream(
                             buffered_body.extend_from_slice(&rewritten_chunk);
                             if tx.send(Ok(Bytes::from(rewritten_chunk))).await.is_err() {
                                 warn!(
+                                    event_name = "stream_execution_downstream_flush_disconnected",
+                                    log_type = "ops",
                                     trace_id = %trace_id_owned,
+                                    request_id = %request_id_for_report,
+                                    candidate_id = ?candidate_id_for_report.as_deref(),
                                     "gateway stream downstream dropped while flushing private stream normalization"
                                 );
                                 downstream_dropped = true;
@@ -794,7 +874,15 @@ async fn execute_stream_from_frame_stream(
                     }
                     Ok(_) => {}
                     Err(err) => {
-                        warn!(trace_id = %trace_id_owned, error = ?err, "gateway failed to flush private stream normalization");
+                        warn!(
+                            event_name = "stream_execution_normalization_flush_failed",
+                            log_type = "ops",
+                            trace_id = %trace_id_owned,
+                            request_id = %request_id_for_report,
+                            candidate_id = ?candidate_id_for_report.as_deref(),
+                            error = ?err,
+                            "gateway failed to flush private stream normalization"
+                        );
                         terminal_failure.get_or_insert_with(|| {
                             build_stream_failure_report(
                                 "execution_runtime_stream_rewrite_flush_error",
@@ -812,7 +900,11 @@ async fn execute_stream_from_frame_stream(
                             buffered_body.extend_from_slice(&flushed_chunk);
                             if tx.send(Ok(Bytes::from(flushed_chunk))).await.is_err() {
                                 warn!(
+                                    event_name = "stream_execution_downstream_rewrite_flush_disconnected",
+                                    log_type = "ops",
                                     trace_id = %trace_id_owned,
+                                    request_id = %request_id_for_report,
+                                    candidate_id = ?candidate_id_for_report.as_deref(),
                                     "gateway stream downstream dropped while flushing local stream rewrite"
                                 );
                                 downstream_dropped = true;
@@ -820,7 +912,15 @@ async fn execute_stream_from_frame_stream(
                         }
                         Ok(_) => {}
                         Err(err) => {
-                            warn!(trace_id = %trace_id_owned, error = ?err, "gateway failed to flush local stream rewrite");
+                            warn!(
+                                event_name = "stream_execution_rewrite_flush_failed",
+                                log_type = "ops",
+                                trace_id = %trace_id_owned,
+                                request_id = %request_id_for_report,
+                                candidate_id = ?candidate_id_for_report.as_deref(),
+                                error = ?err,
+                                "gateway failed to flush local stream rewrite"
+                            );
                             terminal_failure.get_or_insert_with(|| {
                                 build_stream_failure_report(
                                     "execution_runtime_stream_rewrite_flush_error",
@@ -838,6 +938,11 @@ async fn execute_stream_from_frame_stream(
 
         if downstream_dropped {
             debug!(
+                event_name = "execution_runtime_stream_report_skipped",
+                log_type = "debug",
+                debug_context = "redacted",
+                stream_status = "downstream_disconnected",
+                status_code = 499_u16,
                 trace_id = %trace_id_owned,
                 "gateway skipped stream report because downstream disconnected before completion"
             );
@@ -939,7 +1044,16 @@ async fn execute_stream_from_frame_stream(
             report.report_kind = report_kind;
             if let Err(err) = submit_stream_report(&state_for_report, &trace_id_owned, report).await
             {
-                warn!(trace_id = %trace_id_owned, error = ?err, "gateway failed to submit stream execution report");
+                warn!(
+                    event_name = "execution_report_submit_failed",
+                    log_type = "ops",
+                    trace_id = %trace_id_owned,
+                    request_id = %request_id_for_report,
+                    candidate_id = ?candidate_id_for_report.as_deref(),
+                    report_scope = "stream",
+                    error = ?err,
+                    "gateway failed to submit stream execution report"
+                );
             }
         }
     });

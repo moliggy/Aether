@@ -1,6 +1,6 @@
 use super::super::{parse_bounded_u32, round_to};
-use crate::gateway::handlers::{query_param_value, unix_secs_to_rfc3339};
-use crate::gateway::{AppState, GatewayError};
+use crate::handlers::{query_param_value, unix_secs_to_rfc3339};
+use crate::{AppState, GatewayError};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -354,7 +354,11 @@ pub(super) fn admin_usage_aggregation_by_api_format_json(
 pub(super) fn admin_usage_heatmap_json(
     usage: &[aether_data::repository::usage::StoredRequestUsageAudit],
 ) -> serde_json::Value {
-    let mut grouped: BTreeMap<String, (u64, u64, f64, f64, u64, u64)> = BTreeMap::new();
+    let today = chrono::Utc::now().date_naive();
+    let start_date = today
+        .checked_sub_signed(chrono::Duration::days(364))
+        .unwrap_or(today);
+    let mut grouped: BTreeMap<chrono::NaiveDate, (u64, u64, f64, f64)> = BTreeMap::new();
     for item in usage {
         let Ok(created_at_unix_secs) = i64::try_from(item.created_at_unix_secs) else {
             continue;
@@ -364,42 +368,43 @@ pub(super) fn admin_usage_heatmap_json(
         else {
             continue;
         };
-        let date_key = created_at.format("%Y-%m-%d").to_string();
-        let entry = grouped.entry(date_key).or_insert((0, 0, 0.0, 0.0, 0, 0));
+        let date_key = created_at.date_naive();
+        if date_key < start_date || date_key > today {
+            continue;
+        }
+        let entry = grouped.entry(date_key).or_insert((0, 0, 0.0, 0.0));
         entry.0 = entry.0.saturating_add(1);
-        entry.1 = entry.1.saturating_add(item.total_tokens);
+        entry.1 = entry.1.saturating_add(admin_usage_total_tokens(item));
         entry.2 += item.total_cost_usd;
         entry.3 += item.actual_total_cost_usd;
-        entry.4 = entry.4.saturating_add(item.cache_read_input_tokens);
-        entry.5 = entry.5.saturating_add(item.cache_creation_input_tokens);
     }
-    let items = grouped
-        .into_iter()
-        .map(
-            |(
-                date,
-                (
-                    request_count,
-                    total_tokens,
-                    total_cost,
-                    actual_total_cost,
-                    cache_read_tokens,
-                    cache_creation_tokens,
-                ),
-            )| {
-                json!({
-                    "date": date,
-                    "request_count": request_count,
-                    "total_tokens": total_tokens,
-                    "total_cost": round_to(total_cost, 6),
-                    "actual_total_cost": round_to(actual_total_cost, 6),
-                    "cache_read_tokens": cache_read_tokens,
-                    "cache_creation_tokens": cache_creation_tokens,
-                })
-            },
-        )
-        .collect::<Vec<_>>();
-    json!(items)
+
+    let mut max_requests = 0_u64;
+    let mut cursor = start_date;
+    let mut days = Vec::new();
+    while cursor <= today {
+        let (requests, total_tokens, total_cost, actual_total_cost) =
+            grouped.get(&cursor).copied().unwrap_or((0, 0, 0.0, 0.0));
+        max_requests = max_requests.max(requests);
+        days.push(json!({
+            "date": cursor.to_string(),
+            "requests": requests,
+            "total_tokens": total_tokens,
+            "total_cost": round_to(total_cost, 6),
+            "actual_total_cost": round_to(actual_total_cost, 6),
+        }));
+        cursor = cursor
+            .checked_add_signed(chrono::Duration::days(1))
+            .unwrap_or(today + chrono::Duration::days(1));
+    }
+
+    json!({
+        "start_date": start_date.to_string(),
+        "end_date": today.to_string(),
+        "total_days": days.len(),
+        "max_requests": max_requests,
+        "days": days,
+    })
 }
 
 pub(super) fn admin_usage_is_success(
@@ -664,9 +669,61 @@ pub(super) fn admin_usage_matches_status(
     }
 }
 
+pub(super) async fn admin_usage_provider_key_names(
+    state: &AppState,
+    usage: &[aether_data::repository::usage::StoredRequestUsageAudit],
+) -> Result<BTreeMap<String, String>, GatewayError> {
+    if !state.has_provider_catalog_data_reader() {
+        return Ok(BTreeMap::new());
+    }
+
+    let key_ids = usage
+        .iter()
+        .filter_map(|item| item.provider_api_key_id.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if key_ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    Ok(state
+        .list_provider_catalog_keys_by_ids(&key_ids)
+        .await?
+        .into_iter()
+        .map(|key| (key.id, key.name))
+        .collect())
+}
+
+fn admin_usage_request_metadata_string(
+    item: &aether_data::repository::usage::StoredRequestUsageAudit,
+    key: &str,
+) -> Option<String> {
+    item.request_metadata
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+pub(super) fn admin_usage_provider_key_name(
+    item: &aether_data::repository::usage::StoredRequestUsageAudit,
+    provider_key_names: &BTreeMap<String, String>,
+) -> Option<String> {
+    item.provider_api_key_id
+        .as_ref()
+        .and_then(|key_id| provider_key_names.get(key_id))
+        .cloned()
+        .or_else(|| admin_usage_request_metadata_string(item, "key_name"))
+}
+
 pub(super) fn admin_usage_record_json(
     item: &aether_data::repository::usage::StoredRequestUsageAudit,
     users_by_id: &BTreeMap<String, aether_data::repository::users::StoredUserSummary>,
+    provider_key_name: Option<&str>,
 ) -> Value {
     let user = item
         .user_id
@@ -719,6 +776,7 @@ pub(super) fn admin_usage_record_json(
         "endpoint_api_format": item.endpoint_api_format,
         "has_format_conversion": item.has_format_conversion,
         "api_key_name": item.api_key_name,
+        "provider_key_name": provider_key_name,
         "model_version": Value::Null,
     })
 }

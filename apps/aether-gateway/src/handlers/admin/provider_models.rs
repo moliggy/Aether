@@ -1,4 +1,6 @@
-use crate::gateway::{AppState, GatewayControlDecision, GatewayError, GatewayPublicRequestContext};
+use crate::control::GatewayControlDecision;
+use crate::control::GatewayPublicRequestContext;
+use crate::{AppState, GatewayError};
 use axum::body::{Body, Bytes};
 use axum::http::Response;
 

@@ -3,7 +3,7 @@ use std::io::Error as IoError;
 use aether_contracts::StreamFrame;
 use axum::body::Bytes;
 
-use crate::gateway::GatewayError;
+use crate::GatewayError;
 
 pub(crate) fn encode_stream_frame_ndjson(frame: &StreamFrame) -> Result<Bytes, IoError> {
     let mut raw = serde_json::to_vec(frame).map_err(|err| IoError::other(err.to_string()))?;

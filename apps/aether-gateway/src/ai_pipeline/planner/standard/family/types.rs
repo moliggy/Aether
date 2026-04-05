@@ -22,14 +22,14 @@ pub(crate) struct LocalStandardSpec {
 
 #[derive(Debug, Clone)]
 pub(super) struct LocalStandardDecisionInput {
-    pub(super) auth_context: crate::gateway::GatewayControlAuthContext,
+    pub(super) auth_context: crate::control::GatewayControlAuthContext,
     pub(super) requested_model: String,
-    pub(super) auth_snapshot: crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot,
+    pub(super) auth_snapshot: crate::data::auth::GatewayAuthApiKeySnapshot,
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct LocalStandardCandidateAttempt {
-    pub(super) candidate: crate::gateway::scheduler::GatewayMinimalCandidateSelectionCandidate,
+    pub(super) candidate: crate::scheduler::GatewayMinimalCandidateSelectionCandidate,
     pub(super) candidate_index: u32,
     pub(super) candidate_id: String,
 }

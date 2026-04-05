@@ -1,14 +1,13 @@
-use crate::gateway::ai_pipeline::adaptation::private_envelope::normalize_provider_private_response_value as unwrap_local_finalize_response_value;
-use crate::gateway::ai_pipeline::conversion::{
+use crate::ai_pipeline::adaptation::private_envelope::normalize_provider_private_response_value as unwrap_local_finalize_response_value;
+use crate::ai_pipeline::conversion::{
     build_core_error_body_for_client_format, core_error_background_report_kind,
     core_error_default_client_api_format, is_core_error_finalize_kind, LocalCoreSyncErrorKind,
 };
-use crate::gateway::api::response::build_client_response_from_parts;
-use crate::gateway::usage::spawn_sync_report;
-use crate::gateway::{
-    maybe_compile_sync_finalize_response, AppState, GatewayControlDecision, GatewayError,
-    GatewaySyncReportRequest,
-};
+use crate::ai_pipeline::finalize::maybe_compile_sync_finalize_response;
+use crate::api::response::build_client_response_from_parts;
+use crate::control::GatewayControlDecision;
+use crate::usage::spawn_sync_report;
+use crate::{usage::GatewaySyncReportRequest, AppState, GatewayError};
 use axum::body::Body;
 use axum::http::Response;
 use base64::Engine as _;
@@ -223,7 +222,7 @@ pub(crate) fn resolve_core_error_background_report_kind(report_kind: &str) -> Op
 
 #[cfg(test)]
 pub(crate) fn resolve_core_success_background_report_kind(report_kind: &str) -> Option<String> {
-    crate::gateway::ai_pipeline::conversion::core_success_background_report_kind(report_kind)
+    crate::ai_pipeline::conversion::core_success_background_report_kind(report_kind)
         .map(ToOwned::to_owned)
 }
 
@@ -437,6 +436,8 @@ pub(crate) async fn submit_local_core_error_or_sync_finalize(
         response
     } else {
         warn!(
+            event_name = "local_core_finalize_fallback_raw_response_body",
+            log_type = "event",
             trace_id = %trace_id,
             report_kind = %payload.report_kind,
             status_code = payload.status_code,
@@ -457,6 +458,8 @@ pub(crate) async fn submit_local_core_error_or_sync_finalize(
         spawn_sync_report(state.clone(), trace_id.to_string(), report_payload);
     } else {
         warn!(
+            event_name = "local_core_finalize_missing_error_report_mapping",
+            log_type = "event",
             trace_id = %trace_id,
             report_kind = %payload.report_kind,
             "gateway built local core finalize response without background error report mapping"

@@ -1,5 +1,5 @@
-use crate::gateway::handlers::{OAUTH_ACCOUNT_BLOCK_PREFIX, OAUTH_REFRESH_FAILED_PREFIX};
-use crate::gateway::{AppState, GatewayError};
+use crate::handlers::{OAUTH_ACCOUNT_BLOCK_PREFIX, OAUTH_REFRESH_FAILED_PREFIX};
+use crate::{AppState, GatewayError};
 use aether_contracts::{ExecutionPlan, ExecutionResult};
 use aether_data::repository::provider_catalog::StoredProviderCatalogKey;
 use std::collections::BTreeSet;
@@ -176,11 +176,13 @@ pub(crate) async fn persist_provider_quota_refresh_state(
 
 pub(super) async fn execute_provider_quota_plan(
     state: &AppState,
-    transport: &crate::gateway::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
     plan: ExecutionPlan,
     quota_kind: &str,
 ) -> Result<Option<ExecutionResult>, GatewayError> {
-    match crate::gateway::execute_execution_runtime_sync_plan(state, None, &plan).await {
+    match crate::execution_runtime::execute_execution_runtime_sync_plan(state, None, &plan)
+        .await
+    {
         Ok(result) => Ok(Some(result)),
         Err(err) => {
             warn!(

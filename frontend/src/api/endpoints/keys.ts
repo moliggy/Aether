@@ -4,6 +4,10 @@ import type { EndpointAPIKey, AllowedModels } from './types'
 // Re-export types for convenience
 export type { EndpointAPIKey, AllowedModels }
 
+interface KeyRequestOptions {
+  timeout?: number
+}
+
 /**
  * 能力定义类型
  */
@@ -179,9 +183,14 @@ export async function updateProviderKey(
     model_include_patterns: string[]  // 模型包含规则
     model_exclude_patterns: string[]  // 模型排除规则
     proxy: import('./types').ProxyConfig | null  // Key 级别代理配置
-  }>
+  }>,
+  requestOptions?: KeyRequestOptions,
 ): Promise<EndpointAPIKey> {
-  const response = await client.put(`/api/admin/endpoints/keys/${keyId}`, data)
+  const response = await client.put(
+    `/api/admin/endpoints/keys/${keyId}`,
+    data,
+    requestOptions,
+  )
   return response.data
 }
 

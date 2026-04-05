@@ -145,6 +145,7 @@ mod tests {
         assert!(backends.transactions().postgres().is_none());
         assert!(backends.workers().redis().is_none());
         assert!(backends.write().shadow_results().is_none());
+        assert!(backends.write().settlement().is_none());
         assert!(backends.write().usage().is_none());
     }
 
@@ -191,7 +192,9 @@ mod tests {
         assert!(backends.write().management_tokens().is_some());
         assert!(backends.write().oauth_providers().is_some());
         assert!(backends.write().proxy_nodes().is_some());
+        assert!(backends.write().provider_catalog().is_some());
         assert!(backends.write().provider_quotas().is_some());
+        assert!(backends.write().settlement().is_some());
         assert!(backends.write().usage().is_some());
         assert!(backends.write().wallets().is_some());
         assert!(backends.config().postgres.is_some());
@@ -220,6 +223,7 @@ mod tests {
         assert!(backends.read().oauth_providers().is_none());
         assert!(backends.transactions().postgres().is_none());
         assert!(backends.write().shadow_results().is_none());
+        assert!(backends.write().settlement().is_none());
         assert!(backends.write().usage().is_none());
         assert!(backends.config().redis.is_some());
     }

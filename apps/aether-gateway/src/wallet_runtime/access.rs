@@ -3,12 +3,13 @@ use aether_wallet::{
     WalletAccessDecision, WalletAccessFailure, WalletLimitMode, WalletSnapshot, WalletStatus,
 };
 
-use crate::gateway::gateway_data::StoredGatewayAuthApiKeySnapshot;
-use crate::gateway::{AppState, GatewayError, GatewayLocalAuthRejection};
+use crate::control::GatewayLocalAuthRejection;
+use crate::data::auth::GatewayAuthApiKeySnapshot;
+use crate::{AppState, GatewayError};
 
 pub(crate) async fn resolve_wallet_auth_gate(
     state: &AppState,
-    auth_snapshot: &StoredGatewayAuthApiKeySnapshot,
+    auth_snapshot: &GatewayAuthApiKeySnapshot,
 ) -> Result<Option<WalletAccessDecision>, GatewayError> {
     if !state.has_wallet_data_reader() {
         return Ok(None);
@@ -65,7 +66,7 @@ mod tests {
     use aether_wallet::{WalletAccessFailure, WalletLimitMode, WalletSnapshot, WalletStatus};
 
     use super::{local_rejection_from_wallet_access, map_wallet_snapshot};
-    use crate::gateway::GatewayLocalAuthRejection;
+    use crate::control::GatewayLocalAuthRejection;
 
     #[test]
     fn maps_wallet_snapshot_and_derives_balance_denied() {

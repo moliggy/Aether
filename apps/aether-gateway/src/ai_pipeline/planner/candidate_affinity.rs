@@ -1,8 +1,8 @@
 use tracing::warn;
 
-use crate::gateway::provider_transport::resolve_transport_proxy_snapshot;
-use crate::gateway::scheduler::GatewayMinimalCandidateSelectionCandidate;
-use crate::gateway::AppState;
+use crate::provider_transport::resolve_transport_proxy_snapshot;
+use crate::scheduler::GatewayMinimalCandidateSelectionCandidate;
+use crate::AppState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum TunnelOwnerAffinityBucket {
@@ -43,6 +43,8 @@ async fn resolve_candidate_tunnel_owner_affinity(
         Ok(None) => return TunnelOwnerAffinityBucket::Neutral,
         Err(error) => {
             warn!(
+                event_name = "candidate_affinity_transport_load_failed",
+                log_type = "event",
                 provider_id = %candidate.provider_id,
                 endpoint_id = %candidate.endpoint_id,
                 key_id = %candidate.key_id,
@@ -84,6 +86,8 @@ async fn resolve_candidate_tunnel_owner_affinity(
         Ok(None) => TunnelOwnerAffinityBucket::Neutral,
         Err(error) => {
             warn!(
+                event_name = "candidate_affinity_tunnel_owner_lookup_failed",
+                log_type = "event",
                 node_id = node_id,
                 error = %error,
                 "failed to load tunnel attachment owner while evaluating scheduler affinity"
@@ -104,10 +108,10 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        prefer_local_tunnel_owner_candidates, GatewayMinimalCandidateSelectionCandidate, AppState,
+        prefer_local_tunnel_owner_candidates, AppState, GatewayMinimalCandidateSelectionCandidate,
     };
-    use crate::gateway::tunnel::TunnelAttachmentRecord;
-    use crate::gateway::GatewayDataState;
+    use crate::data::GatewayDataState;
+    use crate::tunnel::TunnelAttachmentRecord;
 
     fn sample_candidate(
         endpoint_id: &str,

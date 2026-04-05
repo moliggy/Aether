@@ -5,12 +5,12 @@ use super::{
     unix_secs_to_rfc3339, validate_auth_register_password, AppState, AuthenticatedLocalUserContext,
     GatewayPublicRequestContext, PUBLIC_CAPABILITY_DEFINITIONS,
 };
-use crate::gateway::handlers::admin::{
-    admin_stats_bad_request_response, build_admin_endpoint_health_status_payload,
-    list_usage_for_optional_range, parse_bounded_u32, round_to, AdminStatsTimeRange,
-    AdminStatsUsageFilter,
+use crate::handlers::admin::endpoints_health_helpers::build_admin_endpoint_health_status_payload;
+use crate::handlers::internal::build_management_token_payload;
+use crate::handlers::{
+    admin_stats_bad_request_response, list_usage_for_optional_range, parse_bounded_u32, round_to,
+    AdminStatsTimeRange, AdminStatsUsageFilter,
 };
-use crate::gateway::handlers::internal::build_management_token_payload;
 
 const USERS_ME_AVAILABLE_MODELS_FETCH_LIMIT: usize = 1000;
 

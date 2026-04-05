@@ -1,4 +1,4 @@
-use crate::gateway::handlers::public::support::build_unhandled_public_support_response;
+use crate::handlers::public::support::build_unhandled_public_support_response;
 use axum::{body::Body, http, response::Response};
 
 use super::{

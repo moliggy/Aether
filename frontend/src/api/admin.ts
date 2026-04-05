@@ -1,5 +1,6 @@
 import apiClient from './client'
 import { cachedRequest, buildCacheKey } from '@/utils/cache'
+import type { AxiosRequestConfig } from 'axios'
 import type { BillingSummary } from './auth'
 
 // LDAP 配置导出结构
@@ -589,11 +590,13 @@ export const adminApi = {
   async updateSystemConfig(
     key: string,
     value: unknown,
-    description?: string
+    description?: string,
+    requestConfig?: AxiosRequestConfig,
   ): Promise<{ key: string; value: unknown; description?: string }> {
     const response = await apiClient.put<{ key: string; value: unknown; description?: string }>(
       `/api/admin/system/configs/${key}`,
-      { value, description }
+      { value, description },
+      requestConfig,
     )
     return response.data
   },

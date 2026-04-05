@@ -1,8 +1,8 @@
-use crate::gateway::handlers::{
+use crate::handlers::{
     ADMIN_EXTERNAL_MODELS_CACHE_KEY, ADMIN_EXTERNAL_MODELS_CACHE_TTL_SECS,
     OFFICIAL_EXTERNAL_MODEL_PROVIDERS,
 };
-use crate::gateway::{AppState, GatewayError};
+use crate::{AppState, GatewayError};
 use serde_json::json;
 
 fn mark_admin_external_models_official(mut payload: serde_json::Value) -> serde_json::Value {

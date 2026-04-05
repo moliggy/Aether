@@ -2,22 +2,23 @@ use aether_contracts::{ExecutionPlan, RequestBody};
 use axum::http::Request;
 use serde_json::json;
 
-use crate::gateway::ai_pipeline::planner::plan_builders::{
+use crate::ai_pipeline::contracts::GatewayControlSyncDecisionResponse;
+use crate::ai_pipeline::planner::plan_builders::{
     build_gemini_stream_plan_from_decision, build_gemini_sync_plan_from_decision,
     build_openai_cli_stream_plan_from_decision, build_openai_cli_sync_plan_from_decision,
     build_passthrough_sync_plan_from_decision, build_standard_stream_plan_from_decision,
     build_standard_sync_plan_from_decision,
 };
-use crate::gateway::execution_runtime::submission::{
+use crate::execution_runtime::submission::{
     build_best_effort_local_core_error_body, resolve_core_error_background_report_kind,
     resolve_core_success_background_report_kind,
 };
-use crate::gateway::{
+use crate::execution_runtime::{
     resolve_local_sync_error_background_report_kind,
-    resolve_local_sync_success_background_report_kind, GatewayControlSyncDecisionResponse,
-    GatewaySyncReportRequest,
+    resolve_local_sync_success_background_report_kind,
 };
-use crate::gateway::{should_bypass_intent_decision, should_bypass_intent_plan};
+use crate::intent::{should_bypass_intent_decision, should_bypass_intent_plan};
+use crate::usage::GatewaySyncReportRequest;
 
 fn test_parts() -> http::request::Parts {
     let request = Request::builder()
@@ -247,7 +248,7 @@ fn resolve_local_sync_success_background_report_kind_maps_video_finalize_kinds()
     for (report_kind, expected) in cases {
         assert_eq!(
             resolve_local_sync_success_background_report_kind(report_kind),
-            expected.map(str::to_string),
+            expected,
             "unexpected mapping for {report_kind}"
         );
     }
@@ -286,7 +287,7 @@ fn resolve_local_sync_error_background_report_kind_maps_video_finalize_kinds() {
     for (report_kind, expected) in cases {
         assert_eq!(
             resolve_local_sync_error_background_report_kind(report_kind),
-            expected.map(str::to_string),
+            expected,
             "unexpected mapping for {report_kind}"
         );
     }
