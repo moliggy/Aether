@@ -124,7 +124,7 @@ async fn gateway_executes_openai_chat_sync_upstream_stream_via_local_finalize_re
         .with_transport_fields(
             true,
             false,
-            false,
+            true,
             None,
             Some(2),
             None,
@@ -614,7 +614,7 @@ async fn gateway_executes_openai_chat_cross_format_upstream_stream_via_local_fin
         .with_transport_fields(
             true,
             false,
-            false,
+            true,
             None,
             Some(2),
             None,
@@ -1047,7 +1047,7 @@ async fn gateway_executes_openai_chat_cross_format_tool_use_upstream_stream_via_
         .with_transport_fields(
             true,
             false,
-            false,
+            true,
             None,
             Some(2),
             None,
@@ -1497,7 +1497,7 @@ async fn gateway_skips_openai_chat_antigravity_cross_format_sync_candidate_as_tr
         .with_transport_fields(
             true,
             false,
-            false,
+            true,
             None,
             Some(2),
             None,
@@ -1857,7 +1857,7 @@ async fn gateway_executes_openai_chat_cross_format_claude_upstream_sync_via_loca
         .with_transport_fields(
             true,
             false,
-            false,
+            true,
             None,
             Some(2),
             None,
@@ -2205,7 +2205,7 @@ async fn gateway_executes_openai_chat_cross_format_gemini_upstream_sync_via_loca
         .with_transport_fields(
             true,
             false,
-            false,
+            true,
             None,
             Some(2),
             None,

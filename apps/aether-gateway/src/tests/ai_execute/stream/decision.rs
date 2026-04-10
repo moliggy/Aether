@@ -116,7 +116,7 @@ async fn gateway_executes_openai_chat_stream_via_local_decision_gate_without_exe
         .with_transport_fields(
             true,
             false,
-            false,
+            true,
             None,
             Some(2),
             None,
@@ -540,7 +540,7 @@ async fn gateway_executes_openai_chat_stream_via_local_openai_cli_cross_format_c
         .with_transport_fields(
             true,
             false,
-            false,
+            true,
             None,
             Some(2),
             None,
@@ -1762,7 +1762,7 @@ async fn gateway_retries_next_local_openai_chat_stream_candidate_with_local_fail
                 "provider-openai-local-stream-backup",
                 "endpoint-openai-local-stream-backup",
                 "key-openai-local-stream-backup",
-                10,
+                20,
                 2,
                 "gpt-5-upstream-backup",
             ),

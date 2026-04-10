@@ -1,5 +1,7 @@
 use tracing::warn;
 
+use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
+
 use crate::ai_pipeline::transport::resolve_transport_proxy_snapshot;
 use crate::ai_pipeline::{
     GatewayAuthApiKeySnapshot, GatewayProviderTransportSnapshot, PlannerAppState,
@@ -9,7 +11,6 @@ use crate::scheduler::config::{read_scheduler_ordering_config, SchedulerOrdering
 use aether_scheduler_core::{
     build_scheduler_affinity_cache_key_for_api_key_id, compare_candidates_by_priority_mode,
     requested_capability_priority_for_candidate, SchedulerAffinityTarget,
-    SchedulerMinimalCandidateSelectionCandidate,
 };
 
 const PLANNER_SCHEDULER_AFFINITY_MAX_ENTRIES: usize = 10_000;

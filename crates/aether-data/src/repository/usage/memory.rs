@@ -10,16 +10,6 @@ use super::{
 };
 use crate::DataLayerError;
 
-const MILLIS_PER_SECOND: u64 = 1000;
-
-fn unix_secs_to_ms(unix_secs: u64) -> u64 {
-    unix_secs.saturating_mul(MILLIS_PER_SECOND)
-}
-
-fn unix_ms_to_secs(unix_ms: u64) -> u64 {
-    unix_ms / MILLIS_PER_SECOND
-}
-
 #[derive(Debug, Default)]
 pub struct InMemoryUsageReadRepository {
     by_request_id: RwLock<BTreeMap<String, StoredRequestUsageAudit>>,
@@ -90,12 +80,12 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
             .values()
             .filter(|item| {
                 if let Some(created_from_unix_secs) = query.created_from_unix_secs {
-                    if item.created_at_unix_ms < unix_secs_to_ms(created_from_unix_secs) {
+                    if item.created_at_unix_ms < created_from_unix_secs {
                         return false;
                     }
                 }
                 if let Some(created_until_unix_secs) = query.created_until_unix_secs {
-                    if item.created_at_unix_ms >= unix_secs_to_ms(created_until_unix_secs) {
+                    if item.created_at_unix_ms >= created_until_unix_secs {
                         return false;
                     }
                 }
@@ -210,7 +200,7 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                 entry
                     .last_used_at_unix_secs
                     .unwrap_or(0)
-                    .max(unix_ms_to_secs(item.created_at_unix_ms)),
+                    .max(item.created_at_unix_ms),
             );
         }
         Ok(summaries)

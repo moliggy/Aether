@@ -122,7 +122,7 @@ async fn gateway_executes_openai_cli_cross_format_upstream_stream_via_local_fina
         .with_transport_fields(
             true,
             false,
-            false,
+            true,
             None,
             Some(2),
             None,
@@ -577,7 +577,7 @@ async fn gateway_executes_openai_cli_cross_format_function_call_upstream_stream_
         .with_transport_fields(
             true,
             false,
-            false,
+            true,
             None,
             Some(2),
             None,
@@ -1046,7 +1046,7 @@ async fn gateway_executes_openai_cli_antigravity_cross_format_upstream_stream_vi
         .with_transport_fields(
             true,
             false,
-            false,
+            true,
             None,
             Some(2),
             None,

@@ -77,7 +77,7 @@ mod tests {
         );
         assert_eq!(
             sync_cli_response_conversion_kind("claude:cli", "openai:compact"),
-            None
+            Some(SyncCliResponseConversionKind::ToOpenAIFamilyCli)
         );
         assert_eq!(
             sync_cli_response_conversion_kind("openai:compact", "claude:cli"),

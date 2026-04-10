@@ -1008,7 +1008,7 @@ async fn gateway_retries_next_local_openai_chat_sync_candidate_with_local_failov
                 "provider-openai-local-backup",
                 "endpoint-openai-local-backup",
                 "key-openai-local-backup",
-                10,
+                20,
                 2,
                 "gpt-5-upstream-backup",
             ),

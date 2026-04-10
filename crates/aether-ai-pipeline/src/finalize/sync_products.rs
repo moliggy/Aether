@@ -211,7 +211,7 @@ pub fn maybe_build_openai_cli_cross_format_sync_product_from_normalized_payload(
         .trim()
         .to_ascii_lowercase();
 
-    if client_api_format != "openai:cli"
+    if !matches!(client_api_format.as_str(), "openai:cli" | "openai:compact")
         || sync_cli_response_conversion_kind(&provider_api_format, &client_api_format).is_none()
     {
         return Ok(None);

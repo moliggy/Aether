@@ -114,9 +114,13 @@ pub fn sync_cli_response_conversion_kind(
     if !is_standard_api_format(provider_api_format.as_str()) {
         return None;
     }
-    request_conversion_kind(client_api_format.as_str(), provider_api_format.as_str())?;
+    if client_api_format != "openai:compact" {
+        request_conversion_kind(client_api_format.as_str(), provider_api_format.as_str())?;
+    }
     match client_api_format.as_str() {
-        "openai:cli" => Some(SyncCliResponseConversionKind::ToOpenAIFamilyCli),
+        "openai:cli" | "openai:compact" => {
+            Some(SyncCliResponseConversionKind::ToOpenAIFamilyCli)
+        }
         "claude:cli" => Some(SyncCliResponseConversionKind::ToClaudeCli),
         "gemini:cli" => Some(SyncCliResponseConversionKind::ToGeminiCli),
         _ => None,
@@ -303,7 +307,7 @@ mod tests {
         );
         assert_eq!(
             sync_cli_response_conversion_kind("claude:cli", "openai:compact"),
-            None
+            Some(SyncCliResponseConversionKind::ToOpenAIFamilyCli)
         );
         assert_eq!(
             sync_cli_response_conversion_kind("openai:compact", "claude:cli"),
