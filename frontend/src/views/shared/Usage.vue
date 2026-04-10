@@ -143,6 +143,7 @@ import {
   useUsageData,
   getDateRangeFromPeriod
 } from '@/features/usage/composables'
+import { reconcileActiveRequestDiscovery } from '@/features/usage/utils/activeRequestDiscovery'
 import type { DateRangeParams, FilterStatusValue } from '@/features/usage/types'
 import type { UserOption } from '@/features/usage/components/UsageRecordsTable.vue'
 import { log } from '@/utils/logger'
@@ -334,9 +335,12 @@ const hasActiveRequests = computed(() => activeRequestIds.value.length > 0)
 
 // 自动刷新定时器
 let autoRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let activeDiscoveryTimer: ReturnType<typeof setTimeout> | null = null
 let globalAutoRefreshTimer: ReturnType<typeof setInterval> | null = null
 let refreshInFlight: Promise<void> | null = null
 const AUTO_REFRESH_INTERVAL = 1000 // 1秒刷新一次（用于活跃请求）
+const ACTIVE_DISCOVERY_HOT_INTERVAL = 1000 // 有活跃请求时 1 秒扫描一次
+const ACTIVE_DISCOVERY_IDLE_INTERVAL = 5000 // 空闲时降频，避免后台持续刷日志
 const GLOBAL_AUTO_REFRESH_INTERVAL = 3000 // 3秒刷新一次（全局自动刷新）
 const globalAutoRefresh = ref(false) // 全局自动刷新开关（默认关闭）
 const isPageVisible = ref(typeof document === 'undefined' ? true : !document.hidden)
@@ -344,6 +348,17 @@ const isPageVisible = ref(typeof document === 'undefined' ? true : !document.hid
 // 轮询活跃请求状态（轻量级，只更新状态变化的记录）
 
 let pollInFlight = false
+let activeDiscoveryInFlight = false
+const discoveredActiveRequestIds = new Set<string>()
+
+async function loadActiveRequestUpdates(ids?: string[]) {
+  if (isAdminPage.value) {
+    return usageApi.getActiveRequests(ids)
+  }
+  const idsParam = ids?.length ? ids.join(',') : undefined
+  return meApi.getActiveRequests(idsParam)
+}
+
 async function pollActiveRequests() {
   if (!isPageVisible.value) return
   if (!hasActiveRequests.value) return
@@ -351,11 +366,7 @@ async function pollActiveRequests() {
   pollInFlight = true
 
   try {
-    // 根据页面类型选择不同的 API
-    const idsParam = activeRequestIds.value.join(',')
-    const { requests } = isAdminPage.value
-      ? await usageApi.getActiveRequests(activeRequestIds.value)
-      : await meApi.getActiveRequests(idsParam)
+    const { requests } = await loadActiveRequestUpdates(activeRequestIds.value)
 
     let shouldRefresh = false
 
@@ -435,6 +446,37 @@ async function pollActiveRequests() {
   }
 }
 
+async function discoverActiveRequests() {
+  if (!isPageVisible.value) return
+  if (activeDiscoveryInFlight) return
+  if (refreshInFlight || isLoadingRecords.value) return
+  activeDiscoveryInFlight = true
+
+  try {
+    const { requests } = await loadActiveRequestUpdates()
+    const {
+      retainedDiscoveredActiveRequestIds,
+      unseenActiveRequestIds
+    } = reconcileActiveRequestDiscovery({
+      activeRequestIds: requests.map(request => request.id),
+      knownRecordIds: currentRecords.value.map(record => record.id),
+      discoveredActiveRequestIds
+    })
+
+    discoveredActiveRequestIds.clear()
+    retainedDiscoveredActiveRequestIds.forEach(id => discoveredActiveRequestIds.add(id))
+
+    if (unseenActiveRequestIds.length > 0) {
+      unseenActiveRequestIds.forEach(id => discoveredActiveRequestIds.add(id))
+      await refreshData()
+    }
+  } catch (error) {
+    log.error('发现新活跃请求失败:', error)
+  } finally {
+    activeDiscoveryInFlight = false
+  }
+}
+
 function scheduleNextAutoRefresh() {
   if (autoRefreshTimer) return
   if (!isPageVisible.value || !hasActiveRequests.value) return
@@ -445,10 +487,32 @@ function scheduleNextAutoRefresh() {
   }, AUTO_REFRESH_INTERVAL)
 }
 
+function scheduleNextActiveDiscovery() {
+  if (activeDiscoveryTimer) return
+  if (!isPageVisible.value) return
+  const interval = hasActiveRequests.value || discoveredActiveRequestIds.size > 0
+    ? ACTIVE_DISCOVERY_HOT_INTERVAL
+    : ACTIVE_DISCOVERY_IDLE_INTERVAL
+  activeDiscoveryTimer = setTimeout(async () => {
+    activeDiscoveryTimer = null
+    await discoverActiveRequests()
+    scheduleNextActiveDiscovery()
+  }, interval)
+}
+
 // 启动自动刷新
 function startAutoRefresh() {
   if (!isPageVisible.value) return
   scheduleNextAutoRefresh()
+}
+
+function startActiveDiscovery() {
+  if (!isPageVisible.value) return
+  if (activeDiscoveryTimer || activeDiscoveryInFlight) return
+  void (async () => {
+    await discoverActiveRequests()
+    scheduleNextActiveDiscovery()
+  })()
 }
 
 // 停止自动刷新
@@ -459,10 +523,17 @@ function stopAutoRefresh() {
   }
 }
 
+function stopActiveDiscovery() {
+  if (activeDiscoveryTimer) {
+    clearTimeout(activeDiscoveryTimer)
+    activeDiscoveryTimer = null
+  }
+}
+
 // 监听活跃请求状态，自动启动/停止刷新
-// 1秒轮询始终用于活跃请求的实时更新，不受全局刷新影响
+// 活跃请求的 1 秒轮询受“自动刷新”开关控制
 watch(hasActiveRequests, (hasActive) => {
-  if (hasActive && isPageVisible.value) {
+  if (globalAutoRefresh.value && hasActive && isPageVisible.value) {
     startAutoRefresh()
   } else {
     stopAutoRefresh()
@@ -490,9 +561,15 @@ function handleAutoRefreshChange(value: boolean) {
   if (value) {
     if (isPageVisible.value) {
       refreshData() // 立即刷新一次
+      startActiveDiscovery()
+      if (hasActiveRequests.value) {
+        startAutoRefresh()
+      }
     }
     startGlobalAutoRefresh()
   } else {
+    stopAutoRefresh()
+    stopActiveDiscovery()
     stopGlobalAutoRefresh()
   }
 }
@@ -501,13 +578,15 @@ function handleVisibilityChange() {
   isPageVisible.value = !document.hidden
   if (!isPageVisible.value) {
     stopAutoRefresh()
+    stopActiveDiscovery()
     stopGlobalAutoRefresh()
     return
   }
-  if (hasActiveRequests.value) {
-    startAutoRefresh()
-  }
   if (globalAutoRefresh.value) {
+    startActiveDiscovery()
+    if (hasActiveRequests.value) {
+      startAutoRefresh()
+    }
     refreshData()
     startGlobalAutoRefresh()
   }
@@ -517,6 +596,7 @@ function handleVisibilityChange() {
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   stopAutoRefresh()
+  stopActiveDiscovery()
   stopGlobalAutoRefresh()
 })
 
@@ -572,6 +652,10 @@ onMounted(async () => {
         log.error('加载热力图数据失败:', err)
       })
     ])
+  }
+
+  if (globalAutoRefresh.value && isPageVisible.value) {
+    startActiveDiscovery()
   }
 
   if (globalAutoRefresh.value && isPageVisible.value) {

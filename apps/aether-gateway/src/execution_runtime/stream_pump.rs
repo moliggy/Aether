@@ -42,12 +42,33 @@ pub(crate) fn build_direct_execution_frame_stream(
 
         let mut upstream_bytes = 0u64;
         let mut ttfb_ms = None;
+        let mut first_chunk_telemetry_emitted = false;
         let mut bytes_stream = response.bytes_stream();
         while let Some(item) = bytes_stream.next().await {
             match item {
                 Ok(chunk) => {
                     if ttfb_ms.is_none() {
                         ttfb_ms = Some(started_at.elapsed().as_millis() as u64);
+                    }
+                    if !first_chunk_telemetry_emitted {
+                        let telemetry_frame = StreamFrame {
+                            frame_type: StreamFrameType::Telemetry,
+                            payload: StreamFramePayload::Telemetry {
+                                telemetry: ExecutionTelemetry {
+                                    ttfb_ms,
+                                    elapsed_ms: ttfb_ms,
+                                    upstream_bytes: Some(upstream_bytes),
+                                },
+                            },
+                        };
+                        match encode_stream_frame_ndjson(&telemetry_frame) {
+                            Ok(frame) => yield Ok(frame),
+                            Err(err) => {
+                                yield Err(err);
+                                return;
+                            }
+                        }
+                        first_chunk_telemetry_emitted = true;
                     }
                     upstream_bytes += chunk.len() as u64;
                     let frame = StreamFrame {
@@ -215,6 +236,105 @@ mod tests {
         assert!(
             telemetry_ttfb_ms.is_some_and(|value| value > 0),
             "telemetry frame should include a measured ttfb"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_execution_frame_stream_emits_telemetry_before_first_data_frame() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should resolve");
+        let server = tokio::spawn(async move {
+            let app = Router::new().route(
+                "/stream",
+                post(|| async {
+                    let body_stream = stream! {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        yield Ok::<Bytes, Infallible>(Bytes::from_static(b"data: hello\n\n"));
+                    };
+                    (
+                        [(
+                            header::CONTENT_TYPE,
+                            HeaderValue::from_static("text/event-stream"),
+                        )],
+                        Body::from_stream(body_stream),
+                    )
+                }),
+            );
+            axum::serve(listener, app)
+                .await
+                .expect("server should start");
+        });
+
+        let runtime = DirectSyncExecutionRuntime::new();
+        let execution = runtime
+            .execute_stream(ExecutionPlan {
+                request_id: "req-telemetry-order".to_string(),
+                candidate_id: Some("cand-telemetry-order".to_string()),
+                provider_name: Some("OpenAI".to_string()),
+                provider_id: "provider-1".to_string(),
+                endpoint_id: "endpoint-1".to_string(),
+                key_id: "key-1".to_string(),
+                method: "POST".to_string(),
+                url: format!("http://{addr}/stream"),
+                headers: BTreeMap::new(),
+                content_type: None,
+                content_encoding: None,
+                body: RequestBody {
+                    json_body: None,
+                    body_bytes_b64: None,
+                    body_ref: None,
+                },
+                stream: true,
+                client_api_format: "openai:chat".to_string(),
+                provider_api_format: "openai:chat".to_string(),
+                model_name: Some("gpt-5".into()),
+                proxy: None,
+                tls_profile: None,
+                timeouts: Some(ExecutionTimeouts {
+                    connect_ms: Some(5_000),
+                    total_ms: Some(5_000),
+                    ..ExecutionTimeouts::default()
+                }),
+            })
+            .await
+            .expect("stream execution should succeed");
+
+        let frames = build_direct_execution_frame_stream(execution)
+            .map(|item| item.expect("frame should encode"))
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|bytes| String::from_utf8(bytes.to_vec()).expect("frame should be utf8"))
+            .collect::<Vec<_>>();
+
+        server.abort();
+
+        let frame_types = frames
+            .iter()
+            .map(|line| {
+                serde_json::from_str::<Value>(line)
+                    .expect("frame should parse")
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+
+        let first_data_idx = frame_types
+            .iter()
+            .position(|kind| kind == "data")
+            .expect("data frame should exist");
+        let first_telemetry_idx = frame_types
+            .iter()
+            .position(|kind| kind == "telemetry")
+            .expect("telemetry frame should exist");
+
+        assert!(
+            first_telemetry_idx < first_data_idx,
+            "first telemetry frame should be emitted before the first data frame"
         );
     }
 }

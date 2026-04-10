@@ -77,7 +77,7 @@
                   size="icon"
                   class="h-8 w-8"
                   :disabled="loading && !autoRefreshing"
-                  :title="autoRefreshing ? '停止自动刷新' : '刷新'"
+                  :title="refreshButtonTitle"
                   @click="refreshDetail"
                 >
                   <RefreshCw
@@ -813,6 +813,10 @@ let timelineMountTimer: ReturnType<typeof setTimeout> | null = null
 
 const fullRequestId = computed(() => detail.value?.request_id || detail.value?.id || '-')
 const displayRequestId = computed(() => formatShortRequestId(fullRequestId.value))
+const refreshButtonTitle = computed(() => {
+  if (autoRefreshing.value) return '停止自动刷新'
+  return isRequestCompleted() ? '刷新' : '开启自动刷新'
+})
 const displayInputTokens = computed(() => {
   if (!detail.value) return 0
   return getEffectiveInputTokens({
@@ -1686,13 +1690,9 @@ async function loadDetail(id: string, silent = false) {
       timelineRef.value?.refresh()
     }
 
-    // 抽屉打开时，对进行中请求自动保持刷新，保证详情实时更新
-    if (props.isOpen) {
-      if (isRequestCompleted()) {
-        stopAutoRefresh()
-      } else {
-        startAutoRefresh()
-      }
+    // 已完成请求需要停止自动刷新；进行中的请求只在用户手动开启后才保持刷新
+    if (props.isOpen && isRequestCompleted()) {
+      stopAutoRefresh()
     }
   } catch (err) {
     if (requestId !== loadDetailRequestId) return
@@ -1781,10 +1781,6 @@ function handleVisibilityChange() {
   isPageVisible.value = !document.hidden
   if (!isPageVisible.value) {
     stopAutoRefresh()
-    return
-  }
-  if (props.isOpen && props.requestId && !isRequestCompleted()) {
-    startAutoRefresh()
   }
 }
 

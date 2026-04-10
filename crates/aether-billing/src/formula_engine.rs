@@ -387,7 +387,10 @@ fn resolve_tiered(
                     .map(|value| value == cache_ttl_minutes)
                     .unwrap_or(false)
             }) {
-                if let Some(value) = ttl_entry.get(ttl_value_key).filter(|value| !value.is_null()) {
+                if let Some(value) = ttl_entry
+                    .get(ttl_value_key)
+                    .filter(|value| !value.is_null())
+                {
                     return Ok((
                         value.clone(),
                         false,

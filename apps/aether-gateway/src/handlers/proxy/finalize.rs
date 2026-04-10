@@ -7,13 +7,13 @@ use crate::constants::{
 };
 use crate::control::GatewayControlDecision;
 use crate::control::GatewayPublicRequestContext;
-use crate::middleware::RequestLogEmitted;
+use crate::middleware::{should_downgrade_access_log, RequestLogEmitted};
 use crate::AppState;
 use aether_runtime::{maybe_hold_axum_response_permit, AdmissionPermit};
 use axum::body::{Body, Bytes};
 use axum::http::{self, header::HeaderName, header::HeaderValue, Response};
 use std::time::Instant;
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
 
 pub(super) fn request_wants_stream(
     request_context: &GatewayPublicRequestContext,
@@ -112,6 +112,24 @@ pub(super) fn finalize_gateway_response(
             local_execution_runtime_miss_reason = local_execution_runtime_miss_reason.as_str(),
             elapsed_ms,
             "gateway request failed"
+        );
+    } else if should_downgrade_access_log(method, path_and_query) {
+        trace!(
+            event_name = "http_request_completed",
+            log_type = "access",
+            status = "completed",
+            status_code,
+            trace_id = %trace_id,
+            request_id,
+            remote_addr = %remote_addr,
+            method = %method,
+            path = %path_and_query,
+            route_class,
+            execution_path,
+            dependency_reason = dependency_reason.as_str(),
+            local_execution_runtime_miss_reason = local_execution_runtime_miss_reason.as_str(),
+            elapsed_ms,
+            "gateway completed request"
         );
     } else {
         info!(

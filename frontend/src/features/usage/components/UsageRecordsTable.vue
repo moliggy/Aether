@@ -156,7 +156,7 @@
         size="icon"
         class="h-8 w-8"
         :class="autoRefresh ? 'text-primary' : ''"
-        :title="autoRefresh ? '点击关闭自动刷新' : '点击开启自动刷新（每3秒刷新）'"
+        :title="autoRefresh ? '点击关闭自动刷新' : '点击开启自动刷新'"
         @click="$emit('update:autoRefresh', !autoRefresh)"
       >
         <RefreshCcw

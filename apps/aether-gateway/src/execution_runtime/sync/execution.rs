@@ -87,6 +87,10 @@ pub(crate) async fn execute_execution_runtime_sync(
     let plan_request_id_for_log = short_request_id(plan_request_id);
     let plan_candidate_id = plan.candidate_id.as_deref();
     let candidate_started_unix_secs = current_request_candidate_unix_ms();
+    state
+        .usage_runtime
+        .record_pending(state.data.as_ref(), &plan, report_context.as_ref())
+        .await;
     #[cfg(not(test))]
     let result = {
         match DirectSyncExecutionRuntime::new()
@@ -276,10 +280,6 @@ pub(crate) async fn execute_execution_runtime_sync(
         return Ok(None);
     }
 
-    state
-        .usage_runtime
-        .record_pending(state.data.as_ref(), &plan, report_context.as_ref())
-        .await;
     let terminal_unix_secs = current_request_candidate_unix_ms();
     record_local_request_candidate_status(
         state,

@@ -70,6 +70,10 @@ pub(crate) async fn execute_execution_runtime_stream(
     mut report_context: Option<serde_json::Value>,
 ) -> Result<Option<Response<Body>>, GatewayError> {
     ensure_execution_request_candidate_slot(state, &mut plan, &mut report_context).await;
+    state
+        .usage_runtime
+        .record_pending(state.data.as_ref(), &plan, report_context.as_ref())
+        .await;
     let plan_request_id_for_log = short_request_id(plan.request_id.as_str());
     #[cfg(not(test))]
     {
@@ -233,6 +237,19 @@ where
         return Ok(Some(frame));
     }
     read_next_frame(lines).await
+}
+
+fn should_refresh_stream_usage_telemetry(
+    previous: Option<&ExecutionTelemetry>,
+    next: &ExecutionTelemetry,
+) -> bool {
+    let previous_ttfb = previous.and_then(|telemetry| telemetry.ttfb_ms);
+    let previous_elapsed = previous.and_then(|telemetry| telemetry.elapsed_ms);
+    let next_ttfb = next.ttfb_ms;
+    let next_elapsed = next.elapsed_ms;
+
+    (next_ttfb.is_some() && next_ttfb != previous_ttfb)
+        || (next_elapsed.is_some() && next_elapsed != previous_elapsed)
 }
 
 async fn probe_local_stream_success_failover_text<R>(
@@ -742,10 +759,6 @@ async fn execute_stream_from_frame_stream(
     let candidate_started_unix_secs = current_request_candidate_unix_ms();
     state
         .usage_runtime
-        .record_pending(state.data.as_ref(), &plan, report_context.as_ref())
-        .await;
-    state
-        .usage_runtime
         .record_stream_started(
             state.data.as_ref(),
             &plan,
@@ -794,7 +807,8 @@ async fn execute_stream_from_frame_stream(
     tokio::spawn(async move {
         let mut provider_buffered_body = provider_prefetched_body_for_report;
         let mut buffered_body = prefetched_body_for_report;
-        let mut telemetry: Option<ExecutionTelemetry> = initial_telemetry;
+        let mut telemetry: Option<ExecutionTelemetry> = initial_telemetry.clone();
+        let mut usage_stream_telemetry: Option<ExecutionTelemetry> = initial_telemetry;
         let reached_eof = initial_reached_eof;
         let mut downstream_dropped = false;
         let mut terminal_failure: Option<StreamFailureReport> = None;
@@ -928,7 +942,25 @@ async fn execute_stream_from_frame_stream(
                     StreamFramePayload::Telemetry {
                         telemetry: frame_telemetry,
                     } => {
-                        telemetry = Some(frame_telemetry);
+                        let should_refresh_stream_usage = should_refresh_stream_usage_telemetry(
+                            usage_stream_telemetry.as_ref(),
+                            &frame_telemetry,
+                        );
+                        telemetry = Some(frame_telemetry.clone());
+                        if should_refresh_stream_usage {
+                            state_for_report
+                                .usage_runtime
+                                .record_stream_started(
+                                    state_for_report.data.as_ref(),
+                                    &plan_for_report,
+                                    report_context_owned.as_ref(),
+                                    status_code,
+                                    &headers_for_report,
+                                    Some(&frame_telemetry),
+                                )
+                                .await;
+                            usage_stream_telemetry = Some(frame_telemetry);
+                        }
                     }
                     StreamFramePayload::Eof { .. } => {
                         break;
