@@ -33,7 +33,7 @@ services:
     restart: unless-stopped
 
   app:
-    image: ${APP_IMAGE:-ghcr.io/fawney19/aether:latest}
+    image: ${APP_IMAGE:-ghcr.io/fawney19/aether:pre}
     container_name: aether-app
     env_file:
       - .env
