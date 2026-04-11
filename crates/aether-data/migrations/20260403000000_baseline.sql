@@ -28,7 +28,7 @@ SET client_encoding = 'UTF8';
 
 SET standard_conforming_strings = on;
 
-SELECT pg_catalog.set_config('search_path', '', false);
+SELECT pg_catalog.set_config('search_path', '', true);
 
 SET check_function_bodies = false;
 
@@ -4584,5 +4584,4 @@ END $mig$;
 --
 -- PostgreSQL database dump complete
 --
-
 

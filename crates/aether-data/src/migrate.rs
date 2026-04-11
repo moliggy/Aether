@@ -162,3 +162,29 @@ fn validate_applied_migrations(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::MIGRATOR;
+
+    #[test]
+    fn baseline_migration_keeps_empty_search_path_transaction_local() {
+        let baseline = MIGRATOR
+            .iter()
+            .find(|migration| migration.version == 20260403000000)
+            .expect("baseline migration should be embedded");
+
+        assert!(
+            baseline
+                .sql
+                .contains("SELECT pg_catalog.set_config('search_path', '', true);"),
+            "baseline migration must keep empty search_path transaction-local so sqlx bookkeeping can still access _sqlx_migrations",
+        );
+        assert!(
+            !baseline
+                .sql
+                .contains("SELECT pg_catalog.set_config('search_path', '', false);"),
+            "baseline migration must not persist an empty search_path at session scope",
+        );
+    }
+}
