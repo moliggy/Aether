@@ -78,6 +78,7 @@ pub use self::execution_runtime::{
     serve_execution_runtime_unix,
 };
 pub(crate) use self::fallback_metrics::{GatewayFallbackMetricKind, GatewayFallbackReason};
+pub use self::frontdoor_loop_guard::set_gateway_frontdoor_app_port;
 pub use self::middleware::strip_cf_headers_middleware;
 pub use self::rate_limit::FrontdoorUserRpmConfig;
 pub(crate) use self::rate_limit::FrontdoorUserRpmOutcome;

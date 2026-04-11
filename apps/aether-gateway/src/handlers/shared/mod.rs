@@ -1,4 +1,5 @@
 mod admin_proxy;
+mod api_keys;
 mod catalog;
 mod email_templates;
 mod external_models;
@@ -11,6 +12,10 @@ mod usage_stats;
 pub(crate) use self::admin_proxy::{
     attach_admin_audit_response, build_admin_proxy_auth_required_response,
     build_unhandled_admin_proxy_response,
+};
+pub(crate) use self::api_keys::{
+    api_key_placeholder_display, configured_api_key_prefix, generate_gateway_api_key_plaintext,
+    masked_gateway_api_key_display,
 };
 pub(crate) use self::catalog::{
     build_admin_provider_key_response, decrypt_catalog_secret_with_fallbacks,

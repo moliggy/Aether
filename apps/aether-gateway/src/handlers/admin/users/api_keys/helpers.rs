@@ -2,6 +2,9 @@ use crate::handlers::admin::request::AdminAppState;
 use crate::handlers::admin::shared::{
     attach_admin_audit_response, decrypt_catalog_secret_with_fallbacks,
 };
+use crate::handlers::shared::{
+    api_key_placeholder_display, generate_gateway_api_key_plaintext, masked_gateway_api_key_display,
+};
 use axum::{body::Body, response::Response};
 use serde_json::json;
 use std::collections::BTreeSet;
@@ -17,20 +20,13 @@ pub(crate) fn masked_user_api_key_display(
     ciphertext: Option<&str>,
 ) -> String {
     let Some(ciphertext) = ciphertext.map(str::trim).filter(|value| !value.is_empty()) else {
-        return "sk-****".to_string();
+        return api_key_placeholder_display();
     };
     let Some(full_key) = decrypt_catalog_secret_with_fallbacks(state.encryption_key(), ciphertext)
     else {
-        return "sk-****".to_string();
+        return api_key_placeholder_display();
     };
-    let prefix_len = full_key.len().min(10);
-    let prefix = &full_key[..prefix_len];
-    let suffix = if full_key.len() >= 4 {
-        &full_key[full_key.len() - 4..]
-    } else {
-        ""
-    };
-    format!("{prefix}...{suffix}")
+    masked_gateway_api_key_display(Some(full_key.as_str()))
 }
 
 pub(super) fn build_admin_user_api_key_detail_payload(
@@ -89,9 +85,7 @@ pub(super) fn normalize_admin_api_key_providers(
 }
 
 pub(crate) fn generate_admin_user_api_key_plaintext() -> String {
-    let first = uuid::Uuid::new_v4().simple().to_string();
-    let second = uuid::Uuid::new_v4().simple().to_string();
-    format!("sk-{}{}", first, &second[..16])
+    generate_gateway_api_key_plaintext()
 }
 
 pub(crate) fn hash_admin_user_api_key(value: &str) -> String {

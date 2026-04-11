@@ -375,6 +375,10 @@ restart_service_if_requested() {
 }
 
 print_next_steps() {
+    local gateway_port
+    gateway_port="$(awk -F= '/^[[:space:]]*APP_PORT=/{print $2}' "${ENV_TARGET}" | tail -n1 | tr -d '[:space:]')"
+    gateway_port="${gateway_port:-8084}"
+
     cat <<EOF
 
 Install complete.
@@ -389,8 +393,8 @@ Data services (Docker only for Postgres/Redis):
   docker compose --env-file ${ENV_TARGET} -f ${INSTALL_ROOT}/shared/docker-compose.data.yml ps
 
 Health checks:
-  curl -fsS http://127.0.0.1:8084/_gateway/health
-  curl -fsS http://127.0.0.1:8084/readyz
+  curl -fsS http://127.0.0.1:${gateway_port}/_gateway/health
+  curl -fsS http://127.0.0.1:${gateway_port}/readyz
 
 Current release:
   ${INSTALL_ROOT}/current

@@ -19,7 +19,7 @@ COPY dist/frontend/ /srv/frontend
 WORKDIR /app
 
 ENV RUST_LOG=aether_gateway=info \
-    AETHER_GATEWAY_BIND=0.0.0.0:8084 \
+    APP_PORT=8084 \
     AETHER_GATEWAY_STATIC_DIR=/srv/frontend
 
 EXPOSE 8084

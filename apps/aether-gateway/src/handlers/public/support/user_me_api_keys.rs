@@ -9,6 +9,10 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::handlers::shared::{
+    api_key_placeholder_display, generate_gateway_api_key_plaintext, masked_gateway_api_key_display,
+};
+
 use super::{
     build_auth_error_response, decrypt_catalog_secret_with_fallbacks,
     encrypt_catalog_secret_with_fallbacks, format_users_me_optional_unix_secs_iso8601,
@@ -111,20 +115,13 @@ pub(super) fn users_me_api_key_capabilities_path_matches(request_path: &str) -> 
 
 fn users_me_masked_api_key_display(state: &AppState, ciphertext: Option<&str>) -> String {
     let Some(ciphertext) = ciphertext.map(str::trim).filter(|value| !value.is_empty()) else {
-        return "sk-****".to_string();
+        return api_key_placeholder_display();
     };
     let Some(full_key) = decrypt_catalog_secret_with_fallbacks(state.encryption_key(), ciphertext)
     else {
-        return "sk-****".to_string();
+        return api_key_placeholder_display();
     };
-    let prefix_len = full_key.len().min(10);
-    let prefix = &full_key[..prefix_len];
-    let suffix = if full_key.len() >= 4 {
-        &full_key[full_key.len() - 4..]
-    } else {
-        ""
-    };
-    format!("{prefix}...{suffix}")
+    masked_gateway_api_key_display(Some(full_key.as_str()))
 }
 
 fn build_users_me_api_key_writer_unavailable_response() -> Response<Body> {
@@ -185,9 +182,7 @@ fn normalize_users_me_required_api_key_name(value: &str) -> Result<String, Strin
 }
 
 fn generate_users_me_api_key_plaintext() -> String {
-    let first = uuid::Uuid::new_v4().simple().to_string();
-    let second = uuid::Uuid::new_v4().simple().to_string();
-    format!("sk-{}{}", first, &second[..16])
+    generate_gateway_api_key_plaintext()
 }
 
 fn hash_users_me_api_key(value: &str) -> String {

@@ -179,8 +179,7 @@
           <Input
             id="login-password"
             v-model="form.password"
-            type="text"
-            masked
+            type="password"
             required
             placeholder="输入密码"
             autocomplete="off"

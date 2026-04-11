@@ -174,7 +174,7 @@
                     </div>
                     <div class="flex items-center gap-1.5">
                       <code class="text-xs font-mono text-muted-foreground">
-                        {{ apiKey.key_display || 'sk-****' }}
+                        {{ apiKey.key_display || '****' }}
                       </code>
                       <Button
                         variant="ghost"
@@ -367,7 +367,7 @@
                   <div class="min-w-0 flex-1 space-y-2">
                     <div class="flex items-center gap-2">
                       <code class="inline-flex max-w-[190px] sm:max-w-[240px] truncate rounded-lg bg-muted px-3 py-1.5 text-[11px] font-mono font-semibold text-foreground/90">
-                        {{ apiKey.key_display || 'sk-****' }}
+                        {{ apiKey.key_display || '****' }}
                       </code>
                       <Button
                         variant="ghost"
@@ -846,7 +846,7 @@ async function toggleApiKey(apiKey: AdminApiKey) {
 
 async function deleteApiKey(apiKey: AdminApiKey) {
   const confirmed = await confirmDanger(
-    `确定要删除这个独立余额 Key 吗？\n\n${apiKey.name || apiKey.key_display || 'sk-****'}\n\n此操作无法撤销。`,
+    `确定要删除这个独立余额 Key 吗？\n\n${apiKey.name || apiKey.key_display || '****'}\n\n此操作无法撤销。`,
     '删除独立 Key'
   )
 

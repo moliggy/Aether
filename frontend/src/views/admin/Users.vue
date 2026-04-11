@@ -682,7 +682,7 @@
                   </div>
                   <div class="flex items-center gap-1 mt-0.5">
                     <code class="text-xs font-mono text-muted-foreground">
-                      {{ apiKey.key_display || 'sk-****' }}
+                      {{ apiKey.key_display || '****' }}
                     </code>
                     <button
                       class="p-0.5 hover:bg-muted rounded transition-colors"
@@ -1486,7 +1486,7 @@ async function closeNewApiKeyDialog() {
 
 async function deleteApiKey(apiKey: ApiKey) {
   const confirmed = await confirmDanger(
-    `确定要删除这个API Key吗？\n\n${apiKey.key_display || 'sk-****'}\n\n此操作无法撤销。`,
+    `确定要删除这个API Key吗？\n\n${apiKey.key_display || '****'}\n\n此操作无法撤销。`,
     '删除 API Key'
   )
 

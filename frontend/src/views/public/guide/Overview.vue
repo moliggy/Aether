@@ -86,7 +86,7 @@ const developmentSteps = [
   },
   {
     title: '前端',
-    note: '自动代理到 8084',
+    note: '自动代理到 APP_PORT（默认 8084）',
     code: 'cd frontend && npm install && npm run dev',
     icon: Monitor
   }

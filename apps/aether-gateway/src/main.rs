@@ -9,8 +9,9 @@ use aether_crypto::warm_python_fernet_secret;
 use aether_data::postgres::PostgresPoolConfig;
 use aether_data::redis::RedisClientConfig;
 use aether_gateway::{
-    attach_static_frontend, build_router_with_state, AppState, FrontdoorCorsConfig,
-    FrontdoorUserRpmConfig, GatewayDataConfig, UsageRuntimeConfig, VideoTaskTruthSourceMode,
+    attach_static_frontend, build_router_with_state, set_gateway_frontdoor_app_port, AppState,
+    FrontdoorCorsConfig, FrontdoorUserRpmConfig, GatewayDataConfig, UsageRuntimeConfig,
+    VideoTaskTruthSourceMode,
 };
 use aether_runtime::{
     init_service_runtime, DistributedConcurrencyGate, FileLoggingConfig, LogDestination, LogFormat,
@@ -495,8 +496,8 @@ impl GatewayLoggingArgs {
     about = "Phase 3a Rust ingress gateway for Aether"
 )]
 struct Args {
-    #[arg(long, env = "AETHER_GATEWAY_BIND", default_value = "0.0.0.0:8084")]
-    bind: String,
+    #[arg(long, env = "APP_PORT", default_value_t = 8084)]
+    app_port: u16,
 
     /// 容器内健康检查入口：根据当前 bind 端口探测本地 /health。
     #[arg(long, hide = true, default_value_t = false)]
@@ -625,63 +626,39 @@ fn resolve_gateway_log_instance_id() -> String {
         .unwrap_or_else(|| "local".to_string())
 }
 
-fn resolve_bind_http_base_url(bind: &str) -> Result<String, std::io::Error> {
-    let trimmed = bind.trim();
-    if trimmed.is_empty() {
+fn validate_app_port(app_port: u16) -> Result<u16, std::io::Error> {
+    if app_port == 0 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "AETHER_GATEWAY_BIND cannot be empty",
+            "APP_PORT must be between 1 and 65535",
         ));
     }
-
-    if let Ok(socket_addr) = trimmed.parse::<std::net::SocketAddr>() {
-        let host = match socket_addr.ip() {
-            std::net::IpAddr::V4(ip) if ip.is_unspecified() => "127.0.0.1".to_string(),
-            std::net::IpAddr::V4(ip) => ip.to_string(),
-            std::net::IpAddr::V6(ip) if ip.is_unspecified() => "[::1]".to_string(),
-            std::net::IpAddr::V6(ip) => format!("[{ip}]"),
-        };
-        return Ok(format!("http://{host}:{}", socket_addr.port()));
-    }
-
-    let (host, port) = trimmed.rsplit_once(':').ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("AETHER_GATEWAY_BIND must include a port: {trimmed}"),
-        )
-    })?;
-    let port = port.parse::<u16>().map_err(|error| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("invalid bind port in AETHER_GATEWAY_BIND={trimmed}: {error}"),
-        )
-    })?;
-
-    let host = host.trim();
-    if host.is_empty() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("invalid host in AETHER_GATEWAY_BIND={trimmed}"),
-        ));
-    }
-    let host = if host.contains(':') && !host.starts_with('[') {
-        format!("[{host}]")
-    } else {
-        host.to_string()
-    };
-
-    Ok(format!("http://{host}:{port}"))
+    Ok(app_port)
 }
 
-fn resolve_healthcheck_url(bind: &str) -> Result<String, std::io::Error> {
-    Ok(format!("{}/health", resolve_bind_http_base_url(bind)?))
+fn gateway_bind_addr(app_port: u16) -> Result<std::net::SocketAddr, std::io::Error> {
+    Ok(std::net::SocketAddr::from((
+        [0, 0, 0, 0],
+        validate_app_port(app_port)?,
+    )))
 }
 
-async fn run_healthcheck(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
-    let url = resolve_healthcheck_url(&args.bind)?;
+fn resolve_local_http_base_url(app_port: u16) -> Result<String, std::io::Error> {
+    Ok(format!("http://127.0.0.1:{}", validate_app_port(app_port)?))
+}
+
+fn resolve_healthcheck_url(app_port: u16) -> Result<String, std::io::Error> {
+    Ok(format!("{}/health", resolve_local_http_base_url(app_port)?))
+}
+
+async fn run_healthcheck(
+    app_port: u16,
+    healthcheck_timeout_ms: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let url = resolve_healthcheck_url(app_port)?;
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(
-            args.healthcheck_timeout_ms.max(1),
+            healthcheck_timeout_ms.max(1),
         ))
         .build()?
         .get(url)
@@ -767,8 +744,11 @@ fn validate_deployment_topology(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    let app_port = validate_app_port(args.app_port)?;
+    let bind_addr = gateway_bind_addr(app_port)?;
+    set_gateway_frontdoor_app_port(app_port);
     if args.healthcheck {
-        return run_healthcheck(&args).await;
+        return run_healthcheck(app_port, args.healthcheck_timeout_ms).await;
     }
     init_service_runtime(args.runtime_config()?)?;
     let data_postgres_url = args.data.effective_postgres_url();
@@ -793,7 +773,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!(
         event_name = "gateway_starting",
         log_type = "ops",
-        bind = %args.bind,
+        bind = %bind_addr,
+        app_port,
         environment = %args.frontdoor.environment,
         deployment_topology = args.deployment_topology.as_str(),
         node_role = args.node_role.as_str(),
@@ -923,6 +904,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if state.run_postgres_migrations().await? {
         info!("database migrations complete");
     }
+    state.bootstrap_admin_from_env().await?;
 
     let background_tasks = if args.node_role.spawns_background_tasks() {
         state.spawn_background_tasks()
@@ -933,9 +915,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         Vec::new()
     };
-    let listener = tokio::net::TcpListener::bind(&args.bind).await?;
-    let public_base_url = resolve_bind_http_base_url(&args.bind)
-        .unwrap_or_else(|_| format!("http://{}", args.bind.trim()));
+    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
+    let public_base_url = resolve_local_http_base_url(app_port)?;
     let frontdoor_health_url = format!("{public_base_url}/_gateway/health");
     let api_router = build_router_with_state(state);
 
@@ -958,7 +939,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!(
         event_name = "gateway_ready",
         log_type = "ops",
-        bind = %args.bind,
+        bind = %bind_addr,
+        app_port,
         public_url = %public_base_url,
         healthcheck_url = %frontdoor_health_url,
         legacy_route_policy = "fail_closed",
@@ -981,48 +963,16 @@ mod tests {
     use super::resolve_healthcheck_url;
 
     #[test]
-    fn resolves_ipv4_healthcheck_url() {
+    fn resolves_healthcheck_url_from_app_port() {
         assert_eq!(
-            resolve_healthcheck_url("0.0.0.0:80").unwrap(),
-            "http://127.0.0.1:80/health"
+            resolve_healthcheck_url(8084).unwrap(),
+            "http://127.0.0.1:8084/health"
         );
     }
 
     #[test]
-    fn resolves_ipv6_healthcheck_url() {
-        assert_eq!(
-            resolve_healthcheck_url("[::]:8080").unwrap(),
-            "http://[::1]:8080/health"
-        );
-    }
-
-    #[test]
-    fn preserves_explicit_ipv4_bind_for_healthcheck_url() {
-        assert_eq!(
-            resolve_healthcheck_url("172.18.0.2:9000").unwrap(),
-            "http://172.18.0.2:9000/health"
-        );
-    }
-
-    #[test]
-    fn preserves_explicit_ipv6_bind_for_healthcheck_url() {
-        assert_eq!(
-            resolve_healthcheck_url("[2001:db8::2]:9000").unwrap(),
-            "http://[2001:db8::2]:9000/health"
-        );
-    }
-
-    #[test]
-    fn preserves_hostname_healthcheck_url() {
-        assert_eq!(
-            resolve_healthcheck_url("gateway.internal:9000").unwrap(),
-            "http://gateway.internal:9000/health"
-        );
-    }
-
-    #[test]
-    fn rejects_bind_without_port() {
-        let error = resolve_healthcheck_url("not-a-socket").unwrap_err();
+    fn rejects_zero_app_port() {
+        let error = resolve_healthcheck_url(0).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
 }

@@ -120,7 +120,7 @@ WORKDIR /app
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     RUST_LOG=aether_gateway=info \
-    AETHER_GATEWAY_BIND=0.0.0.0:8084 \
+    APP_PORT=8084 \
     AETHER_GATEWAY_STATIC_DIR=/srv/frontend
 
 EXPOSE 8084

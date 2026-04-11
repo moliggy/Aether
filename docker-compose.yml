@@ -47,7 +47,7 @@ services:
       AETHER_LOG_ROTATION: ${AETHER_LOG_ROTATION:-daily}
       AETHER_LOG_RETENTION_DAYS: ${AETHER_LOG_RETENTION_DAYS:-7}
       AETHER_LOG_MAX_FILES: ${AETHER_LOG_MAX_FILES:-30}
-      AETHER_GATEWAY_BIND: 0.0.0.0:${APP_PORT:-8084}
+      APP_PORT: ${APP_PORT:-8084}
     depends_on:
       postgres:
         condition: service_healthy

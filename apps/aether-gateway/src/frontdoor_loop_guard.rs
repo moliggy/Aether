@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use axum::http::HeaderMap;
 use url::Url;
 
@@ -7,19 +9,9 @@ use crate::constants::{
 };
 use crate::headers::header_value_str;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GatewayBindHostKind {
-    AnyLocal,
-    Loopback,
-    Exact,
-}
+const DEFAULT_APP_PORT: u16 = 8084;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct GatewayBindTarget {
-    host_kind: GatewayBindHostKind,
-    host: String,
-    port: u16,
-}
+static GATEWAY_FRONTDOOR_APP_PORT: OnceLock<u16> = OnceLock::new();
 
 pub(crate) fn request_has_execution_runtime_loop_guard(headers: &HeaderMap) -> bool {
     header_value_str(headers, EXECUTION_RUNTIME_LOOP_GUARD_HEADER)
@@ -57,32 +49,39 @@ pub(crate) fn frontdoor_self_loop_public_ai_path(path: &str) -> bool {
         || is_gemini_generation_path(path)
 }
 
-pub(crate) fn gateway_frontdoor_self_loop_guard_error(url: &str) -> Option<String> {
-    let Some(bind) = std::env::var("AETHER_GATEWAY_BIND")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    else {
-        return None;
-    };
-    gateway_frontdoor_self_loop_guard_error_with_bind(bind.as_str(), url)
+pub fn set_gateway_frontdoor_app_port(app_port: u16) {
+    let _ = GATEWAY_FRONTDOOR_APP_PORT.set(app_port);
 }
 
-pub(crate) fn gateway_frontdoor_self_loop_guard_error_with_bind(
-    bind: &str,
+pub(crate) fn configured_gateway_frontdoor_base_url() -> String {
+    format!(
+        "http://127.0.0.1:{}",
+        configured_gateway_frontdoor_app_port()
+    )
+}
+
+pub(crate) fn gateway_frontdoor_self_loop_guard_error(url: &str) -> Option<String> {
+    gateway_frontdoor_self_loop_guard_error_with_port(configured_gateway_frontdoor_app_port(), url)
+}
+
+pub(crate) fn gateway_frontdoor_self_loop_guard_error_with_port(
+    app_port: u16,
     url: &str,
 ) -> Option<String> {
-    gateway_frontdoor_self_loop_guard_matches_with_bind(bind, url).then(|| {
+    gateway_frontdoor_self_loop_guard_matches_with_port(app_port, url).then(|| {
         format!(
             "upstream execution target resolves back to the local aether-gateway frontdoor: {url}"
         )
     })
 }
 
-pub(crate) fn gateway_frontdoor_self_loop_guard_matches_with_bind(bind: &str, url: &str) -> bool {
-    let Some(bind_target) = parse_gateway_bind_target(bind) else {
+pub(crate) fn gateway_frontdoor_self_loop_guard_matches_with_port(
+    app_port: u16,
+    url: &str,
+) -> bool {
+    if app_port == 0 {
         return false;
-    };
+    }
     let Some(target_url) = Url::parse(url).ok() else {
         return false;
     };
@@ -96,17 +95,11 @@ pub(crate) fn gateway_frontdoor_self_loop_guard_matches_with_bind(bind: &str, ur
     let Some(target_port) = target_url.port_or_known_default() else {
         return false;
     };
-    if target_port != bind_target.port {
+    if target_port != app_port {
         return false;
     }
 
-    let target_host = normalize_host_for_frontdoor_loop_guard(target_host);
-    match bind_target.host_kind {
-        GatewayBindHostKind::AnyLocal | GatewayBindHostKind::Loopback => {
-            is_loopbackish_host(target_host.as_str())
-        }
-        GatewayBindHostKind::Exact => target_host == bind_target.host,
-    }
+    is_loopbackish_host(normalize_host_for_frontdoor_loop_guard(target_host).as_str())
 }
 
 fn is_gemini_generation_path(path: &str) -> bool {
@@ -119,57 +112,19 @@ fn is_gemini_generation_path(path: &str) -> bool {
         })
 }
 
-fn parse_gateway_bind_target(bind: &str) -> Option<GatewayBindTarget> {
-    let trimmed = bind.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    if let Ok(socket_addr) = trimmed.parse::<std::net::SocketAddr>() {
-        let (host_kind, host) = match socket_addr.ip() {
-            std::net::IpAddr::V4(ip) if ip.is_unspecified() => {
-                (GatewayBindHostKind::AnyLocal, "0.0.0.0".to_string())
-            }
-            std::net::IpAddr::V4(ip) if ip.is_loopback() => {
-                (GatewayBindHostKind::Loopback, ip.to_string())
-            }
-            std::net::IpAddr::V4(ip) => (GatewayBindHostKind::Exact, ip.to_string()),
-            std::net::IpAddr::V6(ip) if ip.is_unspecified() => {
-                (GatewayBindHostKind::AnyLocal, "::".to_string())
-            }
-            std::net::IpAddr::V6(ip) if ip.is_loopback() => {
-                (GatewayBindHostKind::Loopback, ip.to_string())
-            }
-            std::net::IpAddr::V6(ip) => (GatewayBindHostKind::Exact, ip.to_string()),
-        };
-        return Some(GatewayBindTarget {
-            host_kind,
-            host,
-            port: socket_addr.port(),
-        });
-    }
-
-    let (host, port) = trimmed.rsplit_once(':')?;
-    let port = port.parse::<u16>().ok()?;
-    let host = host.trim().trim_start_matches('[').trim_end_matches(']');
-    if host.is_empty() {
-        return None;
-    }
-
-    let normalized_host = normalize_host_for_frontdoor_loop_guard(host);
-    let host_kind = if matches!(normalized_host.as_str(), "0.0.0.0" | "::") {
-        GatewayBindHostKind::AnyLocal
-    } else if is_loopbackish_host(normalized_host.as_str()) {
-        GatewayBindHostKind::Loopback
-    } else {
-        GatewayBindHostKind::Exact
-    };
-
-    Some(GatewayBindTarget {
-        host_kind,
-        host: normalized_host,
-        port,
-    })
+fn configured_gateway_frontdoor_app_port() -> u16 {
+    GATEWAY_FRONTDOOR_APP_PORT
+        .get()
+        .copied()
+        .or_else(|| {
+            std::env::var("APP_PORT")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .and_then(|value| value.parse::<u16>().ok())
+                .filter(|value| *value > 0)
+        })
+        .unwrap_or(DEFAULT_APP_PORT)
 }
 
 fn normalize_host_for_frontdoor_loop_guard(host: &str) -> String {

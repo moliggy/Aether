@@ -155,7 +155,7 @@ wait_for_startup() {
 # 本地开发默认约定：
 # - Rust aether-gateway 绑定 APP_PORT，作为唯一公开入口
 # - ./dev.sh 不再启动 Python 宿主；本地默认只验证 Rust-owned 路径
-APP_PORT=${APP_PORT:-8084}
+export APP_PORT=${APP_PORT:-8084}
 RUST_SERVICE_STARTUP_TIMEOUT_SECONDS=${RUST_SERVICE_STARTUP_TIMEOUT_SECONDS:-120}
 GATEWAY_STARTUP_TIMEOUT_SECONDS=${GATEWAY_STARTUP_TIMEOUT_SECONDS:-${RUST_SERVICE_STARTUP_TIMEOUT_SECONDS}}
 
@@ -164,15 +164,14 @@ if ! command -v cargo >/dev/null 2>&1; then
     exit 1
 fi
 
-export AETHER_GATEWAY_BIND=${AETHER_GATEWAY_BIND:-0.0.0.0:${APP_PORT}}
 export AETHER_GATEWAY_VIDEO_TASK_TRUTH_SOURCE_MODE=${AETHER_GATEWAY_VIDEO_TASK_TRUTH_SOURCE_MODE:-rust-authoritative}
 
 if ! preflight_dev_infra; then
     exit 1
 fi
 
-GATEWAY_ARGS=(--bind "${AETHER_GATEWAY_BIND}")
-echo "=> 启动 aether-gateway (Rust frontdoor: ${AETHER_GATEWAY_BIND})..."
+GATEWAY_ARGS=(--app-port "${APP_PORT}")
+echo "=> 启动 aether-gateway (Rust frontdoor: 0.0.0.0:${APP_PORT})..."
 cargo run -q -p aether-gateway -- "${GATEWAY_ARGS[@]}" &
 GATEWAY_PID=$!
 

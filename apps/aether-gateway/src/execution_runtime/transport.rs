@@ -22,12 +22,13 @@ use crate::constants::{
 };
 #[cfg(test)]
 use crate::execution_runtime::remote_compat::execute_sync_plan_via_remote_execution_runtime;
-use crate::frontdoor_loop_guard::gateway_frontdoor_self_loop_guard_error;
+use crate::frontdoor_loop_guard::{
+    configured_gateway_frontdoor_base_url, gateway_frontdoor_self_loop_guard_error,
+};
 use crate::{AppState, GatewayError};
 
 const HUB_RELAY_CONTENT_TYPE: &str = "application/vnd.aether.tunnel-envelope";
 const HUB_RELAY_ERROR_HEADER: &str = "x-aether-tunnel-error";
-const DEFAULT_TUNNEL_BASE_URL: &str = "http://127.0.0.1:8084";
 const TUNNEL_RELAY_PATH_PREFIX: &str = "/api/internal/tunnel/relay";
 const CLAUDE_CODE_TLS_PROFILE: &str = "claude_code_nodejs";
 
@@ -436,7 +437,7 @@ fn build_relay_url(proxy: Option<&ProxySnapshot>, node_id: &str) -> String {
     let base_url = proxy
         .and_then(resolve_tunnel_base_url_from_proxy)
         .or_else(|| std::env::var("AETHER_TUNNEL_BASE_URL").ok())
-        .unwrap_or_else(|| DEFAULT_TUNNEL_BASE_URL.to_string());
+        .unwrap_or_else(configured_gateway_frontdoor_base_url);
     format!(
         "{}{}/{}",
         base_url.trim_end_matches('/'),
@@ -686,26 +687,26 @@ mod tests {
 
     use super::DirectSyncExecutionRuntime;
     use crate::frontdoor_loop_guard::{
-        frontdoor_self_loop_public_ai_path, gateway_frontdoor_self_loop_guard_error_with_bind,
-        gateway_frontdoor_self_loop_guard_matches_with_bind,
+        frontdoor_self_loop_public_ai_path, gateway_frontdoor_self_loop_guard_error_with_port,
+        gateway_frontdoor_self_loop_guard_matches_with_port,
     };
 
     #[test]
     fn gateway_frontdoor_self_loop_guard_matches_loopback_public_ai_route() {
-        assert!(gateway_frontdoor_self_loop_guard_matches_with_bind(
-            "0.0.0.0:8084",
+        assert!(gateway_frontdoor_self_loop_guard_matches_with_port(
+            8084,
             "http://127.0.0.1:8084/v1/messages"
         ));
-        assert!(gateway_frontdoor_self_loop_guard_matches_with_bind(
-            "0.0.0.0:8084",
+        assert!(gateway_frontdoor_self_loop_guard_matches_with_port(
+            8084,
             "http://localhost:8084/v1/responses"
         ));
     }
 
     #[test]
     fn gateway_frontdoor_self_loop_guard_ignores_non_ai_routes() {
-        assert!(!gateway_frontdoor_self_loop_guard_matches_with_bind(
-            "0.0.0.0:8084",
+        assert!(!gateway_frontdoor_self_loop_guard_matches_with_port(
+            8084,
             "http://127.0.0.1:8084/_gateway/health"
         ));
         assert!(!frontdoor_self_loop_public_ai_path("/_gateway/health"));
@@ -713,8 +714,8 @@ mod tests {
 
     #[test]
     fn gateway_frontdoor_self_loop_guard_ignores_different_ports() {
-        assert!(!gateway_frontdoor_self_loop_guard_matches_with_bind(
-            "0.0.0.0:8084",
+        assert!(!gateway_frontdoor_self_loop_guard_matches_with_port(
+            8084,
             "http://127.0.0.1:9999/v1/messages"
         ));
     }
@@ -722,8 +723,8 @@ mod tests {
     #[test]
     fn gateway_frontdoor_self_loop_guard_reports_clear_error() {
         assert_eq!(
-            gateway_frontdoor_self_loop_guard_error_with_bind(
-                "0.0.0.0:8084",
+            gateway_frontdoor_self_loop_guard_error_with_port(
+                8084,
                 "http://localhost:8084/v1/responses"
             ),
             Some(
