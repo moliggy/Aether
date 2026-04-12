@@ -172,7 +172,7 @@ async fn gateway_handles_dashboard_stats_locally_without_proxying_upstream() {
 
 #[tokio::test]
 async fn gateway_handles_admin_dashboard_stats_locally_without_proxying_upstream() {
-    let now = Utc::now();
+    let now = stable_dashboard_now();
     let admin = StoredUserAuthRecord::new(
         "admin-auth-1".to_string(),
         Some("admin@example.com".to_string()),
@@ -213,25 +213,54 @@ async fn gateway_handles_admin_dashboard_stats_locally_without_proxying_upstream
         "refresh-dashboard-stats-admin",
         now,
     );
+    let mut openai_usage = sample_user_usage_audit(
+        "usage-dashboard-admin-1",
+        "req-dashboard-admin-1",
+        "user-auth-1",
+        "gpt-5",
+        "openai",
+        "completed",
+        now - chrono::Duration::minutes(10),
+    );
+    openai_usage.input_tokens = 12_000;
+    openai_usage.output_tokens = 3_000;
+    openai_usage.total_tokens = 15_000;
+    openai_usage.cache_creation_input_tokens = 1_200;
+    openai_usage.cache_creation_ephemeral_5m_input_tokens = 600;
+    openai_usage.cache_creation_ephemeral_1h_input_tokens = 600;
+    openai_usage.cache_read_input_tokens = 800;
+
+    let mut claude_usage = sample_user_usage_audit(
+        "usage-dashboard-admin-2",
+        "req-dashboard-admin-2",
+        "user-auth-2",
+        "claude-3-7",
+        "claude",
+        "completed",
+        now - chrono::Duration::minutes(5),
+    );
+    claude_usage.input_tokens = 900;
+    claude_usage.output_tokens = 100;
+    claude_usage.total_tokens = 1_000;
+    claude_usage.cache_creation_input_tokens = 50;
+    claude_usage.cache_creation_ephemeral_5m_input_tokens = 20;
+    claude_usage.cache_creation_ephemeral_1h_input_tokens = 30;
+    claude_usage.cache_read_input_tokens = 200;
+
+    let streaming_usage = sample_user_usage_audit(
+        "usage-dashboard-admin-3",
+        "req-dashboard-admin-3",
+        "user-auth-3",
+        "gpt-4.1",
+        "openai",
+        "streaming",
+        now - chrono::Duration::minutes(1),
+    );
+
     let usage_repository = Arc::new(InMemoryUsageReadRepository::seed(vec![
-        sample_user_usage_audit(
-            "usage-dashboard-admin-1",
-            "req-dashboard-admin-1",
-            "user-auth-1",
-            "gpt-5",
-            "openai",
-            "completed",
-            now - chrono::Duration::minutes(10),
-        ),
-        sample_user_usage_audit(
-            "usage-dashboard-admin-2",
-            "req-dashboard-admin-2",
-            "user-auth-2",
-            "claude-3-7",
-            "claude",
-            "completed",
-            now - chrono::Duration::minutes(5),
-        ),
+        openai_usage,
+        claude_usage,
+        streaming_usage,
     ]));
     let user_repository = Arc::new(
         InMemoryUserReadRepository::seed_auth_users(vec![admin.clone()]).with_export_users(vec![
@@ -367,6 +396,15 @@ async fn gateway_handles_admin_dashboard_stats_locally_without_proxying_upstream
 
     assert_eq!(response.status(), StatusCode::OK);
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["today"]["requests"], 2);
+    assert_eq!(payload["today"]["tokens"], 16_000);
+    assert_eq!(payload["today"]["cost"], json!(2.5));
+    assert_eq!(payload["stats"][0]["value"], json!("2"));
+    assert_eq!(payload["stats"][1]["value"], json!("16K"));
+    assert_eq!(
+        payload["stats"][1]["subValue"],
+        json!("输入 12.9K / 输出 3.1K · 写缓存 1.25K / 读缓存 1K")
+    );
     assert_eq!(payload["users"]["total"], 2);
     assert_eq!(payload["users"]["active"], 1);
     assert_eq!(payload["api_keys"]["total"], 3);

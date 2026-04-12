@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use aether_billing::normalize_input_tokens_for_billing;
+use aether_billing::{
+    normalize_input_tokens_for_billing, normalize_total_input_context_for_cache_hit_rate,
+};
 use aether_data_contracts::repository::usage::{StoredRequestUsageAudit, UsageAuditListQuery};
 use axum::{
     body::Body,
@@ -101,9 +103,20 @@ fn users_me_usage_cache_creation_tokens(item: &StoredRequestUsageAudit) -> u64 {
 }
 
 fn users_me_usage_total_input_context(item: &StoredRequestUsageAudit) -> u64 {
-    item.input_tokens
-        .saturating_add(users_me_usage_cache_creation_tokens(item))
-        .saturating_add(item.cache_read_input_tokens)
+    let api_format = item
+        .endpoint_api_format
+        .as_deref()
+        .or(item.api_format.as_deref());
+    let input_tokens = i64::try_from(item.input_tokens).unwrap_or(i64::MAX);
+    let cache_creation_tokens =
+        i64::try_from(users_me_usage_cache_creation_tokens(item)).unwrap_or(i64::MAX);
+    let cache_read_tokens = i64::try_from(item.cache_read_input_tokens).unwrap_or(i64::MAX);
+    normalize_total_input_context_for_cache_hit_rate(
+        api_format,
+        input_tokens,
+        cache_creation_tokens,
+        cache_read_tokens,
+    ) as u64
 }
 
 fn users_me_usage_effective_input_tokens(item: &StoredRequestUsageAudit) -> u64 {

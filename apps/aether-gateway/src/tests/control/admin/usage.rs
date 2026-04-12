@@ -393,11 +393,11 @@ async fn gateway_handles_admin_usage_aggregation_stats_locally_with_trusted_admi
     assert_eq!(items[0]["request_count"], 2);
     assert_eq!(items[0]["output_tokens"], 40);
     assert_eq!(items[0]["effective_input_tokens"], 150);
-    assert_eq!(items[0]["total_input_context"], 200);
+    assert_eq!(items[0]["total_input_context"], 160);
     assert_eq!(items[0]["cache_creation_tokens"], 30);
     assert_eq!(items[0]["cache_creation_ephemeral_5m_tokens"], 12);
     assert_eq!(items[0]["cache_creation_ephemeral_1h_tokens"], 18);
-    assert_eq!(items[0]["cache_hit_rate"], 5.0);
+    assert_eq!(items[0]["cache_hit_rate"], 6.25);
     assert_eq!(items[1]["model"], "claude-3-7");
     assert_eq!(items[1]["output_tokens"], 20);
 
@@ -1498,7 +1498,7 @@ async fn gateway_handles_admin_usage_cache_affinity_hit_analysis_locally_with_tr
     assert_eq!(payload["total_input_tokens"], 140);
     assert_eq!(payload["total_cache_read_tokens"], 50);
     assert_eq!(payload["total_cache_creation_tokens"], 15);
-    assert_eq!(payload["token_cache_hit_rate"], 26.32);
+    assert_eq!(payload["token_cache_hit_rate"], 35.71);
     assert_eq!(payload["total_cache_read_cost_usd"], 0.02);
     assert_eq!(payload["total_cache_creation_cost_usd"], 0.015);
     assert_eq!(payload["estimated_savings_usd"], 0.18);

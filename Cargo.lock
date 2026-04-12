@@ -206,8 +206,11 @@ dependencies = [
  "aether-provider-transport",
  "aether-scheduler-core",
  "async-trait",
+ "base64 0.22.1",
  "regex",
+ "rsa",
  "serde_json",
+ "sha2",
  "tokio",
  "uuid",
 ]

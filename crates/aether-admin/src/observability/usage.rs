@@ -1,5 +1,7 @@
 use crate::observability::stats::{aggregate_usage_stats, parse_bounded_u32, round_to};
-use aether_billing::normalize_input_tokens_for_billing;
+use aether_billing::{
+    normalize_input_tokens_for_billing, normalize_total_input_context_for_cache_hit_rate,
+};
 use aether_data::repository::users::StoredUserSummary;
 use aether_data_contracts::repository::{
     provider_catalog::{StoredProviderCatalogEndpoint, StoredProviderCatalogProvider},
@@ -318,9 +320,20 @@ pub fn admin_usage_cache_creation_tokens(item: &StoredRequestUsageAudit) -> u64 
 }
 
 pub fn admin_usage_total_input_context(item: &StoredRequestUsageAudit) -> u64 {
-    item.input_tokens
-        .saturating_add(admin_usage_cache_creation_tokens(item))
-        .saturating_add(item.cache_read_input_tokens)
+    let api_format = item
+        .endpoint_api_format
+        .as_deref()
+        .or(item.api_format.as_deref());
+    let input_tokens = i64::try_from(item.input_tokens).unwrap_or(i64::MAX);
+    let cache_creation_tokens =
+        i64::try_from(admin_usage_cache_creation_tokens(item)).unwrap_or(i64::MAX);
+    let cache_read_tokens = i64::try_from(item.cache_read_input_tokens).unwrap_or(i64::MAX);
+    normalize_total_input_context_for_cache_hit_rate(
+        api_format,
+        input_tokens,
+        cache_creation_tokens,
+        cache_read_tokens,
+    ) as u64
 }
 
 pub fn admin_usage_effective_input_tokens(item: &StoredRequestUsageAudit) -> u64 {
@@ -358,13 +371,15 @@ pub fn admin_usage_aggregation_by_model_json(
     limit: usize,
 ) -> Value {
     #[allow(clippy::type_complexity)]
-    let mut grouped: BTreeMap<String, (u64, u64, u64, u64, u64, u64, u64, u64, u64, f64, f64)> =
-        BTreeMap::new();
+    let mut grouped: BTreeMap<
+        String,
+        (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, f64, f64),
+    > = BTreeMap::new();
     for item in usage {
         let key = item.model.clone();
         let entry = grouped
             .entry(key)
-            .or_insert((0, 0, 0, 0, 0, 0, 0, 0, 0, 0.0, 0.0));
+            .or_insert((0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.0, 0.0));
         entry.0 = entry.0.saturating_add(1);
         entry.1 = entry.1.saturating_add(item.total_tokens);
         entry.2 = entry.2.saturating_add(item.input_tokens);
@@ -374,16 +389,19 @@ pub fn admin_usage_aggregation_by_model_json(
             .saturating_add(admin_usage_effective_input_tokens(item));
         entry.5 = entry
             .5
-            .saturating_add(admin_usage_cache_creation_tokens(item));
+            .saturating_add(admin_usage_total_input_context(item));
         entry.6 = entry
             .6
-            .saturating_add(item.cache_creation_ephemeral_5m_input_tokens);
+            .saturating_add(admin_usage_cache_creation_tokens(item));
         entry.7 = entry
             .7
+            .saturating_add(item.cache_creation_ephemeral_5m_input_tokens);
+        entry.8 = entry
+            .8
             .saturating_add(item.cache_creation_ephemeral_1h_input_tokens);
-        entry.8 = entry.8.saturating_add(item.cache_read_input_tokens);
-        entry.9 += item.total_cost_usd;
-        entry.10 += item.actual_total_cost_usd;
+        entry.9 = entry.9.saturating_add(item.cache_read_input_tokens);
+        entry.10 += item.total_cost_usd;
+        entry.11 += item.actual_total_cost_usd;
     }
 
     let mut items: Vec<Value> = grouped
@@ -394,9 +412,10 @@ pub fn admin_usage_aggregation_by_model_json(
                 (
                     request_count,
                     total_tokens,
-                    input_tokens,
+                    _input_tokens,
                     output_tokens,
                     effective_input_tokens,
+                    total_input_context,
                     cache_creation_tokens,
                     cache_creation_ephemeral_5m_tokens,
                     cache_creation_ephemeral_1h_tokens,
@@ -410,9 +429,7 @@ pub fn admin_usage_aggregation_by_model_json(
                     "request_count": request_count,
                     "total_tokens": total_tokens,
                     "effective_input_tokens": effective_input_tokens,
-                    "total_input_context": input_tokens
-                        .saturating_add(cache_creation_tokens)
-                        .saturating_add(cache_read_tokens),
+                    "total_input_context": total_input_context,
                     "output_tokens": output_tokens,
                     "total_cost": round_to(total_cost, 6),
                     "actual_cost": round_to(actual_cost, 6),
@@ -421,9 +438,7 @@ pub fn admin_usage_aggregation_by_model_json(
                     "cache_creation_ephemeral_1h_tokens": cache_creation_ephemeral_1h_tokens,
                     "cache_read_tokens": cache_read_tokens,
                     "cache_hit_rate": admin_usage_token_cache_hit_rate(
-                        input_tokens
-                            .saturating_add(cache_creation_tokens)
-                            .saturating_add(cache_read_tokens),
+                        total_input_context,
                         cache_read_tokens,
                     ),
                 })
@@ -464,6 +479,7 @@ pub fn admin_usage_aggregation_by_provider_json(
             u64,
             u64,
             u64,
+            u64,
             f64,
             f64,
             u64,
@@ -479,6 +495,7 @@ pub fn admin_usage_aggregation_by_provider_json(
             admin_usage_provider_display_name(item).unwrap_or_else(|| "Unknown".to_string());
         let entry = grouped.entry(key).or_insert((
             provider_name.clone(),
+            0,
             0,
             0,
             0,
@@ -505,21 +522,24 @@ pub fn admin_usage_aggregation_by_provider_json(
             .saturating_add(admin_usage_effective_input_tokens(item));
         entry.6 = entry
             .6
-            .saturating_add(admin_usage_cache_creation_tokens(item));
+            .saturating_add(admin_usage_total_input_context(item));
         entry.7 = entry
             .7
-            .saturating_add(item.cache_creation_ephemeral_5m_input_tokens);
+            .saturating_add(admin_usage_cache_creation_tokens(item));
         entry.8 = entry
             .8
+            .saturating_add(item.cache_creation_ephemeral_5m_input_tokens);
+        entry.9 = entry
+            .9
             .saturating_add(item.cache_creation_ephemeral_1h_input_tokens);
-        entry.9 = entry.9.saturating_add(item.cache_read_input_tokens);
-        entry.10 += item.total_cost_usd;
-        entry.11 += item.actual_total_cost_usd;
-        entry.12 = entry
-            .12
-            .saturating_add(item.response_time_ms.unwrap_or_default());
+        entry.10 = entry.10.saturating_add(item.cache_read_input_tokens);
+        entry.11 += item.total_cost_usd;
+        entry.12 += item.actual_total_cost_usd;
         entry.13 = entry
             .13
+            .saturating_add(item.response_time_ms.unwrap_or_default());
+        entry.14 = entry
+            .14
             .saturating_add(if admin_usage_is_success(item) { 1 } else { 0 });
     }
 
@@ -532,9 +552,10 @@ pub fn admin_usage_aggregation_by_provider_json(
                     provider_name,
                     request_count,
                     total_tokens,
-                    input_tokens,
+                    _input_tokens,
                     output_tokens,
                     effective_input_tokens,
+                    total_input_context,
                     cache_creation_tokens,
                     cache_creation_ephemeral_5m_tokens,
                     cache_creation_ephemeral_1h_tokens,
@@ -562,9 +583,7 @@ pub fn admin_usage_aggregation_by_provider_json(
                     "request_count": request_count,
                     "total_tokens": total_tokens,
                     "effective_input_tokens": effective_input_tokens,
-                    "total_input_context": input_tokens
-                        .saturating_add(cache_creation_tokens)
-                        .saturating_add(cache_read_tokens),
+                    "total_input_context": total_input_context,
                     "output_tokens": output_tokens,
                     "total_cost": round_to(total_cost, 6),
                     "actual_cost": round_to(actual_cost, 6),
@@ -576,9 +595,7 @@ pub fn admin_usage_aggregation_by_provider_json(
                     "cache_creation_ephemeral_1h_tokens": cache_creation_ephemeral_1h_tokens,
                     "cache_read_tokens": cache_read_tokens,
                     "cache_hit_rate": admin_usage_token_cache_hit_rate(
-                        input_tokens
-                            .saturating_add(cache_creation_tokens)
-                            .saturating_add(cache_read_tokens),
+                        total_input_context,
                         cache_read_tokens,
                     ),
                 })
@@ -608,7 +625,21 @@ pub fn admin_usage_aggregation_by_api_format_json(
     #[allow(clippy::type_complexity)]
     let mut grouped: BTreeMap<
         String,
-        (u64, u64, u64, u64, u64, u64, u64, u64, u64, f64, f64, u64),
+        (
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            f64,
+            f64,
+            u64,
+        ),
     > = BTreeMap::new();
     for item in usage {
         let key = item
@@ -617,7 +648,7 @@ pub fn admin_usage_aggregation_by_api_format_json(
             .unwrap_or_else(|| "unknown".to_string());
         let entry = grouped
             .entry(key)
-            .or_insert((0, 0, 0, 0, 0, 0, 0, 0, 0, 0.0, 0.0, 0));
+            .or_insert((0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.0, 0.0, 0));
         entry.0 = entry.0.saturating_add(1);
         entry.1 = entry.1.saturating_add(item.total_tokens);
         entry.2 = entry.2.saturating_add(item.input_tokens);
@@ -627,18 +658,21 @@ pub fn admin_usage_aggregation_by_api_format_json(
             .saturating_add(admin_usage_effective_input_tokens(item));
         entry.5 = entry
             .5
-            .saturating_add(admin_usage_cache_creation_tokens(item));
+            .saturating_add(admin_usage_total_input_context(item));
         entry.6 = entry
             .6
-            .saturating_add(item.cache_creation_ephemeral_5m_input_tokens);
+            .saturating_add(admin_usage_cache_creation_tokens(item));
         entry.7 = entry
             .7
+            .saturating_add(item.cache_creation_ephemeral_5m_input_tokens);
+        entry.8 = entry
+            .8
             .saturating_add(item.cache_creation_ephemeral_1h_input_tokens);
-        entry.8 = entry.8.saturating_add(item.cache_read_input_tokens);
-        entry.9 += item.total_cost_usd;
-        entry.10 += item.actual_total_cost_usd;
-        entry.11 = entry
-            .11
+        entry.9 = entry.9.saturating_add(item.cache_read_input_tokens);
+        entry.10 += item.total_cost_usd;
+        entry.11 += item.actual_total_cost_usd;
+        entry.12 = entry
+            .12
             .saturating_add(item.response_time_ms.unwrap_or_default());
     }
 
@@ -650,9 +684,10 @@ pub fn admin_usage_aggregation_by_api_format_json(
                 (
                     request_count,
                     total_tokens,
-                    input_tokens,
+                    _input_tokens,
                     output_tokens,
                     effective_input_tokens,
+                    total_input_context,
                     cache_creation_tokens,
                     cache_creation_ephemeral_5m_tokens,
                     cache_creation_ephemeral_1h_tokens,
@@ -672,9 +707,7 @@ pub fn admin_usage_aggregation_by_api_format_json(
                     "request_count": request_count,
                     "total_tokens": total_tokens,
                     "effective_input_tokens": effective_input_tokens,
-                    "total_input_context": input_tokens
-                        .saturating_add(cache_creation_tokens)
-                        .saturating_add(cache_read_tokens),
+                    "total_input_context": total_input_context,
                     "output_tokens": output_tokens,
                     "total_cost": round_to(total_cost, 6),
                     "actual_cost": round_to(actual_cost, 6),
@@ -684,9 +717,7 @@ pub fn admin_usage_aggregation_by_api_format_json(
                     "cache_creation_ephemeral_1h_tokens": cache_creation_ephemeral_1h_tokens,
                     "cache_read_tokens": cache_read_tokens,
                     "cache_hit_rate": admin_usage_token_cache_hit_rate(
-                        input_tokens
-                            .saturating_add(cache_creation_tokens)
-                            .saturating_add(cache_read_tokens),
+                        total_input_context,
                         cache_read_tokens,
                     ),
                 })

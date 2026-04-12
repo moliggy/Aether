@@ -4763,7 +4763,7 @@ async fn gateway_handles_users_me_usage_locally_without_proxying_upstream() {
         payload["summary_by_model"][0]["effective_input_tokens"],
         105
     );
-    assert_eq!(payload["summary_by_model"][0]["total_input_context"], 145);
+    assert_eq!(payload["summary_by_model"][0]["total_input_context"], 120);
     assert_eq!(payload["billing"]["id"], "wallet-auth-1");
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
