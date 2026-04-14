@@ -81,8 +81,12 @@ pub(super) async fn maybe_handle(
     let Some(updated) = state.update_provider_catalog_key(&updated_record).await? else {
         return Ok(None);
     };
-    let should_overwrite_allowed_models_immediately =
-        !existing_key.auto_fetch_models && updated.auto_fetch_models;
+    let auto_fetch_filters_changed = existing_key.model_include_patterns
+        != updated.model_include_patterns
+        || existing_key.model_exclude_patterns != updated.model_exclude_patterns;
+    // 自动获取开启后，调整过滤规则也要立即刷新 allowed_models。
+    let should_overwrite_allowed_models_immediately = updated.auto_fetch_models
+        && (!existing_key.auto_fetch_models || auto_fetch_filters_changed);
     let updated = if should_overwrite_allowed_models_immediately {
         let summary =
             perform_model_fetch_for_key(state.as_ref(), &provider.id, &updated.id).await?;
