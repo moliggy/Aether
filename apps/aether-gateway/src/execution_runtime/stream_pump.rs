@@ -8,6 +8,7 @@ use async_stream::stream;
 use axum::body::Bytes;
 use base64::Engine as _;
 use futures_util::{Stream, StreamExt};
+use tracing::warn;
 
 use crate::execution_runtime::ndjson::encode_stream_frame_ndjson;
 use crate::execution_runtime::DirectUpstreamStreamExecution;
@@ -87,13 +88,22 @@ pub(crate) fn build_direct_execution_frame_stream(
                     }
                 }
                 Err(err) => {
+                    let message = format_error_chain(&err);
+                    warn!(
+                        event_name = "stream_pump_body_read_error",
+                        log_type = "ops",
+                        status_code,
+                        upstream_bytes,
+                        error = %message,
+                        "upstream body stream read error"
+                    );
                     let frame = StreamFrame {
                         frame_type: StreamFrameType::Error,
                         payload: StreamFramePayload::Error {
                             error: ExecutionError {
                                 kind: ExecutionErrorKind::Internal,
                                 phase: ExecutionPhase::StreamRead,
-                                message: err.to_string(),
+                                message,
                                 upstream_status: Some(status_code),
                                 retryable: false,
                                 failover_recommended: false,
@@ -134,6 +144,17 @@ pub(crate) fn build_direct_execution_frame_stream(
             Err(err) => yield Err(err),
         }
     }
+}
+
+fn format_error_chain(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
 }
 
 #[cfg(test)]

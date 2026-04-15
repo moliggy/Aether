@@ -278,12 +278,13 @@ impl LocalStream {
         }
     }
 
-    fn push_body_chunk(&self, payload: Bytes) -> bool {
+    async fn push_body_chunk(&self, payload: Bytes) -> bool {
         if self.terminal.load(Ordering::Acquire) {
             return false;
         }
         self.body_tx
-            .try_send(LocalBodyEvent::Chunk(payload))
+            .send(LocalBodyEvent::Chunk(payload))
+            .await
             .is_ok()
     }
 
@@ -644,7 +645,7 @@ impl HubRouter {
                 self.route_response_headers(proxy_conn_id, header, data);
             }
             protocol::RESPONSE_BODY => {
-                self.route_response_body(proxy_conn_id, header, data);
+                self.route_response_body(proxy_conn_id, header, data).await;
             }
             protocol::STREAM_END => {
                 self.finish_proxy_stream(proxy_conn_id, header.stream_id);
@@ -720,7 +721,12 @@ impl HubRouter {
         }
     }
 
-    fn route_response_body(&self, proxy_conn_id: u64, header: protocol::FrameHeader, data: &[u8]) {
+    async fn route_response_body(
+        &self,
+        proxy_conn_id: u64,
+        header: protocol::FrameHeader,
+        data: &[u8],
+    ) {
         let Some(local_id) = self.lookup_local_stream(proxy_conn_id, header.stream_id) else {
             return;
         };
@@ -738,7 +744,7 @@ impl HubRouter {
             None => return,
         };
 
-        if !stream.push_body_chunk(Bytes::from(payload)) {
+        if !stream.push_body_chunk(Bytes::from(payload)).await {
             self.cancel_local_stream(local_id, "local relay response congested");
         }
     }
