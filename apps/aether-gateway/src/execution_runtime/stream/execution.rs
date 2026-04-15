@@ -1010,8 +1010,12 @@ async fn execute_stream_from_frame_stream(
     let request_id_for_report_log = short_request_id(request_id);
     let candidate_id_for_report = candidate_id.map(ToOwned::to_owned);
     tokio::spawn(async move {
+        const MAX_STREAM_BODY_BUFFER_BYTES: usize = 256 * 1024; // 256KB
+
         let mut provider_buffered_body = provider_prefetched_body_for_report;
         let mut buffered_body = prefetched_body_for_report;
+        let mut provider_body_truncated = false;
+        let mut client_body_truncated = false;
         let mut telemetry: Option<ExecutionTelemetry> = initial_telemetry.clone();
         let mut usage_stream_telemetry: Option<ExecutionTelemetry> = initial_telemetry;
         let reached_eof = initial_reached_eof;
@@ -1074,6 +1078,12 @@ async fn execute_stream_from_frame_stream(
                         }
 
                         provider_buffered_body.extend_from_slice(&chunk);
+                        if provider_buffered_body.len() > MAX_STREAM_BODY_BUFFER_BYTES {
+                            let tail_start =
+                                provider_buffered_body.len() - MAX_STREAM_BODY_BUFFER_BYTES;
+                            provider_buffered_body.drain(..tail_start);
+                            provider_body_truncated = true;
+                        }
                         let normalized_chunk = if let Some(normalizer) =
                             private_stream_normalizer.as_mut()
                         {
@@ -1131,6 +1141,11 @@ async fn execute_stream_from_frame_stream(
                         }
 
                         buffered_body.extend_from_slice(&rewritten_chunk);
+                        if buffered_body.len() > MAX_STREAM_BODY_BUFFER_BYTES {
+                            let tail_start = buffered_body.len() - MAX_STREAM_BODY_BUFFER_BYTES;
+                            buffered_body.drain(..tail_start);
+                            client_body_truncated = true;
+                        }
                         if tx.send(Ok(Bytes::from(rewritten_chunk))).await.is_err() {
                             warn!(
                                 event_name = "stream_execution_downstream_disconnected",
@@ -1322,10 +1337,12 @@ async fn execute_stream_from_frame_stream(
                     report_context: report_context_owned.clone(),
                     status_code: 499,
                     headers: headers_for_report.clone(),
-                    provider_body_base64: (!provider_buffered_body.is_empty()).then(|| {
+                    provider_body_base64: (!provider_body_truncated
+                        && !provider_buffered_body.is_empty())
+                    .then(|| {
                         base64::engine::general_purpose::STANDARD.encode(&provider_buffered_body)
                     }),
-                    client_body_base64: (!buffered_body.is_empty())
+                    client_body_base64: (!client_body_truncated && !buffered_body.is_empty())
                         .then(|| base64::engine::general_purpose::STANDARD.encode(&buffered_body)),
                     telemetry: telemetry.clone(),
                 },
@@ -1358,7 +1375,11 @@ async fn execute_stream_from_frame_stream(
                 report_context_owned.as_ref(),
                 &headers_for_report,
                 telemetry.clone(),
-                &provider_buffered_body,
+                if provider_body_truncated {
+                    &[]
+                } else {
+                    &provider_buffered_body
+                },
                 candidate_started_unix_secs_for_report,
                 failure,
             )
@@ -1372,9 +1393,9 @@ async fn execute_stream_from_frame_stream(
             report_context: report_context_owned.clone(),
             status_code,
             headers: headers_for_report.clone(),
-            provider_body_base64: (!provider_buffered_body.is_empty())
+            provider_body_base64: (!provider_body_truncated && !provider_buffered_body.is_empty())
                 .then(|| base64::engine::general_purpose::STANDARD.encode(&provider_buffered_body)),
-            client_body_base64: (!buffered_body.is_empty())
+            client_body_base64: (!client_body_truncated && !buffered_body.is_empty())
                 .then(|| base64::engine::general_purpose::STANDARD.encode(&buffered_body)),
             telemetry: telemetry.clone(),
         };
