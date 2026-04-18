@@ -34,7 +34,10 @@ use super::{
     UsageReadRepository, UsageWriteRepository,
 };
 use crate::postgres::PostgresTransactionRunner;
-use crate::{error::SqlxResultExt, DataLayerError};
+use crate::{
+    error::{postgres_error, SqlxResultExt},
+    DataLayerError,
+};
 
 // Legacy inline body columns on public.usage are deprecated. Keep the threshold at zero so
 // newly captured bodies always spill to usage_body_blobs and resolve through usage_http_audits.
@@ -4834,6 +4837,24 @@ async fn apply_provider_api_key_usage_delta_in_tx(
 //
 // Query projections already prefer the newer audit/snapshot owners and only fall back to
 // deprecated `public.usage` mirror columns for historical rows that predate the split schema.
+//
+// Some read paths intentionally project only the core usage fields. For the newer adjunct
+// audit/snapshot columns, treat a missing projection the same as SQL NULL so older callers and
+// partial rollouts do not fail the whole read.
+fn row_try_get_optional<T>(
+    row: &sqlx::postgres::PgRow,
+    column: &str,
+) -> Result<Option<T>, DataLayerError>
+where
+    for<'r> T: sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
+{
+    match row.try_get::<Option<T>, _>(column) {
+        Ok(value) => Ok(value),
+        Err(sqlx::Error::ColumnNotFound(_)) => Ok(None),
+        Err(error) => Err(postgres_error(error)),
+    }
+}
+
 fn map_usage_row(
     row: &sqlx::postgres::PgRow,
     resolve_compressed_bodies: bool,
@@ -4937,36 +4958,30 @@ fn map_usage_row(
     )?;
     let request_metadata: Option<Value> = row.try_get("request_metadata").map_postgres_err()?;
     let http_audit_refs = UsageHttpAuditRefs {
-        request_body_ref: row.try_get("http_request_body_ref").map_postgres_err()?,
-        provider_request_body_ref: row
-            .try_get("http_provider_request_body_ref")
-            .map_postgres_err()?,
-        response_body_ref: row.try_get("http_response_body_ref").map_postgres_err()?,
-        client_response_body_ref: row
-            .try_get("http_client_response_body_ref")
-            .map_postgres_err()?,
+        request_body_ref: row_try_get_optional(row, "http_request_body_ref")?,
+        provider_request_body_ref: row_try_get_optional(row, "http_provider_request_body_ref")?,
+        response_body_ref: row_try_get_optional(row, "http_response_body_ref")?,
+        client_response_body_ref: row_try_get_optional(row, "http_client_response_body_ref")?,
     };
     let http_audit_states = UsageHttpAuditStates {
-        request_body_state: row
-            .try_get::<Option<String>, _>("http_request_body_state")
-            .map_postgres_err()?
+        request_body_state: row_try_get_optional::<String>(row, "http_request_body_state")?
             .as_deref()
             .and_then(parse_usage_body_capture_state),
-        provider_request_body_state: row
-            .try_get::<Option<String>, _>("http_provider_request_body_state")
-            .map_postgres_err()?
+        provider_request_body_state: row_try_get_optional::<String>(
+            row,
+            "http_provider_request_body_state",
+        )?
+        .as_deref()
+        .and_then(parse_usage_body_capture_state),
+        response_body_state: row_try_get_optional::<String>(row, "http_response_body_state")?
             .as_deref()
             .and_then(parse_usage_body_capture_state),
-        response_body_state: row
-            .try_get::<Option<String>, _>("http_response_body_state")
-            .map_postgres_err()?
-            .as_deref()
-            .and_then(parse_usage_body_capture_state),
-        client_response_body_state: row
-            .try_get::<Option<String>, _>("http_client_response_body_state")
-            .map_postgres_err()?
-            .as_deref()
-            .and_then(parse_usage_body_capture_state),
+        client_response_body_state: row_try_get_optional::<String>(
+            row,
+            "http_client_response_body_state",
+        )?
+        .as_deref()
+        .and_then(parse_usage_body_capture_state),
     };
     let routing_snapshot = usage_routing_snapshot_from_row(row)?;
     let settlement_pricing_snapshot = usage_settlement_pricing_snapshot_from_row(row)?;
@@ -5888,20 +5903,19 @@ fn usage_routing_snapshot_from_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<UsageRoutingSnapshot, DataLayerError> {
     Ok(UsageRoutingSnapshot {
-        candidate_id: row.try_get("routing_candidate_id").map_postgres_err()?,
-        candidate_index: row
-            .try_get::<Option<i32>, _>("routing_candidate_index")
-            .map_postgres_err()?
+        candidate_id: row_try_get_optional(row, "routing_candidate_id")?,
+        candidate_index: row_try_get_optional::<i32>(row, "routing_candidate_index")?
             .map(|value| to_u64(value, "usage_routing_snapshots.candidate_index"))
             .transpose()?,
-        key_name: row.try_get("routing_key_name").map_postgres_err()?,
-        planner_kind: row.try_get("routing_planner_kind").map_postgres_err()?,
-        route_family: row.try_get("routing_route_family").map_postgres_err()?,
-        route_kind: row.try_get("routing_route_kind").map_postgres_err()?,
-        execution_path: row.try_get("routing_execution_path").map_postgres_err()?,
-        local_execution_runtime_miss_reason: row
-            .try_get("routing_local_execution_runtime_miss_reason")
-            .map_postgres_err()?,
+        key_name: row_try_get_optional(row, "routing_key_name")?,
+        planner_kind: row_try_get_optional(row, "routing_planner_kind")?,
+        route_family: row_try_get_optional(row, "routing_route_family")?,
+        route_kind: row_try_get_optional(row, "routing_route_kind")?,
+        execution_path: row_try_get_optional(row, "routing_execution_path")?,
+        local_execution_runtime_miss_reason: row_try_get_optional(
+            row,
+            "routing_local_execution_runtime_miss_reason",
+        )?,
         selected_provider_id: None,
         selected_endpoint_id: None,
         selected_provider_api_key_id: None,
@@ -5914,31 +5928,21 @@ fn usage_settlement_pricing_snapshot_from_row(
 ) -> Result<UsageSettlementPricingSnapshot, DataLayerError> {
     Ok(UsageSettlementPricingSnapshot {
         billing_status: None,
-        billing_snapshot_schema_version: row
-            .try_get("settlement_billing_snapshot_schema_version")
-            .map_postgres_err()?,
-        billing_snapshot_status: row
-            .try_get("settlement_billing_snapshot_status")
-            .map_postgres_err()?,
-        rate_multiplier: row
-            .try_get("settlement_rate_multiplier")
-            .map_postgres_err()?,
-        is_free_tier: row.try_get("settlement_is_free_tier").map_postgres_err()?,
-        input_price_per_1m: row
-            .try_get("settlement_input_price_per_1m")
-            .map_postgres_err()?,
-        output_price_per_1m: row
-            .try_get("settlement_output_price_per_1m")
-            .map_postgres_err()?,
-        cache_creation_price_per_1m: row
-            .try_get("settlement_cache_creation_price_per_1m")
-            .map_postgres_err()?,
-        cache_read_price_per_1m: row
-            .try_get("settlement_cache_read_price_per_1m")
-            .map_postgres_err()?,
-        price_per_request: row
-            .try_get("settlement_price_per_request")
-            .map_postgres_err()?,
+        billing_snapshot_schema_version: row_try_get_optional(
+            row,
+            "settlement_billing_snapshot_schema_version",
+        )?,
+        billing_snapshot_status: row_try_get_optional(row, "settlement_billing_snapshot_status")?,
+        rate_multiplier: row_try_get_optional(row, "settlement_rate_multiplier")?,
+        is_free_tier: row_try_get_optional(row, "settlement_is_free_tier")?,
+        input_price_per_1m: row_try_get_optional(row, "settlement_input_price_per_1m")?,
+        output_price_per_1m: row_try_get_optional(row, "settlement_output_price_per_1m")?,
+        cache_creation_price_per_1m: row_try_get_optional(
+            row,
+            "settlement_cache_creation_price_per_1m",
+        )?,
+        cache_read_price_per_1m: row_try_get_optional(row, "settlement_cache_read_price_per_1m")?,
+        price_per_request: row_try_get_optional(row, "settlement_price_per_request")?,
     })
 }
 
@@ -6239,6 +6243,11 @@ mod tests {
         assert!(super::LIST_USAGE_AUDITS_PREFIX.contains("NULL::json AS provider_request_body"));
         assert!(super::LIST_USAGE_AUDITS_PREFIX.contains("NULL::bytea AS request_body_compressed"));
         assert!(super::LIST_USAGE_AUDITS_PREFIX.contains("NULL::varchar AS http_request_body_ref"));
+        assert!(
+            super::LIST_USAGE_AUDITS_PREFIX.contains("NULL::varchar AS http_request_body_state")
+        );
+        assert!(super::LIST_USAGE_AUDITS_PREFIX
+            .contains("NULL::varchar AS http_client_response_body_state"));
         assert!(super::LIST_USAGE_AUDITS_PREFIX.contains("usage_routing_snapshots.candidate_id"));
         assert!(super::LIST_USAGE_AUDITS_PREFIX.contains("usage_routing_snapshots.candidate_index"));
         assert!(super::LIST_USAGE_AUDITS_PREFIX.contains("request_metadata->>'candidate_index'"));
@@ -6255,6 +6264,10 @@ mod tests {
             .contains("NULL::bytea AS client_response_body_compressed"));
         assert!(super::LIST_RECENT_USAGE_AUDITS_PREFIX
             .contains("NULL::varchar AS http_client_response_body_ref"));
+        assert!(super::LIST_RECENT_USAGE_AUDITS_PREFIX
+            .contains("NULL::varchar AS http_request_body_state"));
+        assert!(super::LIST_RECENT_USAGE_AUDITS_PREFIX
+            .contains("NULL::varchar AS http_client_response_body_state"));
         assert!(super::LIST_RECENT_USAGE_AUDITS_PREFIX
             .contains("usage_routing_snapshots.candidate_index"));
         assert!(
@@ -6300,6 +6313,8 @@ mod tests {
 
     #[test]
     fn usage_sql_upsert_returning_includes_routing_placeholders() {
+        assert!(super::UPSERT_SQL.contains("NULL::varchar AS http_request_body_state"));
+        assert!(super::UPSERT_SQL.contains("NULL::varchar AS http_client_response_body_state"));
         assert!(super::UPSERT_SQL.contains("NULL::varchar AS routing_candidate_id"));
         assert!(super::UPSERT_SQL.contains("NULL::varchar AS routing_planner_kind"));
         assert!(super::UPSERT_SQL.contains("NULL::varchar AS routing_execution_path"));
