@@ -61,6 +61,8 @@ export interface UsageRecordDetail {
   is_stream: boolean
   created_at: string
   cache_creation_input_tokens?: number
+  cache_creation_ephemeral_5m_input_tokens?: number
+  cache_creation_ephemeral_1h_input_tokens?: number
   cache_read_input_tokens?: number
   status_code: number
   error_message?: string
@@ -284,8 +286,11 @@ export const meApi = {
       id: string
       status: 'pending' | 'streaming' | 'completed' | 'failed' | 'cancelled'
       input_tokens: number
+      effective_input_tokens?: number | null
       output_tokens: number
       cache_creation_input_tokens?: number | null
+      cache_creation_ephemeral_5m_input_tokens?: number | null
+      cache_creation_ephemeral_1h_input_tokens?: number | null
       cache_read_input_tokens?: number | null
       cost: number
       actual_cost?: number | null
@@ -296,6 +301,7 @@ export const meApi = {
       endpoint_api_format?: string | null
       has_format_conversion?: boolean | null
       has_fallback?: boolean | null
+      target_model?: string | null
     }>
   }> {
     const params = ids ? { ids } : {}

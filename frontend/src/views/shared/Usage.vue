@@ -391,6 +391,10 @@ async function pollActiveRequests() {
         record.effective_input_tokens = update.effective_input_tokens ?? record.effective_input_tokens
         record.output_tokens = update.output_tokens
         record.cache_creation_input_tokens = update.cache_creation_input_tokens ?? undefined
+        record.cache_creation_ephemeral_5m_input_tokens =
+          update.cache_creation_ephemeral_5m_input_tokens ?? undefined
+        record.cache_creation_ephemeral_1h_input_tokens =
+          update.cache_creation_ephemeral_1h_input_tokens ?? undefined
         record.cache_read_input_tokens = update.cache_read_input_tokens ?? undefined
         record.cost = update.cost
         record.actual_cost = update.actual_cost ?? undefined

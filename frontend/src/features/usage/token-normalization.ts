@@ -1,6 +1,9 @@
 type UsageTokenLike = {
   effective_input_tokens?: number | null
   input_tokens?: number | null
+  cache_creation_input_tokens?: number | null
+  cache_creation_ephemeral_5m_input_tokens?: number | null
+  cache_creation_ephemeral_1h_input_tokens?: number | null
   cache_read_input_tokens?: number | null
   api_format?: string | null
   endpoint_api_format?: string | null
@@ -15,6 +18,16 @@ function apiFamily(apiFormat: string | null | undefined): string {
     .split(':', 1)[0]
     .trim()
     .toLowerCase()
+}
+
+export function getCacheCreationTokens(usage: UsageTokenLike): number {
+  const explicit = toNonNegativeNumber(usage.cache_creation_input_tokens)
+  const classified = toNonNegativeNumber(usage.cache_creation_ephemeral_5m_input_tokens)
+    + toNonNegativeNumber(usage.cache_creation_ephemeral_1h_input_tokens)
+  if (explicit === 0 && classified > 0) {
+    return classified
+  }
+  return explicit
 }
 
 export function getEffectiveInputTokens(usage: UsageTokenLike): number {

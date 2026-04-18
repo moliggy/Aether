@@ -393,6 +393,12 @@ export function useUsageData(options: UseUsageDataOptions) {
           effective_input_tokens: existing.effective_input_tokens ?? record.effective_input_tokens,
           output_tokens: existing.output_tokens || record.output_tokens,
           cache_creation_input_tokens: existing.cache_creation_input_tokens ?? record.cache_creation_input_tokens,
+          cache_creation_ephemeral_5m_input_tokens:
+            existing.cache_creation_ephemeral_5m_input_tokens
+            ?? record.cache_creation_ephemeral_5m_input_tokens,
+          cache_creation_ephemeral_1h_input_tokens:
+            existing.cache_creation_ephemeral_1h_input_tokens
+            ?? record.cache_creation_ephemeral_1h_input_tokens,
           cache_read_input_tokens: existing.cache_read_input_tokens ?? record.cache_read_input_tokens,
           cost: existing.cost || record.cost,
           actual_cost: existing.actual_cost ?? record.actual_cost,

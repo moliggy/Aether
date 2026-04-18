@@ -1366,10 +1366,7 @@ fn apply_standardized_usage(
     if usage.cache_read_tokens > 0 {
         data.cache_read_input_tokens = Some(usage.cache_read_tokens as u64);
     }
-    let total_tokens = usage
-        .input_tokens
-        .saturating_add(usage.output_tokens)
-        .max(0) as u64;
+    let total_tokens = standardized_usage_total_tokens(&usage);
     if total_tokens > 0 {
         data.total_tokens = Some(total_tokens);
     }
@@ -1396,13 +1393,21 @@ fn apply_standardized_usage_seed(usage: &StandardizedUsage, data: &mut UsageEven
     if usage.cache_read_tokens > 0 {
         data.cache_read_input_tokens = Some(usage.cache_read_tokens as u64);
     }
-    let total_tokens = usage
-        .input_tokens
-        .saturating_add(usage.output_tokens)
-        .max(0) as u64;
+    let total_tokens = standardized_usage_total_tokens(usage);
     if total_tokens > 0 {
         data.total_tokens = Some(total_tokens);
     }
+}
+
+fn standardized_usage_total_tokens(usage: &StandardizedUsage) -> u64 {
+    positive_usage_component(usage.input_tokens)
+        .saturating_add(positive_usage_component(usage.output_tokens))
+        .saturating_add(positive_usage_component(usage.cache_creation_tokens))
+        .saturating_add(positive_usage_component(usage.cache_read_tokens))
+}
+
+fn positive_usage_component(value: i64) -> u64 {
+    value.max(0) as u64
 }
 
 fn headers_to_json(headers: &BTreeMap<String, String>) -> Value {
@@ -1661,10 +1666,20 @@ fn extract_token_counts_from_json(value: &Value) -> Option<(u64, u64, u64)> {
             .or_else(|| usage.get("completion_tokens"))
             .and_then(Value::as_u64)
             .unwrap_or_default();
-        let total = usage
+        let raw_total = usage
             .get("total_tokens")
             .and_then(Value::as_u64)
             .unwrap_or(input + output);
+        let cache_creation = extract_cache_creation_tokens_from_usage_object(usage);
+        let cache_read = extract_cache_read_tokens_from_usage_object(usage);
+        let total = if cache_creation > 0 || cache_read > 0 {
+            input
+                .saturating_add(output)
+                .saturating_add(cache_creation)
+                .saturating_add(cache_read)
+        } else {
+            raw_total
+        };
         return Some((input, output, total));
     }
 
@@ -1677,10 +1692,19 @@ fn extract_token_counts_from_json(value: &Value) -> Option<(u64, u64, u64)> {
             .get("candidatesTokenCount")
             .and_then(Value::as_u64)
             .unwrap_or_default();
-        let total = usage
+        let raw_total = usage
             .get("totalTokenCount")
             .and_then(Value::as_u64)
             .unwrap_or(input + output);
+        let cache_read = usage
+            .get("cachedContentTokenCount")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let total = if cache_read > 0 {
+            input.saturating_add(output).saturating_add(cache_read)
+        } else {
+            raw_total
+        };
         return Some((input, output, total));
     }
 
@@ -1701,6 +1725,59 @@ fn extract_token_counts_from_json(value: &Value) -> Option<(u64, u64, u64)> {
     }
 
     None
+}
+
+fn extract_cache_creation_tokens_from_usage_object(usage: &serde_json::Map<String, Value>) -> u64 {
+    let direct = usage
+        .get("cache_creation_input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    if direct > 0 {
+        return direct;
+    }
+
+    let breakdown = usage
+        .get("cache_creation")
+        .and_then(Value::as_object)
+        .map(|cache_creation| {
+            cache_creation
+                .get("ephemeral_5m_input_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or_default()
+                .saturating_add(
+                    cache_creation
+                        .get("ephemeral_1h_input_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or_default(),
+                )
+        })
+        .unwrap_or_default();
+    if breakdown > 0 {
+        return breakdown;
+    }
+
+    usage
+        .get("input_tokens_details")
+        .or_else(|| usage.get("prompt_tokens_details"))
+        .and_then(Value::as_object)
+        .and_then(|details| details.get("cached_creation_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default()
+}
+
+fn extract_cache_read_tokens_from_usage_object(usage: &serde_json::Map<String, Value>) -> u64 {
+    usage
+        .get("cache_read_input_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            usage
+                .get("input_tokens_details")
+                .or_else(|| usage.get("prompt_tokens_details"))
+                .and_then(Value::as_object)
+                .and_then(|details| details.get("cached_tokens"))
+                .and_then(Value::as_u64)
+        })
+        .unwrap_or_default()
 }
 
 fn empty_to_none(value: Option<String>) -> Option<String> {
@@ -1744,6 +1821,39 @@ mod tests {
         .expect("tokens should exist");
 
         assert_eq!(tokens, (3, 5, 8));
+    }
+
+    #[test]
+    fn extracts_openai_usage_tokens_with_cache_components() {
+        let tokens = extract_token_counts_from_json(&json!({
+            "usage": {
+                "input_tokens": 3,
+                "output_tokens": 5,
+                "total_tokens": 8,
+                "input_tokens_details": {
+                    "cached_tokens": 2,
+                    "cached_creation_tokens": 1
+                }
+            }
+        }))
+        .expect("tokens should exist");
+
+        assert_eq!(tokens, (3, 5, 11));
+    }
+
+    #[test]
+    fn extracts_claude_usage_tokens_with_cache_components() {
+        let tokens = extract_token_counts_from_json(&json!({
+            "usage": {
+                "input_tokens": 6,
+                "output_tokens": 20,
+                "cache_creation_input_tokens": 41857,
+                "cache_read_input_tokens": 0
+            }
+        }))
+        .expect("tokens should exist");
+
+        assert_eq!(tokens, (6, 20, 41883));
     }
 
     #[test]
@@ -2117,7 +2227,7 @@ mod tests {
 
         assert_eq!(event.data.input_tokens, Some(3));
         assert_eq!(event.data.output_tokens, Some(5));
-        assert_eq!(event.data.total_tokens, Some(8));
+        assert_eq!(event.data.total_tokens, Some(11));
         assert_eq!(event.data.cache_creation_input_tokens, Some(1));
         assert_eq!(event.data.cache_read_input_tokens, Some(2));
         assert_eq!(
@@ -2531,7 +2641,7 @@ mod tests {
 
         assert_eq!(event.data.input_tokens, Some(3));
         assert_eq!(event.data.output_tokens, Some(5));
-        assert_eq!(event.data.total_tokens, Some(8));
+        assert_eq!(event.data.total_tokens, Some(11));
         assert_eq!(event.data.cache_creation_input_tokens, Some(1));
         assert_eq!(event.data.cache_read_input_tokens, Some(2));
         assert_eq!(

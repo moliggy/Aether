@@ -457,6 +457,7 @@ pub fn admin_usage_record_json(
     let output_price_per_1m = item.settlement_output_price_per_1m();
     let cache_creation_price_per_1m = item.settlement_cache_creation_price_per_1m();
     let cache_read_price_per_1m = item.settlement_cache_read_price_per_1m();
+    let cache_creation_input_tokens = admin_usage_cache_creation_tokens(item);
     let is_free_tier = item.settlement_is_free_tier();
     let user = item
         .user_id
@@ -485,7 +486,7 @@ pub fn admin_usage_record_json(
         "input_tokens": item.input_tokens,
         "effective_input_tokens": admin_usage_effective_input_tokens(item),
         "output_tokens": item.output_tokens,
-        "cache_creation_input_tokens": item.cache_creation_input_tokens,
+        "cache_creation_input_tokens": cache_creation_input_tokens,
         "cache_creation_ephemeral_5m_input_tokens": item.cache_creation_ephemeral_5m_input_tokens,
         "cache_creation_ephemeral_1h_input_tokens": item.cache_creation_ephemeral_1h_input_tokens,
         "cache_read_input_tokens": item.cache_read_input_tokens,
@@ -1418,13 +1419,14 @@ pub fn build_admin_usage_active_requests_response(
             let provider_key_name = admin_usage_provider_key_name(item, provider_key_names);
             let api_key_name =
                 admin_usage_api_key_name(item, api_key_names, auth_api_key_reader_available);
+            let cache_creation_input_tokens = admin_usage_cache_creation_tokens(item);
             let mut value = json!({
                 "id": item.id,
                 "status": item.status,
                 "input_tokens": item.input_tokens,
                 "effective_input_tokens": admin_usage_effective_input_tokens(item),
                 "output_tokens": item.output_tokens,
-                "cache_creation_input_tokens": item.cache_creation_input_tokens,
+                "cache_creation_input_tokens": cache_creation_input_tokens,
                 "cache_creation_ephemeral_5m_input_tokens": item.cache_creation_ephemeral_5m_input_tokens,
                 "cache_creation_ephemeral_1h_input_tokens": item.cache_creation_ephemeral_1h_input_tokens,
                 "cache_read_input_tokens": item.cache_read_input_tokens,
@@ -1921,6 +1923,30 @@ mod tests {
         assert_eq!(payload["output_price_per_1m"], 15.0);
         assert_eq!(payload["cache_creation_price_per_1m"], 3.75);
         assert_eq!(payload["cache_read_price_per_1m"], 0.30);
+    }
+
+    #[test]
+    fn admin_usage_record_rehydrates_cache_creation_total_from_classified_fields() {
+        let item = StoredRequestUsageAudit {
+            cache_creation_input_tokens: 0,
+            cache_creation_ephemeral_5m_input_tokens: 12,
+            cache_creation_ephemeral_1h_input_tokens: 8,
+            ..sample_usage("completed", Some(200), None)
+        };
+
+        let payload = admin_usage_record_json(
+            &item,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            false,
+            false,
+            Some("primary"),
+        );
+
+        assert_eq!(payload["cache_creation_input_tokens"], 20);
+        assert_eq!(payload["cache_creation_ephemeral_5m_input_tokens"], 12);
+        assert_eq!(payload["cache_creation_ephemeral_1h_input_tokens"], 8);
+        assert_eq!(payload["total_tokens"], 50);
     }
 
     #[test]

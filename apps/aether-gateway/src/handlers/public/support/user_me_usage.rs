@@ -200,6 +200,7 @@ fn build_users_me_usage_record_payload(
     let output_price_per_1m = item.settlement_output_price_per_1m();
     let cache_creation_price_per_1m = item.settlement_cache_creation_price_per_1m();
     let cache_read_price_per_1m = item.settlement_cache_read_price_per_1m();
+    let cache_creation_input_tokens = users_me_usage_cache_creation_tokens(item);
     let rate_multiplier = item.settlement_rate_multiplier();
     let mut payload = json!({
         "id": item.id,
@@ -219,7 +220,7 @@ fn build_users_me_usage_record_payload(
         "status": item.status,
         "has_fallback": item.has_fallback(),
         "created_at": unix_secs_to_rfc3339(item.created_at_unix_ms),
-        "cache_creation_input_tokens": item.cache_creation_input_tokens,
+        "cache_creation_input_tokens": cache_creation_input_tokens,
         "cache_creation_ephemeral_5m_input_tokens": item.cache_creation_ephemeral_5m_input_tokens,
         "cache_creation_ephemeral_1h_input_tokens": item.cache_creation_ephemeral_1h_input_tokens,
         "cache_read_input_tokens": item.cache_read_input_tokens,
@@ -247,13 +248,14 @@ fn build_users_me_usage_record_payload(
 }
 
 fn build_users_me_usage_active_payload(item: &StoredRequestUsageAudit) -> serde_json::Value {
+    let cache_creation_input_tokens = users_me_usage_cache_creation_tokens(item);
     let mut payload = json!({
         "id": item.id,
         "status": item.status,
         "input_tokens": item.input_tokens,
         "effective_input_tokens": users_me_usage_effective_input_tokens(item),
         "output_tokens": item.output_tokens,
-        "cache_creation_input_tokens": item.cache_creation_input_tokens,
+        "cache_creation_input_tokens": cache_creation_input_tokens,
         "cache_creation_ephemeral_5m_input_tokens": item.cache_creation_ephemeral_5m_input_tokens,
         "cache_creation_ephemeral_1h_input_tokens": item.cache_creation_ephemeral_1h_input_tokens,
         "cache_read_input_tokens": item.cache_read_input_tokens,
@@ -1021,4 +1023,87 @@ pub(super) async fn handle_users_me_usage_heatmap_get(
         "days": days,
     }))
     .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
+
+    use super::{build_users_me_usage_active_payload, build_users_me_usage_record_payload};
+
+    fn sample_usage(status: &str) -> StoredRequestUsageAudit {
+        StoredRequestUsageAudit::new(
+            "usage-1".to_string(),
+            "req-1".to_string(),
+            Some("user-1".to_string()),
+            Some("api-key-1".to_string()),
+            Some("alice".to_string()),
+            Some("default".to_string()),
+            "OpenAI".to_string(),
+            "gpt-5".to_string(),
+            None,
+            Some("provider-1".to_string()),
+            Some("endpoint-1".to_string()),
+            Some("provider-key-1".to_string()),
+            Some("chat".to_string()),
+            Some("openai:chat".to_string()),
+            Some("openai".to_string()),
+            Some("chat".to_string()),
+            Some("openai:chat".to_string()),
+            Some("openai".to_string()),
+            Some("chat".to_string()),
+            false,
+            false,
+            10,
+            20,
+            30,
+            0.0,
+            0.0,
+            Some(200),
+            None,
+            None,
+            Some(120),
+            None,
+            status.to_string(),
+            "settled".to_string(),
+            100,
+            101,
+            Some(102),
+        )
+        .expect("usage should build")
+    }
+
+    #[test]
+    fn user_usage_record_payload_rehydrates_cache_creation_total_from_classified_fields() {
+        let item = StoredRequestUsageAudit {
+            cache_creation_input_tokens: 0,
+            cache_creation_ephemeral_5m_input_tokens: 9,
+            cache_creation_ephemeral_1h_input_tokens: 11,
+            ..sample_usage("completed")
+        };
+
+        let payload = build_users_me_usage_record_payload(&item, false, &BTreeMap::new(), false);
+
+        assert_eq!(payload["cache_creation_input_tokens"], 20);
+        assert_eq!(payload["cache_creation_ephemeral_5m_input_tokens"], 9);
+        assert_eq!(payload["cache_creation_ephemeral_1h_input_tokens"], 11);
+    }
+
+    #[test]
+    fn user_usage_active_payload_rehydrates_cache_creation_total_from_classified_fields() {
+        let item = StoredRequestUsageAudit {
+            cache_creation_input_tokens: 0,
+            cache_creation_ephemeral_5m_input_tokens: 4,
+            cache_creation_ephemeral_1h_input_tokens: 6,
+            ..sample_usage("streaming")
+        };
+
+        let payload = build_users_me_usage_active_payload(&item);
+
+        assert_eq!(payload["cache_creation_input_tokens"], 10);
+        assert_eq!(payload["cache_creation_ephemeral_5m_input_tokens"], 4);
+        assert_eq!(payload["cache_creation_ephemeral_1h_input_tokens"], 6);
+    }
 }
