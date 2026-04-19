@@ -12,6 +12,7 @@ pub(crate) use self::candidates::{
     resolve_local_same_format_provider_decision_input,
 };
 pub(crate) use self::payload::maybe_build_local_same_format_provider_decision_payload_for_candidate;
+pub(crate) use self::request::resolve_same_format_provider_transport_unsupported_reason_for_trace;
 pub(crate) use crate::ai_pipeline::planner::candidate_materialization::LocalExecutionCandidateAttempt as LocalSameFormatProviderCandidateAttempt;
 pub(crate) use crate::ai_pipeline::planner::decision_input::LocalRequestedModelDecisionInput as LocalSameFormatProviderDecisionInput;
 pub(crate) use crate::ai_pipeline::{LocalSameFormatProviderFamily, LocalSameFormatProviderSpec};

@@ -5,6 +5,51 @@ use super::super::{
 };
 use super::auth::resolve_local_vertex_api_key_query_auth;
 
+pub fn local_vertex_api_key_gemini_transport_unsupported_reason_with_network(
+    transport: &GatewayProviderTransportSnapshot,
+) -> Option<&'static str> {
+    if !transport.provider.is_active || !transport.endpoint.is_active || !transport.key.is_active {
+        return if !transport.provider.is_active {
+            Some("provider_inactive")
+        } else if !transport.endpoint.is_active {
+            Some("endpoint_inactive")
+        } else {
+            Some("key_inactive")
+        };
+    }
+    if !transport
+        .provider
+        .provider_type
+        .trim()
+        .eq_ignore_ascii_case(super::PROVIDER_TYPE)
+    {
+        return Some("transport_provider_type_unsupported");
+    }
+    let endpoint_api_format = transport.endpoint.api_format.trim();
+    if !endpoint_api_format.eq_ignore_ascii_case("gemini:chat")
+        && !endpoint_api_format.eq_ignore_ascii_case("gemini:cli")
+    {
+        return Some("transport_api_format_mismatch");
+    }
+    if !header_rules_are_locally_supported(transport.endpoint.header_rules.as_ref()) {
+        return Some("transport_header_rules_unsupported");
+    }
+    if !body_rules_are_locally_supported(transport.endpoint.body_rules.as_ref()) {
+        return Some("transport_body_rules_unsupported");
+    }
+    if resolve_local_vertex_api_key_query_auth(transport).is_none() {
+        return Some("transport_auth_unavailable");
+    }
+    if !transport_proxy_is_locally_supported(transport) {
+        return Some("transport_proxy_unsupported");
+    }
+    if transport.key.fingerprint.is_some() && resolve_transport_tls_profile(transport).is_none() {
+        return Some("transport_tls_profile_unsupported");
+    }
+
+    None
+}
+
 pub fn supports_local_vertex_api_key_gemini_transport(
     transport: &GatewayProviderTransportSnapshot,
 ) -> bool {
@@ -18,11 +63,7 @@ pub fn supports_local_vertex_api_key_gemini_transport(
 pub fn supports_local_vertex_api_key_gemini_transport_with_network(
     transport: &GatewayProviderTransportSnapshot,
 ) -> bool {
-    supports_local_vertex_api_key_same_format_transport(
-        transport,
-        &["gemini:chat", "gemini:cli"],
-        true,
-    )
+    local_vertex_api_key_gemini_transport_unsupported_reason_with_network(transport).is_none()
 }
 
 pub fn supports_local_vertex_api_key_imagen_transport(
@@ -110,6 +151,7 @@ mod tests {
     };
 
     use super::{
+        local_vertex_api_key_gemini_transport_unsupported_reason_with_network,
         supports_local_vertex_api_key_gemini_transport,
         supports_local_vertex_api_key_gemini_transport_with_network,
     };
@@ -200,5 +242,17 @@ mod tests {
         assert!(supports_local_vertex_api_key_gemini_transport_with_network(
             &transport
         ));
+    }
+
+    #[test]
+    fn reports_auth_unavailable_when_vertex_api_key_query_auth_is_missing() {
+        let mut transport = sample_transport();
+        transport.key.auth_type = "service_account".to_string();
+        transport.key.decrypted_api_key = "__placeholder__".to_string();
+
+        assert_eq!(
+            local_vertex_api_key_gemini_transport_unsupported_reason_with_network(&transport),
+            Some("transport_auth_unavailable")
+        );
     }
 }

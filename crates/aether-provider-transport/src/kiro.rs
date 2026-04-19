@@ -17,6 +17,7 @@ pub use converter::convert_claude_messages_to_conversation_state;
 pub use credentials::{generate_machine_id, normalize_machine_id, KiroAuthConfig};
 pub use headers::{build_generate_assistant_headers, AWS_EVENTSTREAM_CONTENT_TYPE};
 pub use policy::{
+    local_kiro_request_transport_unsupported_reason_with_network,
     supports_local_kiro_request_transport, supports_local_kiro_request_transport_with_network,
 };
 pub use refresh::KiroOAuthRefreshAdapter;

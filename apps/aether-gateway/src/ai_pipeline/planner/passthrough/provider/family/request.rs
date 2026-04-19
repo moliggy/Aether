@@ -26,6 +26,51 @@ use super::{
     LocalSameFormatProviderSpec,
 };
 
+pub(crate) fn resolve_same_format_provider_transport_unsupported_reason_for_trace(
+    transport: &GatewayProviderTransportSnapshot,
+    provider_api_format: &str,
+) -> Option<&'static str> {
+    let provider_api_format = match provider_api_format.trim().to_ascii_lowercase().as_str() {
+        "openai:chat" => "openai:chat",
+        "openai:cli" => "openai:cli",
+        "openai:compact" => "openai:compact",
+        "claude:chat" => "claude:chat",
+        "claude:cli" => "claude:cli",
+        "gemini:chat" => "gemini:chat",
+        "gemini:cli" => "gemini:cli",
+        _ => return Some("transport_api_format_unsupported"),
+    };
+    let behavior = policy::classify_same_format_provider_request_behavior(
+        transport,
+        crate::ai_pipeline::planner::spec_metadata::LocalExecutionSurfaceSpecMetadata {
+            api_format: provider_api_format,
+            require_streaming: false,
+            requested_model_family: None,
+            decision_kind: "trace_candidate_metadata",
+            report_kind: Some("trace_candidate_metadata"),
+        },
+    );
+    if !behavior.is_antigravity
+        && !behavior.is_claude_code
+        && !behavior.is_vertex
+        && !behavior.is_kiro
+    {
+        return None;
+    }
+
+    let family = if provider_api_format.starts_with("gemini:") {
+        crate::ai_pipeline::LocalSameFormatProviderFamily::Gemini
+    } else {
+        crate::ai_pipeline::LocalSameFormatProviderFamily::Standard
+    };
+    policy::same_format_provider_transport_unsupported_reason(
+        &behavior,
+        transport,
+        family,
+        provider_api_format,
+    )
+}
+
 pub(crate) struct LocalSameFormatProviderCandidatePayloadParts {
     pub(super) transport: GatewayProviderTransportSnapshot,
     pub(super) is_antigravity: bool,

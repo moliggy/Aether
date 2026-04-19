@@ -65,11 +65,12 @@ mod family;
 mod plans;
 mod request;
 
-pub(super) use self::family::{
+pub(crate) use self::family::{
     materialize_local_same_format_provider_candidate_attempts,
     maybe_build_local_same_format_provider_decision_payload_for_candidate,
-    resolve_local_same_format_provider_decision_input, LocalSameFormatProviderFamily,
-    LocalSameFormatProviderSpec,
+    resolve_local_same_format_provider_decision_input,
+    resolve_same_format_provider_transport_unsupported_reason_for_trace,
+    LocalSameFormatProviderFamily, LocalSameFormatProviderSpec,
 };
 pub(crate) use self::family::{
     maybe_build_stream_local_same_format_provider_decision_payload,

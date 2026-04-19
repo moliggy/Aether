@@ -435,11 +435,11 @@
 
                 <!-- 跳过原因 -->
                 <div
-                  v-if="currentAttempt.skip_reason"
+                  v-if="currentAttemptSkipReasonDisplay"
                   class="skip-reason"
                 >
                   <span class="reason-label">跳过原因</span>
-                  <span class="reason-value">{{ currentAttempt.skip_reason }}</span>
+                  <span class="reason-value">{{ currentAttemptSkipReasonDisplay }}</span>
                 </div>
 
                 <!-- 错误信息 -->
@@ -1368,6 +1368,23 @@ const currentAttemptConversionInfo = computed<{
   }
 
   return { summary, hint }
+})
+
+const currentAttemptSkipReasonDisplay = computed(() => {
+  const attempt = currentAttempt.value
+  if (!attempt?.skip_reason) return ''
+
+  if (attempt.skip_reason !== 'transport_unsupported') {
+    return attempt.skip_reason
+  }
+
+  const transportDiagnostics = resolveTransportDiagnostics(attempt)
+  const requestPair = extractObject(transportDiagnostics?.request_pair)
+  const detailedReason = typeof requestPair?.transport_unsupported_reason === 'string'
+    ? requestPair.transport_unsupported_reason.trim()
+    : ''
+
+  return detailedReason || attempt.skip_reason
 })
 
 // 计算当前尝试启用的能力标签（请求需要的能力）

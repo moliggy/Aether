@@ -1,9 +1,72 @@
 use super::super::snapshot::GatewayProviderTransportSnapshot;
 use super::super::{resolve_transport_tls_profile, transport_proxy_is_locally_supported};
-use super::{supports_local_kiro_request_auth_resolution, supports_local_kiro_request_shape};
+use super::{
+    body_rules_are_locally_supported, header_rules_are_locally_supported,
+    supports_local_kiro_request_auth_resolution, supports_local_kiro_request_shape, PROVIDER_TYPE,
+};
+
+pub fn local_kiro_request_transport_unsupported_reason_with_network(
+    transport: &GatewayProviderTransportSnapshot,
+) -> Option<&'static str> {
+    if !transport.provider.is_active || !transport.endpoint.is_active || !transport.key.is_active {
+        return if !transport.provider.is_active {
+            Some("provider_inactive")
+        } else if !transport.endpoint.is_active {
+            Some("endpoint_inactive")
+        } else {
+            Some("key_inactive")
+        };
+    }
+    if !transport
+        .provider
+        .provider_type
+        .trim()
+        .eq_ignore_ascii_case(PROVIDER_TYPE)
+    {
+        return Some("transport_provider_type_unsupported");
+    }
+    if !transport
+        .endpoint
+        .api_format
+        .trim()
+        .eq_ignore_ascii_case("claude:cli")
+    {
+        return Some("transport_api_format_mismatch");
+    }
+    if !header_rules_are_locally_supported(transport.endpoint.header_rules.as_ref()) {
+        return Some("transport_header_rules_unsupported");
+    }
+    if !body_rules_are_locally_supported(transport.endpoint.body_rules.as_ref()) {
+        return Some("transport_body_rules_unsupported");
+    }
+    if transport.key.decrypted_auth_config.is_some()
+        && !supports_local_kiro_request_auth_resolution(transport)
+    {
+        return Some("transport_oauth_resolution_unsupported");
+    }
+    if !supports_local_kiro_request_auth_resolution(transport) {
+        return Some("transport_auth_unavailable");
+    }
+    if !transport_proxy_is_locally_supported(transport) {
+        return Some("transport_proxy_unsupported");
+    }
+    if transport.key.fingerprint.is_some() && resolve_transport_tls_profile(transport).is_none() {
+        return Some("transport_tls_profile_unsupported");
+    }
+
+    None
+}
 
 pub fn supports_local_kiro_request_transport(transport: &GatewayProviderTransportSnapshot) -> bool {
     if !transport.provider.is_active || !transport.endpoint.is_active || !transport.key.is_active {
+        return false;
+    }
+    if !transport
+        .provider
+        .provider_type
+        .trim()
+        .eq_ignore_ascii_case(PROVIDER_TYPE)
+    {
         return false;
     }
     if !transport
@@ -14,26 +77,16 @@ pub fn supports_local_kiro_request_transport(transport: &GatewayProviderTranspor
     {
         return false;
     }
-    if !supports_local_kiro_request_auth_resolution(transport) {
-        return false;
-    }
-    if !supports_local_kiro_request_shape(
+    supports_local_kiro_request_shape(
         transport.endpoint.header_rules.as_ref(),
         transport.endpoint.body_rules.as_ref(),
-    ) {
-        return false;
-    }
-
-    true
+    ) && supports_local_kiro_request_auth_resolution(transport)
 }
 
 pub fn supports_local_kiro_request_transport_with_network(
     transport: &GatewayProviderTransportSnapshot,
 ) -> bool {
-    supports_local_kiro_request_transport(transport)
-        && transport_proxy_is_locally_supported(transport)
-        && (transport.key.fingerprint.is_none()
-            || resolve_transport_tls_profile(transport).is_some())
+    local_kiro_request_transport_unsupported_reason_with_network(transport).is_none()
 }
 
 #[cfg(test)]
@@ -43,6 +96,7 @@ mod tests {
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
     };
     use super::{
+        local_kiro_request_transport_unsupported_reason_with_network,
         supports_local_kiro_request_transport, supports_local_kiro_request_transport_with_network,
     };
 
@@ -129,5 +183,17 @@ mod tests {
         assert!(supports_local_kiro_request_transport_with_network(
             &transport
         ));
+    }
+
+    #[test]
+    fn reports_auth_unavailable_when_kiro_key_cannot_resolve_request_auth() {
+        let mut transport = sample_transport();
+        transport.key.auth_type = "api_key".to_string();
+        transport.key.decrypted_auth_config = None;
+
+        assert_eq!(
+            local_kiro_request_transport_unsupported_reason_with_network(&transport),
+            Some("transport_auth_unavailable")
+        );
     }
 }

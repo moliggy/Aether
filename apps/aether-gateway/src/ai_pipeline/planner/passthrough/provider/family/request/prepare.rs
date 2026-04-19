@@ -14,7 +14,8 @@ use super::super::LocalSameFormatProviderDecisionInput;
 use super::super::LocalSameFormatProviderSpec;
 use super::policy::{
     classify_same_format_provider_request_behavior, resolve_same_format_provider_direct_auth,
-    same_format_provider_transport_supported, should_try_same_format_provider_oauth_auth,
+    same_format_provider_transport_supported, same_format_provider_transport_unsupported_reason,
+    should_try_same_format_provider_oauth_auth,
 };
 
 pub(super) struct PreparedSameFormatProviderCandidate {
@@ -52,6 +53,13 @@ pub(super) async fn prepare_local_same_format_provider_candidate(
         spec.family,
         spec_metadata.api_format,
     ) {
+        let skip_reason = same_format_provider_transport_unsupported_reason(
+            &behavior,
+            &transport,
+            spec.family,
+            spec_metadata.api_format,
+        )
+        .unwrap_or("transport_unsupported");
         super::super::payload::mark_skipped_local_same_format_provider_candidate(
             state,
             input,
@@ -59,7 +67,7 @@ pub(super) async fn prepare_local_same_format_provider_candidate(
             candidate,
             candidate_index,
             candidate_id,
-            "transport_unsupported",
+            skip_reason,
         )
         .await;
         return None;

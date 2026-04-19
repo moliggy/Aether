@@ -1,11 +1,12 @@
 use crate::ai_pipeline::planner::spec_metadata::LocalExecutionSurfaceSpecMetadata;
 use crate::ai_pipeline::transport::auth::{resolve_local_gemini_auth, resolve_local_standard_auth};
-use crate::ai_pipeline::transport::claude_code::supports_local_claude_code_transport_with_network;
-use crate::ai_pipeline::transport::kiro::supports_local_kiro_request_transport_with_network;
+use crate::ai_pipeline::transport::claude_code::local_claude_code_transport_unsupported_reason_with_network;
+use crate::ai_pipeline::transport::kiro::local_kiro_request_transport_unsupported_reason_with_network;
 use crate::ai_pipeline::transport::policy::{
-    supports_local_gemini_transport_with_network, supports_local_standard_transport_with_network,
+    local_gemini_transport_unsupported_reason_with_network,
+    local_standard_transport_unsupported_reason_with_network,
 };
-use crate::ai_pipeline::transport::vertex::supports_local_vertex_api_key_gemini_transport_with_network;
+use crate::ai_pipeline::transport::vertex::local_vertex_api_key_gemini_transport_unsupported_reason_with_network;
 use crate::ai_pipeline::GatewayProviderTransportSnapshot;
 
 use super::super::LocalSameFormatProviderFamily;
@@ -75,21 +76,31 @@ pub(super) fn same_format_provider_transport_supported(
     family: LocalSameFormatProviderFamily,
     api_format: &str,
 ) -> bool {
+    same_format_provider_transport_unsupported_reason(behavior, transport, family, api_format)
+        .is_none()
+}
+
+pub(super) fn same_format_provider_transport_unsupported_reason(
+    behavior: &SameFormatProviderRequestBehavior,
+    transport: &GatewayProviderTransportSnapshot,
+    family: LocalSameFormatProviderFamily,
+    api_format: &str,
+) -> Option<&'static str> {
     if behavior.is_kiro {
-        supports_local_kiro_request_transport_with_network(transport)
+        local_kiro_request_transport_unsupported_reason_with_network(transport)
     } else if behavior.is_antigravity {
-        true
+        None
     } else if behavior.is_claude_code {
-        supports_local_claude_code_transport_with_network(transport, api_format)
+        local_claude_code_transport_unsupported_reason_with_network(transport, api_format)
     } else if behavior.is_vertex {
-        supports_local_vertex_api_key_gemini_transport_with_network(transport)
+        local_vertex_api_key_gemini_transport_unsupported_reason_with_network(transport)
     } else {
         match family {
             LocalSameFormatProviderFamily::Standard => {
-                supports_local_standard_transport_with_network(transport, api_format)
+                local_standard_transport_unsupported_reason_with_network(transport, api_format)
             }
             LocalSameFormatProviderFamily::Gemini => {
-                supports_local_gemini_transport_with_network(transport, api_format)
+                local_gemini_transport_unsupported_reason_with_network(transport, api_format)
             }
         }
     }
