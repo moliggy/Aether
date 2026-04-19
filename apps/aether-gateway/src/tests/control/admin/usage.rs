@@ -2606,6 +2606,90 @@ async fn gateway_handles_admin_usage_cache_affinity_interval_timeline_without_le
 }
 
 #[tokio::test]
+async fn gateway_handles_admin_usage_cache_affinity_interval_timeline_with_legacy_username_fallback_when_auth_user_lookup_fails(
+) {
+    let (_upstream_url, upstream_hits, upstream_handle) =
+        start_usage_upstream("/api/admin/usage/cache-affinity/interval-timeline").await;
+    let mut usage_one = sample_usage_row(
+        "usage-auth-lookup-fail-1",
+        "req-auth-lookup-fail-1",
+        Some("user-1"),
+        Some("key-1"),
+        Some("primary"),
+        "OpenAI",
+        "gpt-5",
+        "completed",
+        10,
+        2,
+        0.01,
+        0.012,
+        recent_unix_secs(55),
+    );
+    usage_one.username = Some("stale-alice".to_string());
+    let mut usage_two = sample_usage_row(
+        "usage-auth-lookup-fail-2",
+        "req-auth-lookup-fail-2",
+        Some("user-1"),
+        Some("key-1"),
+        Some("primary"),
+        "OpenAI",
+        "gpt-5",
+        "completed",
+        12,
+        3,
+        0.01,
+        0.012,
+        recent_unix_secs(50),
+    );
+    usage_two.username = Some("stale-alice".to_string());
+
+    let usage_repository = Arc::new(InMemoryUsageReadRepository::seed(vec![
+        usage_one, usage_two,
+    ]));
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(GatewayDataState::with_usage_reader_for_tests(
+                usage_repository,
+            ))
+            .with_auth_users_for_tests([StoredUserAuthRecord {
+                id: "user-1".to_string(),
+                email: None,
+                email_verified: false,
+                username: " ".to_string(),
+                password_hash: None,
+                role: "user".to_string(),
+                auth_source: "local".to_string(),
+                allowed_providers: None,
+                allowed_api_formats: None,
+                allowed_models: None,
+                is_active: true,
+                is_deleted: false,
+                created_at: None,
+                last_login_at: None,
+            }]),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = admin_request(reqwest::Client::new().get(format!(
+        "{gateway_url}/api/admin/usage/cache-affinity/interval-timeline?hours=24&limit=100&include_user_info=true"
+    )))
+    .send()
+    .await
+    .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["total_points"], 1);
+    assert_eq!(payload["points"][0]["user_id"], "user-1");
+    assert_eq!(payload["users"]["user-1"], "stale-alice");
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
 async fn gateway_handles_admin_usage_cache_affinity_ttl_analysis_locally_with_trusted_admin_principal(
 ) {
     let (upstream_url, upstream_hits, upstream_handle) =

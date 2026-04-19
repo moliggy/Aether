@@ -86,11 +86,20 @@ pub(super) async fn build_admin_usage_cache_affinity_interval_timeline_response(
 
     if include_user_info && user_id.is_none() {
         let user_ids: Vec<_> = grouped.keys().cloned().collect();
-        let user_map = load_usage_cache_affinity_usernames(state, &user_ids).await?;
-        for (user_id, username) in user_map {
-            usernames_by_user_id.insert(user_id, username);
+        let mut should_use_legacy_usernames = !state.has_auth_user_data_reader();
+        match load_usage_cache_affinity_usernames(state, &user_ids).await {
+            Ok(user_map) => {
+                usernames_by_user_id.extend(user_map);
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = ?err,
+                    "admin usage cache affinity interval timeline user lookup failed"
+                );
+                should_use_legacy_usernames = true;
+            }
         }
-        if !state.has_auth_user_data_reader() {
+        if should_use_legacy_usernames {
             for (user_id, username) in legacy_usernames_by_user_id {
                 usernames_by_user_id.entry(user_id).or_insert(username);
             }

@@ -347,6 +347,9 @@ function handleVisibilityChange() {
     stopRefreshTimer()
     return
   }
+  if (!props.refreshIntervalMs || props.refreshIntervalMs <= 0) {
+    return
+  }
   void loadData()
   scheduleNextRefresh()
 }

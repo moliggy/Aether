@@ -2495,7 +2495,7 @@ WITH filtered_usage AS (
         builder.push(
             r#" AS group_id,
     "usage".username AS username,
-    "usage".model AS model,
+    COALESCE("usage".model, '') AS model,
     "usage".created_at AS created_at,
     "usage".id AS usage_id
   FROM "usage"
@@ -6186,6 +6186,11 @@ mod tests {
     #[test]
     fn usage_sql_supports_recent_usage_audits_query() {
         assert!(super::LIST_RECENT_USAGE_AUDITS_PREFIX.contains("FROM \"usage\""));
+    }
+
+    #[test]
+    fn usage_sql_cache_affinity_interval_query_coalesces_nullable_model_values() {
+        assert!(include_str!("sql.rs").contains("COALESCE(\"usage\".model, '') AS model"));
     }
 
     #[test]

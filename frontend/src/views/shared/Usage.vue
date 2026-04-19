@@ -38,7 +38,7 @@
           :title="intervalTimelineTitle"
           :is-admin="isAdminPage"
           :hours="intervalTimelineHours"
-          :refresh-interval-ms="30000"
+          :refresh-interval-ms="0"
         />
       </div>
 
