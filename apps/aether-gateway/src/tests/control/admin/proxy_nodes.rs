@@ -1516,7 +1516,10 @@ async fn gateway_still_dispatches_upgrade_targets_to_draining_proxy_nodes() {
         .expect("json body should parse");
     assert_eq!(upgrade_payload["eligible_total"], 2);
     assert_eq!(upgrade_payload["updated"], 2);
-    assert_eq!(upgrade_payload["node_ids"], json!(["node-alpha", "node-zeta"]));
+    assert_eq!(
+        upgrade_payload["node_ids"],
+        json!(["node-alpha", "node-zeta"])
+    );
 
     let list_response_after_upgrade = client
         .get(format!(

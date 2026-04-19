@@ -35,36 +35,36 @@
               />
             </div>
           </div>
-	          <div class="flex flex-wrap items-center gap-2">
-	            <div class="relative min-w-0 basis-full">
-	              <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground z-10 pointer-events-none" />
-	              <Input
-	                v-model="searchQuery"
-	                type="text"
-	                placeholder="搜索..."
-	                class="w-full pl-8 pr-3 h-8 text-sm bg-background/50 border-border/60"
-	              />
-	            </div>
-	            <div class="min-w-0 flex-1">
-	              <Select v-model="filterStatus">
-	                <SelectTrigger class="w-full h-8 text-xs border-border/60">
-	                  <SelectValue placeholder="状态" />
-	                </SelectTrigger>
-	                <SelectContent>
-	                  <SelectItem value="all">
-	                    全部
-	                  </SelectItem>
-	                  <SelectItem value="online">
-	                    在线
-	                  </SelectItem>
-	                  <SelectItem value="offline">
-	                    离线
-	                  </SelectItem>
-	                </SelectContent>
-	              </Select>
-	            </div>
-	          </div>
-	        </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="relative min-w-0 basis-full">
+              <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground z-10 pointer-events-none" />
+              <Input
+                v-model="searchQuery"
+                type="text"
+                placeholder="搜索..."
+                class="w-full pl-8 pr-3 h-8 text-sm bg-background/50 border-border/60"
+              />
+            </div>
+            <div class="min-w-0 flex-1">
+              <Select v-model="filterStatus">
+                <SelectTrigger class="w-full h-8 text-xs border-border/60">
+                  <SelectValue placeholder="状态" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">
+                    全部
+                  </SelectItem>
+                  <SelectItem value="online">
+                    在线
+                  </SelectItem>
+                  <SelectItem value="offline">
+                    离线
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
 
         <!-- 桌面端 -->
         <div class="hidden sm:flex items-center justify-between gap-4">
@@ -81,26 +81,26 @@
                 class="w-48 pl-8 pr-3 h-8 text-sm bg-background/50 border-border/60"
               />
             </div>
-	            <div class="h-4 w-px bg-border" />
-	            <Select v-model="filterStatus">
-	              <SelectTrigger class="w-28 h-8 text-xs border-border/60">
-	                <SelectValue placeholder="全部状态" />
-	              </SelectTrigger>
-	              <SelectContent>
-	                <SelectItem value="all">
-	                  全部状态
-	                </SelectItem>
-	                <SelectItem value="online">
-	                  在线
-	                </SelectItem>
-	                <SelectItem value="offline">
-	                  离线
-	                </SelectItem>
-	              </SelectContent>
-	            </Select>
-	            <div class="h-4 w-px bg-border" />
-	            <Button
-	              variant="outline"
+            <div class="h-4 w-px bg-border" />
+            <Select v-model="filterStatus">
+              <SelectTrigger class="w-28 h-8 text-xs border-border/60">
+                <SelectValue placeholder="全部状态" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">
+                  全部状态
+                </SelectItem>
+                <SelectItem value="online">
+                  在线
+                </SelectItem>
+                <SelectItem value="offline">
+                  离线
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <div class="h-4 w-px bg-border" />
+            <Button
+              variant="outline"
               size="sm"
               class="h-8 text-xs"
               @click="showBatchUpgradeDialog = true"
@@ -813,7 +813,7 @@ import { formatRegion } from '@/utils/region'
 import HardwareTooltip from './components/HardwareTooltip.vue'
 
 const { success, error: toastError } = useToast()
-const { confirmDanger, confirmWarning } = useConfirm()
+const { confirmDanger } = useConfirm()
 const store = useProxyNodesStore()
 
 const searchQuery = ref('')

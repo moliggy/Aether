@@ -1499,8 +1499,9 @@ async fn dispatch_proxy_node_upgrade_targets(
 
         summary.eligible_total = summary.eligible_total.saturating_add(1);
 
-        let current_version =
-            aether_data::repository::proxy_nodes::proxy_reported_version(node.proxy_metadata.as_ref());
+        let current_version = aether_data::repository::proxy_nodes::proxy_reported_version(
+            node.proxy_metadata.as_ref(),
+        );
         let pending_target = aether_data::repository::proxy_nodes::remote_config_upgrade_target(
             node.remote_config.as_ref(),
         );
