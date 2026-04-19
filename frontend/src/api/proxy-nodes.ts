@@ -126,18 +126,11 @@ export interface ProxyNodeTestResult {
 
 export interface ProxyNodeBatchUpgradeResult {
   version: string
-  batch_size: number
-  cooldown_secs: number
-  probe_url?: string | null
-  probe_timeout_secs?: number | null
+  eligible_total: number
   updated: number
   skipped: number
   node_ids: string[]
-  blocked: boolean
-  pending_node_ids: string[]
-  rollout_active: boolean
-  completed: number
-  remaining: number
+  rollout_cancelled: boolean
 }
 
 export interface ProxyNodeUpgradeRolloutCancelResult {

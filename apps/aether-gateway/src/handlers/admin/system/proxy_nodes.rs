@@ -6,7 +6,7 @@ use crate::handlers::admin::shared::query_param_value;
 use crate::maintenance::{
     cancel_proxy_upgrade_rollout, clear_proxy_upgrade_rollout_conflicts,
     restore_proxy_upgrade_rollout_skipped_nodes, retry_proxy_upgrade_rollout_node,
-    skip_proxy_upgrade_rollout_node, start_proxy_upgrade_rollout, ProxyUpgradeRolloutProbeConfig,
+    skip_proxy_upgrade_rollout_node, ProxyUpgradeRolloutProbeConfig,
 };
 use crate::GatewayError;
 use aether_admin::system::{
@@ -128,6 +128,16 @@ struct ProxyNodeBatchUpgradeRequest {
     probe_url: Option<String>,
     #[serde(default)]
     probe_timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Default)]
+struct ProxyNodeBatchUpgradeDispatchSummary {
+    version: String,
+    eligible_total: usize,
+    updated: usize,
+    skipped: usize,
+    node_ids: Vec<String>,
+    rollout_cancelled: bool,
 }
 
 const JSON_OBJECT_REQUIRED_DETAIL: &str = "请求体必须是合法的 JSON 对象";
@@ -506,10 +516,7 @@ pub(crate) async fn maybe_build_local_admin_proxy_nodes_response(
     if decision.route_kind.as_deref() == Some("batch_upgrade_nodes")
         && request_context.method() == http::Method::POST
     {
-        if !state.has_proxy_node_reader()
-            || !state.has_proxy_node_writer()
-            || !state.app().data.has_system_config_store()
-        {
+        if !state.has_proxy_node_reader() || !state.has_proxy_node_writer() {
             return Ok(Some(build_admin_proxy_nodes_data_unavailable_response()));
         }
         let input = match parse_json_body::<ProxyNodeBatchUpgradeRequest>(request_body) {
@@ -520,42 +527,16 @@ pub(crate) async fn maybe_build_local_admin_proxy_nodes_response(
             Ok(version) => version,
             Err(response) => return Ok(Some(response)),
         };
-        let batch_size = match validate_batch_size(input.batch_size) {
-            Ok(batch_size) => batch_size,
-            Err(response) => return Ok(Some(response)),
-        };
-        let cooldown_secs = match validate_cooldown_secs(input.cooldown_secs) {
-            Ok(cooldown_secs) => cooldown_secs,
-            Err(response) => return Ok(Some(response)),
-        };
-        let probe =
-            match validate_probe_config(input.probe_url.as_deref(), input.probe_timeout_secs) {
-                Ok(probe) => probe,
-                Err(response) => return Ok(Some(response)),
-            };
-        let rollout = start_proxy_upgrade_rollout(
-            &state.app().data,
-            version.clone(),
-            batch_size,
-            cooldown_secs,
-            probe,
-        )
-        .await
-        .map_err(|err| GatewayError::Internal(err.to_string()))?;
+        let summary = dispatch_proxy_node_upgrade_targets(state, &version).await?;
 
         return Ok(Some(
             Json(json!({
-                "version": version,
-                "batch_size": rollout.batch_size,
-                "cooldown_secs": rollout.cooldown_secs,
-                "updated": rollout.updated,
-                "skipped": rollout.skipped,
-                "node_ids": rollout.node_ids,
-                "blocked": rollout.blocked,
-                "pending_node_ids": rollout.pending_node_ids,
-                "rollout_active": rollout.rollout_active,
-                "completed": rollout.completed,
-                "remaining": rollout.remaining,
+                "version": summary.version,
+                "eligible_total": summary.eligible_total,
+                "updated": summary.updated,
+                "skipped": summary.skipped,
+                "node_ids": summary.node_ids,
+                "rollout_cancelled": summary.rollout_cancelled,
             }))
             .into_response(),
         ));
@@ -1478,6 +1459,79 @@ fn admin_proxy_node_test_node_id_from_path(path: &str) -> Option<String> {
     } else {
         Some(node_id.to_string())
     }
+}
+
+fn normalize_proxy_upgrade_version(value: &str) -> String {
+    value
+        .trim()
+        .strip_prefix("proxy-v")
+        .unwrap_or(value.trim())
+        .to_ascii_lowercase()
+}
+
+async fn dispatch_proxy_node_upgrade_targets(
+    state: &AdminAppState<'_>,
+    version: &str,
+) -> Result<ProxyNodeBatchUpgradeDispatchSummary, GatewayError> {
+    let mut nodes = state.list_proxy_nodes().await?;
+    nodes.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+
+    let rollout_cancelled = if state.app().data.has_system_config_store() {
+        cancel_proxy_upgrade_rollout(&state.app().data)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))?
+            .is_some()
+    } else {
+        false
+    };
+
+    let normalized_target = normalize_proxy_upgrade_version(version);
+    let mut summary = ProxyNodeBatchUpgradeDispatchSummary {
+        version: version.to_string(),
+        rollout_cancelled,
+        ..Default::default()
+    };
+
+    for node in nodes {
+        if node.is_manual || !node.tunnel_mode {
+            continue;
+        }
+
+        summary.eligible_total = summary.eligible_total.saturating_add(1);
+
+        let current_version =
+            aether_data::repository::proxy_nodes::proxy_reported_version(node.proxy_metadata.as_ref());
+        let pending_target = aether_data::repository::proxy_nodes::remote_config_upgrade_target(
+            node.remote_config.as_ref(),
+        );
+        if pending_target.as_deref() == Some(normalized_target.as_str())
+            || current_version.as_deref() == Some(normalized_target.as_str())
+        {
+            continue;
+        }
+
+        let Some(updated) = state
+            .update_proxy_node_remote_config(
+                &aether_data::repository::proxy_nodes::ProxyNodeRemoteConfigMutation {
+                    node_id: node.id.clone(),
+                    node_name: None,
+                    allowed_ports: None,
+                    log_level: None,
+                    heartbeat_interval: None,
+                    scheduling_state: None,
+                    upgrade_to: Some(Some(version.to_string())),
+                },
+            )
+            .await?
+        else {
+            continue;
+        };
+        summary.node_ids.push(updated.id);
+    }
+
+    summary.updated = summary.node_ids.len();
+    summary.skipped = summary.eligible_total.saturating_sub(summary.updated);
+    Ok(summary)
 }
 
 fn validate_batch_size(batch_size: Option<usize>) -> Result<usize, Response<Body>> {

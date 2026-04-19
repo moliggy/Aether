@@ -1252,7 +1252,7 @@ async fn gateway_handles_admin_proxy_node_events_locally_with_trusted_admin_prin
 }
 
 #[tokio::test]
-async fn gateway_updates_proxy_node_config_and_batches_upgrade_locally() {
+async fn gateway_updates_proxy_node_config_and_dispatches_upgrade_targets_locally() {
     let upstream_hits = Arc::new(Mutex::new(0usize));
     let upstream_hits_clone = Arc::clone(&upstream_hits);
     let upstream = Router::new()
@@ -1346,15 +1346,14 @@ async fn gateway_updates_proxy_node_config_and_batches_upgrade_locally() {
         .await
         .expect("json body should parse");
     assert_eq!(upgrade_payload["version"], "2.0.0");
-    assert_eq!(upgrade_payload["batch_size"], 1);
-    assert_eq!(upgrade_payload["updated"], 1);
-    assert_eq!(upgrade_payload["skipped"], 1);
-    assert_eq!(upgrade_payload["blocked"], false);
-    assert_eq!(upgrade_payload["pending_node_ids"], json!(["node-online"]));
-    assert_eq!(upgrade_payload["node_ids"], json!(["node-online"]));
-    assert_eq!(upgrade_payload["completed"], 0);
-    assert_eq!(upgrade_payload["remaining"], 2);
-    assert_eq!(upgrade_payload["rollout_active"], true);
+    assert_eq!(upgrade_payload["eligible_total"], 3);
+    assert_eq!(upgrade_payload["updated"], 3);
+    assert_eq!(upgrade_payload["skipped"], 0);
+    assert_eq!(
+        upgrade_payload["node_ids"],
+        json!(["node-online", "node-offline", "node-zeta"])
+    );
+    assert_eq!(upgrade_payload["rollout_cancelled"], false);
 
     let blocked_upgrade_response = client
         .post(format!("{gateway_url}/api/admin/proxy-nodes/upgrade"))
@@ -1372,11 +1371,7 @@ async fn gateway_updates_proxy_node_config_and_batches_upgrade_locally() {
         .await
         .expect("json body should parse");
     assert_eq!(blocked_upgrade_payload["updated"], 0);
-    assert_eq!(blocked_upgrade_payload["blocked"], true);
-    assert_eq!(
-        blocked_upgrade_payload["pending_node_ids"],
-        json!(["node-online"])
-    );
+    assert_eq!(blocked_upgrade_payload["skipped"], 3);
 
     let heartbeat_response = client
         .post(format!("{gateway_url}/api/internal/tunnel/heartbeat"))
@@ -1404,7 +1399,7 @@ async fn gateway_updates_proxy_node_config_and_batches_upgrade_locally() {
     assert_eq!(heartbeat_payload["remote_config"]["allowed_ports"][1], 8443);
     assert_eq!(heartbeat_payload["remote_config"]["log_level"], "info");
 
-    let second_upgrade_response = client
+    let post_heartbeat_upgrade_response = client
         .post(format!("{gateway_url}/api/admin/proxy-nodes/upgrade"))
         .header(GATEWAY_HEADER, "rust-phase3b")
         .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
@@ -1414,57 +1409,14 @@ async fn gateway_updates_proxy_node_config_and_batches_upgrade_locally() {
         .send()
         .await
         .expect("request should succeed");
-    assert_eq!(second_upgrade_response.status(), StatusCode::OK);
-    let second_upgrade_payload: serde_json::Value = second_upgrade_response
+    assert_eq!(post_heartbeat_upgrade_response.status(), StatusCode::OK);
+    let post_heartbeat_upgrade_payload: serde_json::Value = post_heartbeat_upgrade_response
         .json()
         .await
         .expect("json body should parse");
-    assert_eq!(second_upgrade_payload["batch_size"], 1);
-    assert_eq!(second_upgrade_payload["updated"], 0);
-    assert_eq!(second_upgrade_payload["skipped"], 2);
-    assert_eq!(second_upgrade_payload["blocked"], true);
-    assert_eq!(
-        second_upgrade_payload["pending_node_ids"],
-        json!(["node-online"])
-    );
-    assert_eq!(second_upgrade_payload["node_ids"], json!([]));
-    assert_eq!(second_upgrade_payload["completed"], 0);
-    assert_eq!(second_upgrade_payload["remaining"], 3);
-    assert_eq!(second_upgrade_payload["rollout_active"], true);
-
-    assert!(
-        record_proxy_upgrade_traffic_success(&data_state, "node-online")
-            .await
-            .expect("traffic confirmation should be recorded")
-    );
-
-    let third_upgrade_response = client
-        .post(format!("{gateway_url}/api/admin/proxy-nodes/upgrade"))
-        .header(GATEWAY_HEADER, "rust-phase3b")
-        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
-        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
-        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
-        .json(&json!({ "version": "2.0.0", "cooldown_secs": 0 }))
-        .send()
-        .await
-        .expect("request should succeed");
-    assert_eq!(third_upgrade_response.status(), StatusCode::OK);
-    let third_upgrade_payload: serde_json::Value = third_upgrade_response
-        .json()
-        .await
-        .expect("json body should parse");
-    assert_eq!(third_upgrade_payload["batch_size"], 1);
-    assert_eq!(third_upgrade_payload["updated"], 1);
-    assert_eq!(third_upgrade_payload["skipped"], 1);
-    assert_eq!(third_upgrade_payload["blocked"], false);
-    assert_eq!(
-        third_upgrade_payload["pending_node_ids"],
-        json!(["node-zeta"])
-    );
-    assert_eq!(third_upgrade_payload["node_ids"], json!(["node-zeta"]));
-    assert_eq!(third_upgrade_payload["completed"], 1);
-    assert_eq!(third_upgrade_payload["remaining"], 1);
-    assert_eq!(third_upgrade_payload["rollout_active"], true);
+    assert_eq!(post_heartbeat_upgrade_payload["node_ids"], json!([]));
+    assert_eq!(post_heartbeat_upgrade_payload["updated"], 0);
+    assert_eq!(post_heartbeat_upgrade_payload["skipped"], 3);
 
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
@@ -1473,7 +1425,7 @@ async fn gateway_updates_proxy_node_config_and_batches_upgrade_locally() {
 }
 
 #[tokio::test]
-async fn gateway_marks_draining_proxy_nodes_unschedulable_and_rollout_skips_them() {
+async fn gateway_still_dispatches_upgrade_targets_to_draining_proxy_nodes() {
     let mut alpha = sample_proxy_node("node-alpha");
     alpha.name = "alpha".to_string();
     alpha.status = "online".to_string();
@@ -1562,11 +1514,11 @@ async fn gateway_marks_draining_proxy_nodes_unschedulable_and_rollout_skips_them
         .json()
         .await
         .expect("json body should parse");
-    assert_eq!(upgrade_payload["updated"], 1);
-    assert_eq!(upgrade_payload["node_ids"], json!(["node-zeta"]));
-    assert_eq!(upgrade_payload["pending_node_ids"], json!(["node-zeta"]));
+    assert_eq!(upgrade_payload["eligible_total"], 2);
+    assert_eq!(upgrade_payload["updated"], 2);
+    assert_eq!(upgrade_payload["node_ids"], json!(["node-alpha", "node-zeta"]));
 
-    let rollout_response = client
+    let list_response_after_upgrade = client
         .get(format!(
             "{gateway_url}/api/admin/proxy-nodes?skip=0&limit=10"
         ))
@@ -1577,11 +1529,17 @@ async fn gateway_marks_draining_proxy_nodes_unschedulable_and_rollout_skips_them
         .send()
         .await
         .expect("request should succeed");
-    let rollout_payload: serde_json::Value = rollout_response
+    let list_payload_after_upgrade: serde_json::Value = list_response_after_upgrade
         .json()
         .await
         .expect("json body should parse");
-    assert_eq!(rollout_payload["rollout"]["online_eligible_total"], 1);
+    let alpha_after_upgrade = list_payload_after_upgrade["items"]
+        .as_array()
+        .expect("items should be array")
+        .iter()
+        .find(|item| item["id"] == "node-alpha")
+        .expect("alpha should exist after upgrade");
+    assert_eq!(alpha_after_upgrade["remote_config"]["upgrade_to"], "2.0.0");
 
     gateway_handle.abort();
 }
