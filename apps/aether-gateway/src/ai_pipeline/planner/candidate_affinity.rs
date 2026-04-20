@@ -1194,9 +1194,7 @@ mod tests {
 
         assert_eq!(ranked.len(), 1);
         assert_eq!(ranked[0].candidate.endpoint_id, "endpoint-same");
-        assert_eq!(skipped.len(), 1);
-        assert_eq!(skipped[0].candidate.endpoint_id, "endpoint-cross");
-        assert_eq!(skipped[0].skip_reason, "format_conversion_disabled");
+        assert!(skipped.is_empty());
     }
 
     #[tokio::test]

@@ -1080,7 +1080,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_sync_execution_runtime_preserves_upstream_status_and_json_body() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = crate::test_support::bind_loopback_listener()
             .await
             .expect("listener should bind");
         let addr = listener.local_addr().expect("local addr should resolve");
@@ -1140,7 +1140,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_sync_execution_runtime_supports_tunnel_relay() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = crate::test_support::bind_loopback_listener()
             .await
             .expect("listener should bind");
         let addr = listener.local_addr().expect("local addr should resolve");
@@ -1335,7 +1335,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_sync_execution_runtime_disables_redirects_by_default() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = crate::test_support::bind_loopback_listener()
             .await
             .expect("listener should bind");
         let addr = listener.local_addr().expect("local addr should resolve");
@@ -1408,7 +1408,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_sync_execution_runtime_follows_redirects_when_explicitly_enabled() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = crate::test_support::bind_loopback_listener()
             .await
             .expect("listener should bind");
         let addr = listener.local_addr().expect("local addr should resolve");
@@ -1487,7 +1487,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_sync_execution_runtime_forwards_http1_only_control_to_tunnel_relay() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = crate::test_support::bind_loopback_listener()
             .await
             .expect("listener should bind");
         let addr = listener.local_addr().expect("local addr should resolve");
@@ -1558,7 +1558,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_sync_execution_runtime_allows_tls_profile_best_effort() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = crate::test_support::bind_loopback_listener()
             .await
             .expect("listener should bind");
         let addr = listener.local_addr().expect("local addr should resolve");
@@ -1618,7 +1618,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_sync_execution_runtime_compresses_json_body_when_requested() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = crate::test_support::bind_loopback_listener()
             .await
             .expect("listener should bind");
         let addr = listener.local_addr().expect("local addr should resolve");
@@ -1696,7 +1696,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_sync_execution_runtime_reports_ttfb_once_upstream_response_starts() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = crate::test_support::bind_loopback_listener()
             .await
             .expect("listener should bind");
         let addr = listener.local_addr().expect("local addr should resolve");

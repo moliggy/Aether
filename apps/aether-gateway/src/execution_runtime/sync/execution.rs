@@ -172,10 +172,49 @@ pub(crate) async fn execute_execution_runtime_sync(
     };
     #[cfg(test)]
     let result = {
-        let remote_execution_runtime_base_url = state
+        if let Some(override_fn) = state.execution_runtime_sync_override.as_ref() {
+            match (override_fn.0)(&plan) {
+                Ok(result) => result,
+                Err(err) => {
+                    warn!(
+                        event_name = "sync_execution_runtime_test_override_failed",
+                        log_type = "ops",
+                        trace_id = %trace_id,
+                        request_id = %plan_request_id_for_log,
+                        candidate_id = ?plan_candidate_id,
+                        provider_name,
+                        endpoint_id,
+                        key_id,
+                        model_name,
+                        candidate_index = candidate_index.as_str(),
+                        error = ?err,
+                        "gateway test sync execution override failed"
+                    );
+                    let terminal_unix_secs = current_request_candidate_unix_ms();
+                    record_local_request_candidate_status(
+                        state,
+                        &plan,
+                        report_context.as_ref(),
+                        SchedulerRequestCandidateStatusUpdate {
+                            status: RequestCandidateStatus::Failed,
+                            status_code: None,
+                            error_type: Some("execution_runtime_unavailable".to_string()),
+                            error_message: Some(format!("{err:?}")),
+                            latency_ms: None,
+                            started_at_unix_ms: Some(candidate_started_unix_secs),
+                            finished_at_unix_ms: Some(terminal_unix_secs),
+                        },
+                    )
+                    .await;
+                    return Ok(None);
+                }
+            }
+        } else if state
             .execution_runtime_override_base_url()
-            .unwrap_or_default();
-        if remote_execution_runtime_base_url.trim().is_empty() {
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
             match DirectSyncExecutionRuntime::new()
                 .execute_sync(plan.clone())
                 .await
@@ -216,6 +255,9 @@ pub(crate) async fn execute_execution_runtime_sync(
                 }
             }
         } else {
+            let remote_execution_runtime_base_url = state
+                .execution_runtime_override_base_url()
+                .unwrap_or_default();
             let remote_outcome = execute_sync_via_remote_execution_runtime(
                 state,
                 remote_execution_runtime_base_url,

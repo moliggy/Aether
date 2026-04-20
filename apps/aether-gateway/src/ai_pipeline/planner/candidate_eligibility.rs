@@ -1,7 +1,6 @@
 use tracing::warn;
 
 use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
-use std::collections::BTreeSet;
 
 use crate::ai_pipeline::{GatewayProviderTransportSnapshot, PlannerAppState};
 use crate::orchestration::LocalExecutionCandidateMetadata;
@@ -101,7 +100,6 @@ where
 {
     let mut selectable = Vec::with_capacity(candidates.len());
     let mut skipped = Vec::new();
-    let normalized_client_api_format = client_api_format.trim().to_ascii_lowercase();
 
     for candidate in candidates {
         let Some(transport) = read_candidate_transport_snapshot(state, &candidate).await else {
@@ -113,6 +111,10 @@ where
             });
             continue;
         };
+        if candidate_is_ineligible_due_to_disabled_format_conversion(&transport, client_api_format)
+        {
+            continue;
+        }
         match runtime_skip_reason(&candidate, &transport) {
             Some(skip_reason) => skipped.push(SkippedLocalExecutionCandidate {
                 candidate,
@@ -128,28 +130,6 @@ where
             }),
         }
     }
-
-    let exact_selectable_keys = selectable
-        .iter()
-        .filter(|candidate| {
-            candidate
-                .provider_api_format
-                .eq_ignore_ascii_case(normalized_client_api_format.as_str())
-        })
-        .map(|candidate| {
-            (
-                candidate.candidate.provider_id.clone(),
-                candidate.candidate.key_id.clone(),
-            )
-        })
-        .collect::<BTreeSet<_>>();
-    skipped.retain(|candidate| {
-        candidate.skip_reason != "format_conversion_disabled"
-            || !exact_selectable_keys.contains(&(
-                candidate.candidate.provider_id.clone(),
-                candidate.candidate.key_id.clone(),
-            ))
-    });
 
     let ranked = rank_eligible_local_execution_candidates(
         state,
@@ -234,6 +214,32 @@ fn current_local_execution_candidate_common_skip_reason_with_transport(
     None
 }
 
+fn candidate_is_ineligible_due_to_disabled_format_conversion(
+    transport: &GatewayProviderTransportSnapshot,
+    client_api_format: &str,
+) -> bool {
+    let endpoint_api_format = transport.endpoint.api_format.trim().to_ascii_lowercase();
+    let client_api_format = client_api_format.trim().to_ascii_lowercase();
+    if client_api_format == endpoint_api_format {
+        return false;
+    }
+
+    crate::ai_pipeline::conversion::request_conversion_kind(
+        client_api_format.as_str(),
+        endpoint_api_format.as_str(),
+    )
+    .is_some()
+        && crate::ai_pipeline::conversion::request_conversion_requires_enable_flag(
+            client_api_format.as_str(),
+            endpoint_api_format.as_str(),
+        )
+        && !crate::ai_pipeline::conversion::request_conversion_enabled_for_transport(
+            transport,
+            client_api_format.as_str(),
+            endpoint_api_format.as_str(),
+        )
+}
+
 fn current_local_execution_candidate_skip_reason_with_transport(
     candidate: &SchedulerMinimalCandidateSelectionCandidate,
     transport: &GatewayProviderTransportSnapshot,
@@ -259,25 +265,7 @@ fn current_local_execution_candidate_skip_reason_with_transport(
         client_api_format.as_str(),
         endpoint_api_format.as_str(),
     ) {
-        let skip_reason = if crate::ai_pipeline::conversion::request_conversion_kind(
-            client_api_format.as_str(),
-            endpoint_api_format.as_str(),
-        )
-        .is_some()
-            && crate::ai_pipeline::conversion::request_conversion_requires_enable_flag(
-                client_api_format.as_str(),
-                endpoint_api_format.as_str(),
-            )
-            && !crate::ai_pipeline::conversion::request_conversion_enabled_for_transport(
-                transport,
-                client_api_format.as_str(),
-                endpoint_api_format.as_str(),
-            ) {
-            "format_conversion_disabled"
-        } else {
-            "transport_unsupported"
-        };
-        return Some(skip_reason);
+        return Some("transport_unsupported");
     }
 
     None

@@ -2,14 +2,14 @@ use super::{
     any, build_router_with_state, build_state_with_execution_runtime_override,
     encrypt_python_fernet_plaintext, hash_api_key, json, sample_local_openai_auth_snapshot,
     sample_local_openai_candidate_row, sample_local_openai_endpoint, sample_local_openai_key,
-    sample_local_openai_provider, start_server, Arc, Body, GatewayDataState, HeaderValue,
-    InMemoryAuthApiKeySnapshotRepository, InMemoryMinimalCandidateSelectionReadRepository,
-    InMemoryProviderCatalogReadRepository, InMemoryRequestCandidateRepository,
-    InMemoryUsageReadRepository, Json, Mutex, Request, RequestCandidateReadRepository,
-    RequestCandidateStatus, Response, Router, StatusCode, StoredAuthApiKeySnapshot,
-    StoredMinimalCandidateSelectionRow, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
-    StoredProviderCatalogProvider, StoredProviderModelMapping, UsageReadRepository,
-    UsageRuntimeConfig, DEVELOPMENT_ENCRYPTION_KEY, TRACE_ID_HEADER,
+    sample_local_openai_provider, send_request, start_server, Arc, Body, GatewayDataState,
+    HeaderValue, InMemoryAuthApiKeySnapshotRepository,
+    InMemoryMinimalCandidateSelectionReadRepository, InMemoryProviderCatalogReadRepository,
+    InMemoryRequestCandidateRepository, InMemoryUsageReadRepository, Json, Mutex, Request,
+    RequestCandidateReadRepository, RequestCandidateStatus, Response, Router, StatusCode,
+    StoredAuthApiKeySnapshot, StoredMinimalCandidateSelectionRow, StoredProviderCatalogEndpoint,
+    StoredProviderCatalogKey, StoredProviderCatalogProvider, StoredProviderModelMapping,
+    UsageReadRepository, UsageRuntimeConfig, DEVELOPMENT_ENCRYPTION_KEY, TRACE_ID_HEADER,
 };
 use crate::constants::LOCAL_EXECUTION_RUNTIME_MISS_REASON_HEADER;
 use aether_data_contracts::repository::usage::UsageBodyCaptureState;
@@ -672,79 +672,6 @@ async fn gateway_records_failed_usage_when_all_local_openai_chat_candidates_exha
 ) {
     let usage_repository = Arc::new(InMemoryUsageReadRepository::default());
     let request_candidate_repository = Arc::new(InMemoryRequestCandidateRepository::default());
-    let report_hits = Arc::new(Mutex::new(0usize));
-    let report_hits_clone = Arc::clone(&report_hits);
-    let decision_hits = Arc::new(Mutex::new(0usize));
-    let decision_hits_clone = Arc::clone(&decision_hits);
-    let plan_hits = Arc::new(Mutex::new(0usize));
-    let plan_hits_clone = Arc::clone(&plan_hits);
-    let public_hits = Arc::new(Mutex::new(0usize));
-    let public_hits_clone = Arc::clone(&public_hits);
-
-    let upstream = Router::new()
-        .route(
-            "/api/internal/gateway/decision-sync",
-            any(move |_request: Request| {
-                let decision_hits_inner = Arc::clone(&decision_hits_clone);
-                async move {
-                    *decision_hits_inner.lock().expect("mutex should lock") += 1;
-                    Json(json!({"action": "proxy_public"}))
-                }
-            }),
-        )
-        .route(
-            "/api/internal/gateway/plan-sync",
-            any(move |_request: Request| {
-                let plan_hits_inner = Arc::clone(&plan_hits_clone);
-                async move {
-                    *plan_hits_inner.lock().expect("mutex should lock") += 1;
-                    Json(json!({"action": "proxy_public"}))
-                }
-            }),
-        )
-        .route(
-            "/api/internal/gateway/report-sync",
-            any(move |_request: Request| {
-                let report_hits_inner = Arc::clone(&report_hits_clone);
-                async move {
-                    *report_hits_inner.lock().expect("mutex should lock") += 1;
-                    Json(json!({"ok": true}))
-                }
-            }),
-        )
-        .route(
-            "/v1/chat/completions",
-            any(move |_request: Request| {
-                let public_hits_inner = Arc::clone(&public_hits_clone);
-                async move {
-                    *public_hits_inner.lock().expect("mutex should lock") += 1;
-                    (StatusCode::IM_A_TEAPOT, Body::from("public-route-hit"))
-                }
-            }),
-        );
-
-    let execution_runtime = Router::new().route(
-        "/v1/execute/sync",
-        any(|_request: Request| async move {
-            Json(json!({
-                "request_id": "trace-openai-chat-local-report-sync-failure-123",
-                "status_code": 503,
-                "headers": {
-                    "content-type": "application/json"
-                },
-                "body": {
-                    "json_body": {
-                        "error": {
-                            "message": "primary unavailable"
-                        }
-                    }
-                },
-                "telemetry": {
-                    "elapsed_ms": 25
-                }
-            }))
-        }),
-    );
 
     let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
         Some(hash_api_key("sk-client-openai-local-report-sync-failure")),
@@ -763,29 +690,51 @@ async fn gateway_records_failed_usage_when_all_local_openai_chat_candidates_exha
         vec![sample_local_openai_key()],
     ));
 
-    let (upstream_url, upstream_handle) = start_server(upstream).await;
-    let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
-    let gateway_state =
-        build_state_with_execution_runtime_override(execution_runtime_url)
-    .with_data_state_for_tests(
-        GatewayDataState::with_auth_candidate_selection_provider_catalog_request_candidates_and_usage_for_tests(
-            auth_repository,
-            candidate_selection_repository,
-            provider_catalog_repository,
-            Arc::clone(&request_candidate_repository),
-            Arc::clone(&usage_repository),
-            DEVELOPMENT_ENCRYPTION_KEY,
-        ),
-    )
-    .with_usage_runtime_for_tests(UsageRuntimeConfig {
-        enabled: true,
-        ..UsageRuntimeConfig::default()
-    });
+    let gateway_state = crate::AppState::new()
+        .expect("gateway should build")
+        .with_execution_runtime_sync_override_for_tests(|plan| {
+            Ok(aether_contracts::ExecutionResult {
+                request_id: plan.request_id.clone(),
+                candidate_id: plan.candidate_id.clone(),
+                status_code: 503,
+                headers: std::collections::BTreeMap::from([(
+                    "content-type".to_string(),
+                    "application/json".to_string(),
+                )]),
+                body: Some(aether_contracts::ResponseBody {
+                    json_body: Some(json!({
+                        "error": {
+                            "message": "primary unavailable"
+                        }
+                    })),
+                    body_bytes_b64: None,
+                }),
+                telemetry: Some(aether_contracts::ExecutionTelemetry {
+                    ttfb_ms: None,
+                    elapsed_ms: Some(25),
+                    upstream_bytes: None,
+                }),
+                error: None,
+            })
+        })
+        .with_data_state_for_tests(
+            GatewayDataState::with_auth_candidate_selection_provider_catalog_request_candidates_and_usage_for_tests(
+                auth_repository,
+                candidate_selection_repository,
+                provider_catalog_repository,
+                Arc::clone(&request_candidate_repository),
+                Arc::clone(&usage_repository),
+                DEVELOPMENT_ENCRYPTION_KEY,
+            ),
+        )
+        .with_usage_runtime_for_tests(UsageRuntimeConfig {
+            enabled: true,
+            ..UsageRuntimeConfig::default()
+        });
     let gateway = build_router_with_state(gateway_state);
-    let (gateway_url, gateway_handle) = start_server(gateway).await;
-
-    let response = reqwest::Client::new()
-        .post(format!("{gateway_url}/v1/chat/completions"))
+    let request = Request::builder()
+        .method(http::Method::POST)
+        .uri("/v1/chat/completions")
         .header(http::header::CONTENT_TYPE, "application/json")
         .header(
             http::header::AUTHORIZATION,
@@ -795,13 +744,17 @@ async fn gateway_records_failed_usage_when_all_local_openai_chat_candidates_exha
             TRACE_ID_HEADER,
             "trace-openai-chat-local-report-sync-failure-123",
         )
-        .body("{\"model\":\"gpt-5\",\"messages\":[]}")
-        .send()
-        .await
-        .expect("request should complete");
+        .body(Body::from("{\"model\":\"gpt-5\",\"messages\":[]}"))
+        .expect("request should build");
+    let response = send_request(gateway, request).await;
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let body_json: serde_json::Value = response.json().await.expect("body should parse");
+    let body_json: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read"),
+    )
+    .expect("body should parse");
     assert_eq!(body_json["error"]["type"], "http_error");
 
     let stored_usage = wait_for_usage_status(
@@ -855,16 +808,6 @@ async fn gateway_records_failed_usage_when_all_local_openai_chat_candidates_exha
     assert_eq!(stored_candidates.len(), 1);
     assert_eq!(stored_candidates[0].status, RequestCandidateStatus::Failed);
     assert_eq!(stored_candidates[0].status_code, Some(503));
-
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert_eq!(*report_hits.lock().expect("mutex should lock"), 0);
-    assert_eq!(*decision_hits.lock().expect("mutex should lock"), 0);
-    assert_eq!(*plan_hits.lock().expect("mutex should lock"), 0);
-    assert_eq!(*public_hits.lock().expect("mutex should lock"), 0);
-
-    gateway_handle.abort();
-    execution_runtime_handle.abort();
-    upstream_handle.abort();
 }
 
 #[tokio::test]
@@ -1072,7 +1015,6 @@ async fn gateway_records_failed_usage_for_claude_runtime_miss_without_execution_
 
     gateway_handle.abort();
     execution_runtime_handle.abort();
-    upstream_handle.abort();
 }
 
 #[tokio::test]
@@ -1626,7 +1568,7 @@ async fn gateway_records_failed_usage_when_all_local_claude_cli_candidates_are_s
             .headers()
             .get(LOCAL_EXECUTION_RUNTIME_MISS_REASON_HEADER)
             .and_then(|value| value.to_str().ok()),
-        Some("all_candidates_skipped")
+        Some("candidate_list_empty")
     );
     let body_json: serde_json::Value = response.json().await.expect("body should parse");
     assert_eq!(body_json["error"]["type"], "http_error");
@@ -1666,7 +1608,7 @@ async fn gateway_records_failed_usage_when_all_local_claude_cli_candidates_are_s
     );
     assert_eq!(
         stored_usage.routing_local_execution_runtime_miss_reason(),
-        Some("all_candidates_skipped")
+        Some("candidate_list_empty")
     );
     assert_eq!(
         stored_usage.error_message.as_deref(),
@@ -1685,12 +1627,7 @@ async fn gateway_records_failed_usage_when_all_local_claude_cli_candidates_are_s
         .list_by_request_id("trace-claude-cli-usage-local-miss-123")
         .await
         .expect("request candidate trace should read");
-    assert_eq!(stored_candidates.len(), 1);
-    assert_eq!(stored_candidates[0].status, RequestCandidateStatus::Skipped);
-    assert_eq!(
-        stored_candidates[0].skip_reason.as_deref(),
-        Some("format_conversion_disabled")
-    );
+    assert!(stored_candidates.is_empty());
     assert_eq!(stored_usage.routing_candidate_id(), None);
     assert_eq!(*public_hits.lock().expect("mutex should lock"), 0);
 
@@ -1912,7 +1849,7 @@ async fn gateway_keeps_failed_usage_request_capture_lightweight_for_large_local_
             .headers()
             .get(LOCAL_EXECUTION_RUNTIME_MISS_REASON_HEADER)
             .and_then(|value| value.to_str().ok()),
-        Some("all_candidates_skipped")
+        Some("candidate_list_empty")
     );
 
     let stored_usage = wait_for_usage_status(
@@ -1936,12 +1873,7 @@ async fn gateway_keeps_failed_usage_request_capture_lightweight_for_large_local_
         .list_by_request_id("trace-claude-cli-usage-local-miss-large-123")
         .await
         .expect("request candidate trace should read");
-    assert_eq!(stored_candidates.len(), 1);
-    assert_eq!(stored_candidates[0].status, RequestCandidateStatus::Skipped);
-    assert_eq!(
-        stored_candidates[0].skip_reason.as_deref(),
-        Some("format_conversion_disabled")
-    );
+    assert!(stored_candidates.is_empty());
 
     gateway_handle.abort();
     execution_runtime_handle.abort();

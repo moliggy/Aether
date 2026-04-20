@@ -121,4 +121,7 @@ fn insert_header_if_missing(
 mod execution_runtime_contract_tests;
 
 #[cfg(test)]
+pub(crate) mod test_support;
+
+#[cfg(test)]
 mod tests;

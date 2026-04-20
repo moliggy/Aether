@@ -386,7 +386,7 @@ mod tests {
     use std::sync::Arc;
 
     async fn start_server(app: Router) -> (String, tokio::task::JoinHandle<()>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = crate::test_support::bind_loopback_listener()
             .await
             .expect("listener should bind");
         let addr = listener.local_addr().expect("local addr should resolve");

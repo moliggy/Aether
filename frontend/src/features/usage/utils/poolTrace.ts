@@ -12,10 +12,9 @@ export const TIMELINE_STATUS: CandidateRecord['status'][] = [
   'stream_interrupted',
 ]
 
-const POOL_UNATTEMPTED_STATUS = new Set<CandidateRecord['status']>([
+const POOL_HIDDEN_STATUS = new Set<CandidateRecord['status']>([
   'available',
   'unused',
-  'skipped',
 ])
 
 const PROVIDER_TYPE_LIKE_NAMES = new Set<string>([
@@ -40,8 +39,8 @@ export const makeAttemptKey = (candidateIndex: number, retryIndex: number): stri
   return `${candidateIndex}:${retryIndex}`
 }
 
-export const isPoolAttemptedCandidate = (candidate: CandidateRecord): boolean => {
-  if (POOL_UNATTEMPTED_STATUS.has(candidate.status)) return false
+export const isPoolParticipatedCandidate = (candidate: CandidateRecord): boolean => {
+  if (POOL_HIDDEN_STATUS.has(candidate.status)) return false
   if (candidate.status === 'pending' && !candidate.started_at) return false
   return true
 }
@@ -64,6 +63,38 @@ export const extractPoolGroupId = (
   if (typeof value !== 'string') return null
   const text = value.trim()
   return text || null
+}
+
+export function buildPoolParticipatedCandidates(
+  rawTimeline: CandidateRecord[],
+  attempts: unknown,
+  requestId?: string | null,
+): CandidateRecord[] {
+  const fromTrace = rawTimeline.filter(
+    candidate => extractPoolGroupId(candidate) !== null && isPoolParticipatedCandidate(candidate),
+  )
+  const fromAudit = buildPoolAttemptCandidatesFromAudit(rawTimeline, attempts, requestId)
+
+  if (fromTrace.length === 0) return fromAudit
+  if (fromAudit.length === 0) return fromTrace
+
+  const traceKeys = new Set(
+    fromTrace.map(candidate => makeAttemptKey(candidate.candidate_index, candidate.retry_index)),
+  )
+  const merged = [...fromTrace]
+  for (const candidate of fromAudit) {
+    const key = makeAttemptKey(candidate.candidate_index, candidate.retry_index)
+    if (!traceKeys.has(key)) {
+      merged.push(candidate)
+    }
+  }
+
+  return merged.sort((a, b) => {
+    if (a.candidate_index !== b.candidate_index) {
+      return a.candidate_index - b.candidate_index
+    }
+    return a.retry_index - b.retry_index
+  })
 }
 
 export function buildPoolAttemptCandidatesFromAudit(
@@ -154,7 +185,7 @@ export function buildPoolAttemptCandidatesFromAudit(
         }
       }
 
-      return isPoolAttemptedCandidate(merged) ? merged : null
+      return isPoolParticipatedCandidate(merged) ? merged : null
     })
     .filter((item): item is CandidateRecord => item !== null)
 }

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import type { CandidateRecord } from '@/api/requestTrace'
-import { buildPoolAttemptCandidatesFromAudit } from '@/features/usage/utils/poolTrace'
+import {
+  buildPoolAttemptCandidatesFromAudit,
+  buildPoolParticipatedCandidates,
+} from '@/features/usage/utils/poolTrace'
 
 function buildCandidate(
   overrides: Partial<CandidateRecord> = {},
@@ -19,7 +22,7 @@ function buildCandidate(
 }
 
 describe('poolTrace', () => {
-  it('keeps only actually attempted pool nodes from scheduling audit fallback', () => {
+  it('keeps only pool nodes that actually participated in scheduling audit fallback', () => {
     const attempts = buildPoolAttemptCandidatesFromAudit([], [
       {
         candidate_index: 0,
@@ -63,9 +66,11 @@ describe('poolTrace', () => {
       },
     ], 'req-1')
 
-    expect(attempts).toHaveLength(1)
+    expect(attempts).toHaveLength(2)
     expect(attempts[0].key_id).toBe('key-success')
     expect(attempts[0].status).toBe('success')
+    expect(attempts[1].key_id).toBe('key-skipped')
+    expect(attempts[1].status).toBe('skipped')
   })
 
   it('preserves real trace attempts even when audit status is non-standard', () => {
@@ -110,5 +115,59 @@ describe('poolTrace', () => {
     expect(attempts[0].id).toBe('cand-trace-1')
     expect(attempts[0].status).toBe('failed')
     expect(attempts[0].provider_name).toBe('Codex反代')
+  })
+
+  it('merges audit-only skipped pool nodes when trace only carries partial pool metadata', () => {
+    const rawTimeline = [
+      buildCandidate({
+        id: 'cand-success',
+        candidate_index: 1,
+        retry_index: 0,
+        provider_id: 'provider-1',
+        provider_name: 'Codex反代',
+        key_id: 'key-success',
+        key_name: 'Success Key',
+        status: 'success',
+        extra_data: { pool_group_id: 'provider-1' },
+        started_at: '2026-04-19T12:00:00.000Z',
+      }),
+      buildCandidate({
+        id: 'cand-skipped',
+        candidate_index: 2,
+        retry_index: 0,
+        provider_id: 'provider-1',
+        provider_name: 'Codex反代',
+        key_id: 'key-skipped',
+        key_name: 'Skipped Key',
+        status: 'skipped',
+      }),
+    ]
+
+    const attempts = buildPoolParticipatedCandidates(rawTimeline, [
+      {
+        candidate_index: 1,
+        retry_index: 0,
+        provider_id: 'provider-1',
+        provider_name: 'Codex反代',
+        key_id: 'key-success',
+        key_name: 'Success Key',
+        status: 'success',
+        pool_group_id: 'provider-1',
+      },
+      {
+        candidate_index: 2,
+        retry_index: 0,
+        provider_id: 'provider-1',
+        provider_name: 'Codex反代',
+        key_id: 'key-skipped',
+        key_name: 'Skipped Key',
+        status: 'skipped',
+        pool_group_id: 'provider-1',
+      },
+    ], 'req-1')
+
+    expect(attempts).toHaveLength(2)
+    expect(attempts.map(item => item.key_id)).toEqual(['key-success', 'key-skipped'])
+    expect(attempts[1].extra_data?.pool_group_id).toBe('provider-1')
   })
 })

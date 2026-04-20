@@ -130,6 +130,8 @@ impl AppState {
             execution_runtime_override_base_url: execution_runtime_override_base_url
                 .map(|value| value.trim_end_matches('/').to_string())
                 .filter(|value| !value.is_empty()),
+            #[cfg(test)]
+            execution_runtime_sync_override: None,
             data: Arc::clone(&data),
             usage_runtime: Arc::new(usage::UsageRuntime::disabled()),
             video_tasks: Arc::new(VideoTaskService::new(

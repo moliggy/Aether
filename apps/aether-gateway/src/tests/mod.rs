@@ -30,7 +30,7 @@ pub(super) use super::state::{AppState, FrontdoorCorsConfig};
 pub(super) use super::usage::UsageRuntimeConfig;
 
 pub(super) async fn start_server(app: Router) -> (String, tokio::task::JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+    let listener = crate::test_support::bind_loopback_listener()
         .await
         .expect("listener should bind");
     let addr = listener.local_addr().expect("local addr should resolve");
@@ -43,6 +43,20 @@ pub(super) async fn start_server(app: Router) -> (String, tokio::task::JoinHandl
         .expect("server should run");
     });
     (format!("http://{addr}"), handle)
+}
+
+pub(super) async fn send_request(app: Router, mut request: Request) -> Response {
+    use tower::ServiceExt;
+
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            40000,
+        ))));
+    app.oneshot(request)
+        .await
+        .expect("router request should complete")
 }
 
 pub(super) fn build_router_with_execution_runtime_override(

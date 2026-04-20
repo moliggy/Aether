@@ -385,7 +385,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_execution_frame_stream_reports_ttfb_after_first_upstream_chunk() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = crate::test_support::bind_loopback_listener()
             .await
             .expect("listener should bind");
         let addr = listener.local_addr().expect("local addr should resolve");
@@ -471,7 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_execution_frame_stream_emits_telemetry_before_first_data_frame() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = crate::test_support::bind_loopback_listener()
             .await
             .expect("listener should bind");
         let addr = listener.local_addr().expect("local addr should resolve");

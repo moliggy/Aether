@@ -33,9 +33,6 @@
               <h4 class="text-sm font-semibold">
                 请求链路追踪
               </h4>
-              <span class="text-xs text-muted-foreground">
-                按实际调度顺序
-              </span>
               <Badge :variant="getFinalStatusBadgeVariant(computedFinalStatus)">
                 {{ getFinalStatusLabel(computedFinalStatus) }}
               </Badge>
@@ -499,9 +496,8 @@ import { parseApiError } from '@/utils/errorParser'
 import { formatApiFormat } from '@/api/endpoints/types/api-format'
 import { resolveTimelineFinalStatus } from '../utils/status'
 import {
-  buildPoolAttemptCandidatesFromAudit,
+  buildPoolParticipatedCandidates,
   extractPoolGroupId,
-  isPoolAttemptedCandidate,
   makeAttemptKey,
   TIMELINE_STATUS,
 } from '../utils/poolTrace'
@@ -736,21 +732,10 @@ const schedulingAudit = computed<Record<string, unknown> | null>(() => {
 })
 
 const poolAttemptCandidates = computed<CandidateRecord[]>(() => {
-  // 新链路：优先使用后端写入的 extra_data.pool_group_id，
-  // 但仅展示实际进入号池执行的 key（排除 available/unused/skipped）。
-  const fromTrace = rawTimeline.value.filter(
-    (candidate) => extractPoolGroupId(candidate) !== null && isPoolAttemptedCandidate(candidate),
-  )
-  if (fromTrace.length > 0) {
-    return fromTrace
-  }
-
-  // 兼容旧链路：回退到 request_metadata.scheduling_audit.attempts。
-  const audit = schedulingAudit.value
-  if (!audit) return []
-  return buildPoolAttemptCandidatesFromAudit(
+  const auditAttempts = schedulingAudit.value?.attempts
+  return buildPoolParticipatedCandidates(
     rawTimeline.value,
-    audit.attempts,
+    auditAttempts,
     props.requestId,
   )
 })
@@ -1732,7 +1717,7 @@ const getDisplayStatus = (attempt: CandidateRecord | null | undefined): string =
 .sub-dot.status-failed { background: #ef4444; color: #ef4444; }
 .sub-dot.status-cancelled { background: #f59e0b; color: #f59e0b; }
 .sub-dot.status-pending { background: #3b82f6; color: #3b82f6; }
-.sub-dot.status-skipped { background: hsl(var(--primary)); color: hsl(var(--primary)); }
+.sub-dot.status-skipped { background: hsl(var(--foreground)); color: hsl(var(--foreground)); }
 .sub-dot.status-available { background: #d1d5db; color: #d1d5db; }
 
 /* 选中状态：呼吸动画 + 涟漪效果 */
@@ -1795,7 +1780,7 @@ const getDisplayStatus = (attempt: CandidateRecord | null | undefined): string =
 .node-dot.status-failed { color: #ef4444; }
 .node-dot.status-cancelled { color: #f59e0b; }
 .node-dot.status-pending { color: #3b82f6; }
-.node-dot.status-skipped { color: hsl(var(--primary)); }
+.node-dot.status-skipped { color: hsl(var(--foreground)); }
 .node-dot.status-available { color: #d1d5db; }
 
 /* 连接线容器 */
@@ -1858,7 +1843,7 @@ const getDisplayStatus = (attempt: CandidateRecord | null | undefined): string =
 .title-dot.status-failed { background: #ef4444; }
 .title-dot.status-cancelled { background: #f59e0b; }
 .title-dot.status-pending { background: #3b82f6; }
-.title-dot.status-skipped { background: hsl(var(--primary)); }
+.title-dot.status-skipped { background: hsl(var(--foreground)); }
 .title-dot.status-available { background: #d1d5db; }
 
 .title-text {
@@ -1951,8 +1936,8 @@ const getDisplayStatus = (attempt: CandidateRecord | null | undefined): string =
 }
 
 .status-tag.status-skipped {
-  background: hsl(var(--primary) / 0.15);
-  color: hsl(var(--primary));
+  background: hsl(var(--foreground) / 0.08);
+  color: hsl(var(--foreground));
 }
 
 .status-tag.status-available {

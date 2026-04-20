@@ -20,10 +20,32 @@ use super::{
     LocalProviderDeleteTaskState, ProviderTransportSnapshotCacheKey,
 };
 
+#[cfg(test)]
+type TestExecutionRuntimeSyncOverrideFn = dyn Fn(
+        &aether_contracts::ExecutionPlan,
+    ) -> Result<aether_contracts::ExecutionResult, crate::GatewayError>
+    + Send
+    + Sync;
+
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct TestExecutionRuntimeSyncOverride(
+    pub(crate) Arc<TestExecutionRuntimeSyncOverrideFn>,
+);
+
+#[cfg(test)]
+impl std::fmt::Debug for TestExecutionRuntimeSyncOverride {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TestExecutionRuntimeSyncOverride(..)")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AppState {
     #[cfg(test)]
     pub(crate) execution_runtime_override_base_url: Option<String>,
+    #[cfg(test)]
+    pub(crate) execution_runtime_sync_override: Option<TestExecutionRuntimeSyncOverride>,
     pub(crate) data: Arc<GatewayDataState>,
     pub(crate) usage_runtime: Arc<usage::UsageRuntime>,
     pub(crate) video_tasks: Arc<VideoTaskService>,

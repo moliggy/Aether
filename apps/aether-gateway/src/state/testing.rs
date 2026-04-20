@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 
+use aether_contracts::{ExecutionPlan, ExecutionResult};
 use aether_data_contracts::repository::candidates::RequestCandidateReadRepository;
 use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
 use aether_data_contracts::repository::usage::{UsageReadRepository, UsageRepository};
@@ -167,6 +168,22 @@ impl AppState {
     ) -> Self {
         self.usage_runtime =
             Arc::new(usage::UsageRuntime::new(config).expect("usage runtime config should build"));
+        self
+    }
+
+    pub(crate) fn with_execution_runtime_sync_override_for_tests<F>(
+        mut self,
+        override_fn: F,
+    ) -> Self
+    where
+        F: Fn(&ExecutionPlan) -> Result<ExecutionResult, crate::GatewayError>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.execution_runtime_sync_override = Some(super::app::TestExecutionRuntimeSyncOverride(
+            Arc::new(override_fn),
+        ));
         self
     }
 
