@@ -281,6 +281,83 @@ fn apply_imported_oauth_key_credentials(
         };
     }
 
+    // Importing OAuth credentials replaces the previous session state, so stale
+    // expiry/invalid markers must not survive across the overwrite.
+    record.expires_at_unix_secs = imported_oauth_expires_at_unix_secs(normalized_auth_config);
+    record.oauth_invalid_at_unix_secs = None;
+    record.oauth_invalid_reason = None;
+
+    Ok(())
+}
+
+fn imported_oauth_expires_at_unix_secs(normalized_auth_config: Option<&Value>) -> Option<u64> {
+    let object = normalized_auth_config?.as_object()?;
+    for field in ["expires_at", "expiresAt", "expiry", "exp"] {
+        let Some(value) = object.get(field) else {
+            continue;
+        };
+        match value {
+            Value::Number(number) => {
+                if let Some(expires_at) = number.as_u64() {
+                    return Some(expires_at);
+                }
+            }
+            Value::String(raw) => {
+                if let Ok(expires_at) = raw.trim().parse::<u64>() {
+                    return Some(expires_at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn imported_oauth_has_refresh_token(normalized_auth_config: Option<&Value>) -> bool {
+    normalized_auth_config
+        .and_then(Value::as_object)
+        .and_then(|object| object.get("refresh_token"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+}
+
+async fn refresh_imported_oauth_key_after_persist(
+    state: &AdminAppState<'_>,
+    provider: &aether_data_contracts::repository::provider_catalog::StoredProviderCatalogProvider,
+    key_id: &str,
+) -> Result<(), GatewayError> {
+    let endpoints = state
+        .list_provider_catalog_endpoints_by_provider_ids(std::slice::from_ref(&provider.id))
+        .await?;
+    let Some(endpoint) =
+        crate::handlers::admin::provider::oauth::runtime::provider_oauth_runtime_endpoint_for_provider(
+            provider.provider_type.as_str(),
+            &endpoints,
+        )
+    else {
+        return Ok(());
+    };
+    let Some(transport) = state
+        .read_provider_transport_snapshot(&provider.id, &endpoint.id, key_id)
+        .await?
+    else {
+        return Ok(());
+    };
+    if !crate::provider_transport::supports_local_oauth_request_auth_resolution(&transport) {
+        return Ok(());
+    }
+
+    if let Err(error) = state.force_local_oauth_refresh_entry(&transport).await {
+        tracing::warn!(
+            provider_id = %provider.id,
+            provider_type = %provider.provider_type,
+            key_id = %key_id,
+            error = ?error,
+            "admin system import oauth refresh after credential import failed"
+        );
+    }
+
     Ok(())
 }
 
@@ -1130,6 +1207,16 @@ impl<'a> AdminAppState<'a> {
                                     "更新 Provider '{provider_name}' 的 Key 失败"
                                 ))));
                             };
+                            if auth_type == "oauth"
+                                && imported_oauth_has_refresh_token(normalized_auth_config.as_ref())
+                            {
+                                refresh_imported_oauth_key_after_persist(
+                                    self,
+                                    &provider,
+                                    &persisted.id,
+                                )
+                                .await?;
+                            }
                             existing_keys[existing_index] = persisted;
                             stats.keys.updated += 1;
                         }
@@ -1170,6 +1257,11 @@ impl<'a> AdminAppState<'a> {
                         "创建 Provider '{provider_name}' 的 Key 失败"
                     ))));
                 };
+                if auth_type == "oauth"
+                    && imported_oauth_has_refresh_token(normalized_auth_config.as_ref())
+                {
+                    refresh_imported_oauth_key_after_persist(self, &provider, &created.id).await?;
+                }
                 existing_keys.push(created);
                 stats.keys.created += 1;
             }

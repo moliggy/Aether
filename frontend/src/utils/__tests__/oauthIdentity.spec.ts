@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { getOAuthOrgBadge } from '../oauthIdentity'
 
 describe('getOAuthOrgBadge', () => {
-  it('prefers organization identity over account display name', () => {
+  it('prefers compact account id over organization badge when available', () => {
     const badge = getOAuthOrgBadge({
       oauth_account_id: 'acct-demo-001',
       oauth_account_name: 'Workspace Alpha',
@@ -14,8 +14,8 @@ describe('getOAuthOrgBadge', () => {
     })
 
     expect(badge).toEqual({
-      id: 'org-personal-1234',
-      label: 'org:person...1234',
+      id: 'acct-demo-001',
+      label: 'demo0',
       title: 'name: Workspace Alpha | account_id: acct-demo-001 | account_user_id: user-1__acct-demo-001 | org_id: org-personal-1234 | org_title: Personal',
     })
   })
@@ -28,8 +28,20 @@ describe('getOAuthOrgBadge', () => {
 
     expect(badge).toEqual({
       id: 'acct-demo-001',
-      label: 'acct-dem',
+      label: 'demo0',
       title: 'name: Workspace Alpha | account_id: acct-demo-001',
+    })
+  })
+
+  it('drops the leading prefix before taking the 5-character account badge', () => {
+    const badge = getOAuthOrgBadge({
+      oauth_account_id: 'org-HUone5DwhkDWrgXpDR3JJbGi',
+    })
+
+    expect(badge).toEqual({
+      id: 'org-HUone5DwhkDWrgXpDR3JJbGi',
+      label: 'HUone',
+      title: 'account_id: org-HUone5DwhkDWrgXpDR3JJbGi',
     })
   })
 
@@ -74,8 +86,8 @@ describe('getOAuthOrgBadge', () => {
 
     expect(first).not.toBe(second)
     expect(second).toEqual({
-      id: 'org-team-5678',
-      label: 'org:team-5678',
+      id: 'acct-demo-001',
+      label: 'demo0',
       title: 'account_id: acct-demo-001 | org_id: org-team-5678 | org_title: Team',
     })
   })

@@ -77,8 +77,18 @@ function formatOAuthOrganizationBadge(orgId: string): string {
   return `org:${normalized.slice(0, 6)}...${normalized.slice(-4)}`
 }
 
+function compactOAuthAccountId(accountId: string): string {
+  const normalized = accountId.trim()
+  if (!normalized) return ''
+
+  const withoutPrefix = normalized.replace(/^[^:_-]+[-_:]+/, '')
+  const compact = withoutPrefix.replace(/[-_:]+/g, '')
+
+  return compact || withoutPrefix || normalized
+}
+
 function formatOAuthAccountBadge(accountId: string): string {
-  return accountId.slice(0, 8)
+  return compactOAuthAccountId(accountId).slice(0, 5)
 }
 
 function formatOAuthAccountUserBadge(accountUserId: string): string {
@@ -211,18 +221,18 @@ export function getOAuthOrgBadge(
   const accountName = readStr(value?.oauth_account_name)
   const accountUserId = readStr(value?.oauth_account_user_id)
 
-  const badgeId = org?.id || accountId || accountUserId || ''
+  const badgeId = accountId || accountUserId || org?.id || ''
   if (!badgeId) {
     setCachedOAuthOrgBadge(value, org, null)
     return null
   }
 
-  const label = org
-    ? formatOAuthOrganizationBadge(org.id)
-    : accountId
-      ? formatOAuthAccountBadge(accountId)
-      : accountUserId
-        ? formatOAuthAccountUserBadge(accountUserId)
+  const label = accountId
+    ? formatOAuthAccountBadge(accountId)
+    : accountUserId
+      ? formatOAuthAccountUserBadge(accountUserId)
+      : org
+        ? formatOAuthOrganizationBadge(org.id)
         : ''
   if (!label) {
     setCachedOAuthOrgBadge(value, org, null)
