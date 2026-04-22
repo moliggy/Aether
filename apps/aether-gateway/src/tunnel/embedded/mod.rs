@@ -19,7 +19,7 @@ use axum::routing::{get, post};
 use axum::Router;
 use tracing::warn;
 
-use crate::data::GatewayDataState;
+use crate::{data::GatewayDataState, middleware};
 
 pub use control_plane::ControlPlaneClient;
 pub use hub::{ConnConfig, HubRouter, LocalBodyEvent, ProxyConn};
@@ -138,16 +138,18 @@ impl AppState {
 }
 
 pub fn build_router_with_state(state: AppState) -> Router {
-    Router::new()
-        .route("/health", get(health))
-        .route("/metrics", get(metrics))
-        .route("/stats", get(stats))
-        .route("/api/internal/proxy-tunnel", get(ws_proxy))
-        .route(
-            "/api/internal/tunnel/relay/{node_id}",
-            post(local_relay::relay_request),
-        )
-        .with_state(state)
+    middleware::apply_cf_header_stripping(
+        Router::new()
+            .route("/health", get(health))
+            .route("/metrics", get(metrics))
+            .route("/stats", get(stats))
+            .route("/api/internal/proxy-tunnel", get(ws_proxy))
+            .route(
+                "/api/internal/tunnel/relay/{node_id}",
+                post(local_relay::relay_request),
+            )
+            .with_state(state),
+    )
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {

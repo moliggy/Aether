@@ -1,36 +1,146 @@
-use axum::{extract::Request, middleware::Next, response::Response};
-use http::header::HeaderName;
+use axum::{extract::Request, middleware::Next, response::Response, Router};
+use http::{header::HeaderName, HeaderMap};
 
-/// Cloudflare headers to strip from incoming requests and outgoing responses.
-/// Prevents leaking CF metadata to upstream providers or back to clients.
-static CF_HEADERS: &[&str] = &[
-    "cf-connecting-ip",
-    "cf-ipcountry",
-    "cf-ray",
-    "cf-visitor",
-    "cdn-loop",
-    "true-client-ip",
-    "cf-worker",
-    "cf-ew-via",
-    "cf-warp-tag-id",
-];
+/// Cloudflare-specific headers that are not part of the `cf-*` prefix family.
+const CF_EXACT_HEADERS: &[&str] = &["cdn-loop", "true-client-ip"];
+
+fn should_strip_cf_header(name: &HeaderName) -> bool {
+    let normalized = name.as_str();
+    normalized.starts_with("cf-") || CF_EXACT_HEADERS.contains(&normalized)
+}
+
+fn strip_cf_headers(headers: &mut HeaderMap) {
+    let to_remove: Vec<_> = headers
+        .keys()
+        .filter(|name| should_strip_cf_header(name))
+        .cloned()
+        .collect();
+    for name in to_remove {
+        headers.remove(name);
+    }
+}
+
+pub(crate) fn apply_cf_header_stripping(router: Router) -> Router {
+    router.layer(axum::middleware::from_fn(strip_cf_headers_middleware))
+}
 
 pub async fn strip_cf_headers_middleware(mut request: Request, next: Next) -> Response {
-    // Strip CF headers from the incoming request
-    for name in CF_HEADERS {
-        if let Ok(header) = HeaderName::from_bytes(name.as_bytes()) {
-            request.headers_mut().remove(&header);
-        }
-    }
+    strip_cf_headers(request.headers_mut());
 
     let mut response = next.run(request).await;
 
-    // Strip CF headers from the outgoing response
-    for name in CF_HEADERS {
-        if let Ok(header) = HeaderName::from_bytes(name.as_bytes()) {
-            response.headers_mut().remove(&header);
-        }
-    }
+    strip_cf_headers(response.headers_mut());
 
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::{to_bytes, Body};
+    use axum::routing::any;
+    use axum::Router;
+    use http::{HeaderValue, Request, Response};
+    use tower::ServiceExt;
+
+    use super::apply_cf_header_stripping;
+
+    #[tokio::test]
+    async fn strips_cf_prefixed_and_exact_headers_from_request_and_response() {
+        let app = apply_cf_header_stripping(Router::new().route(
+            "/",
+            any(|headers: http::HeaderMap| async move {
+                let leaked = headers.contains_key("cf-ipcity")
+                    || headers.contains_key("cf-ray")
+                    || headers.contains_key("true-client-ip")
+                    || headers.contains_key("cdn-loop");
+                let mut response =
+                    Response::new(Body::from(if leaked { "leaked" } else { "clean" }));
+                response.headers_mut().insert(
+                    http::header::HeaderName::from_static("cf-ipcity"),
+                    HeaderValue::from_static("Shanghai"),
+                );
+                response.headers_mut().insert(
+                    http::header::HeaderName::from_static("cf-cache-status"),
+                    HeaderValue::from_static("HIT"),
+                );
+                response.headers_mut().insert(
+                    http::header::HeaderName::from_static("true-client-ip"),
+                    HeaderValue::from_static("1.1.1.1"),
+                );
+                response.headers_mut().insert(
+                    http::header::HeaderName::from_static("cdn-loop"),
+                    HeaderValue::from_static("cloudflare"),
+                );
+                response
+            }),
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("cf-ipcity", "Shanghai")
+                    .header("cf-ray", "abc123")
+                    .header("true-client-ip", "1.1.1.1")
+                    .header("cdn-loop", "cloudflare")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert!(response.headers().get("cf-ipcity").is_none());
+        assert!(response.headers().get("cf-cache-status").is_none());
+        assert!(response.headers().get("true-client-ip").is_none());
+        assert!(response.headers().get("cdn-loop").is_none());
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        assert_eq!(body.as_ref(), b"clean");
+    }
+
+    #[tokio::test]
+    async fn preserves_non_cf_headers() {
+        let app = apply_cf_header_stripping(Router::new().route(
+            "/",
+            any(|headers: http::HeaderMap| async move {
+                let mut response = Response::new(Body::from(
+                    headers
+                        .get("x-custom-header")
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string(),
+                ));
+                response.headers_mut().insert(
+                    http::header::HeaderName::from_static("x-custom-response"),
+                    HeaderValue::from_static("kept"),
+                );
+                response
+            }),
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("x-custom-header", "kept")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(
+            response
+                .headers()
+                .get("x-custom-response")
+                .and_then(|value| value.to_str().ok()),
+            Some("kept")
+        );
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        assert_eq!(body.as_ref(), b"kept");
+    }
 }

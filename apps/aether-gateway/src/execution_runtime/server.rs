@@ -20,6 +20,7 @@ use thiserror::Error;
 use crate::execution_runtime::{
     build_direct_execution_frame_stream, DirectSyncExecutionRuntime, ExecutionRuntimeTransportError,
 };
+use crate::middleware;
 
 const EXECUTION_RUNTIME_COMPONENT: &str = "aether-gateway-execution-runtime";
 const REQUEST_GATE_NAME: &str = "execution_runtime_requests";
@@ -128,12 +129,14 @@ pub fn build_execution_runtime_router_with_request_gates(
             .with_distributed_request_gate(gate),
         None => ExecutionRuntimeAppState::with_request_concurrency_limit(limit),
     };
-    Router::new()
-        .route("/health", get(health))
-        .route("/metrics", get(metrics))
-        .route("/v1/execute/sync", post(execute_sync))
-        .route("/v1/execute/stream", post(execute_stream))
-        .with_state(state)
+    middleware::apply_cf_header_stripping(
+        Router::new()
+            .route("/health", get(health))
+            .route("/metrics", get(metrics))
+            .route("/v1/execute/sync", post(execute_sync))
+            .route("/v1/execute/stream", post(execute_stream))
+            .with_state(state),
+    )
 }
 
 pub async fn serve_execution_runtime_tcp(

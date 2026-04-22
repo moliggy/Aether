@@ -959,20 +959,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let frontdoor_health_url = format!("{public_base_url}/_gateway/health");
     let api_router = build_router_with_state(state);
 
-    // Compose the final router: API routes + optional static file serving + CF header stripping
+    // Compose the final router: API routes + optional static file serving.
     let router = if let Some(ref static_dir) = args.static_dir {
         use tower_http::compression::CompressionLayer;
         info!(static_dir = %static_dir, "serving frontend static files");
 
-        attach_static_frontend(api_router, static_dir)
-            .layer(CompressionLayer::new())
-            .layer(axum::middleware::from_fn(
-                aether_gateway::strip_cf_headers_middleware,
-            ))
+        attach_static_frontend(api_router, static_dir).layer(CompressionLayer::new())
     } else {
-        api_router.layer(axum::middleware::from_fn(
-            aether_gateway::strip_cf_headers_middleware,
-        ))
+        api_router
     };
 
     info!(

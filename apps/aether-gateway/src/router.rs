@@ -43,19 +43,19 @@ pub fn build_router_with_state(state: AppState) -> Router {
             middleware::frontdoor_cors_middleware,
         ));
     }
-    router
+    middleware::apply_cf_header_stripping(router)
 }
 
 pub fn attach_static_frontend(router: Router, static_dir: impl Into<PathBuf>) -> Router {
     let static_dir = static_dir.into();
     let index_html = static_dir.join("index.html");
-    router.layer(axum::middleware::from_fn_with_state(
+    middleware::apply_cf_header_stripping(router.layer(axum::middleware::from_fn_with_state(
         FrontendStaticState {
             static_dir,
             index_html,
         },
         frontend_static_middleware,
-    ))
+    )))
 }
 
 async fn frontend_static_middleware(
