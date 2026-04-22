@@ -300,7 +300,7 @@ async fn record_adaptive_rate_limit_effect(
     };
 
     let mut updated_key = current_key.clone();
-    updated_key.rpm_429_count = Some(projection.rpm_429_count).filter(|value| *value > 0);
+    updated_key.rpm_429_count = Some(projection.rpm_429_count);
     updated_key.learned_rpm_limit = projection.learned_rpm_limit;
     updated_key.last_429_at_unix_secs = Some(projection.last_429_at_unix_secs);
     updated_key.last_429_type = Some(projection.last_429_type);
@@ -1313,6 +1313,40 @@ mod tests {
         assert_eq!(stored_key.rpm_429_count, None);
         assert_eq!(stored_key.last_429_at_unix_secs, None);
         assert_eq!(stored_key.last_429_type, None);
+    }
+
+    #[tokio::test]
+    async fn adaptive_rate_limit_effect_persists_zero_rpm_count_for_unknown_429() {
+        let mut key = sample_health_key();
+        key.rpm_limit = None;
+        key.learned_rpm_limit = Some(20);
+        let state = adaptive_state_with_request_candidates(key, Vec::new());
+        let plan = sample_plan();
+
+        apply_local_execution_effect(
+            &state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: None,
+            },
+            LocalExecutionEffect::AdaptiveRateLimit(LocalAdaptiveRateLimitEffect {
+                status_code: 429,
+                classification: LocalFailoverClassification::RetryStatusCode,
+                headers: None,
+            }),
+        )
+        .await;
+
+        let stored_key = state
+            .read_provider_catalog_keys_by_ids(std::slice::from_ref(&plan.key_id))
+            .await
+            .expect("provider catalog keys should load")
+            .into_iter()
+            .next()
+            .expect("stored key should exist");
+        assert_eq!(stored_key.rpm_429_count, Some(0));
+        assert_eq!(stored_key.learned_rpm_limit, Some(19));
+        assert_eq!(stored_key.last_429_type.as_deref(), Some("unknown"));
     }
 
     #[tokio::test]

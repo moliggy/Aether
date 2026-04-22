@@ -51,6 +51,7 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       TZ: Asia/Shanghai
       APP_PORT: ${APP_PORT:-8084}
+      AETHER_GATEWAY_AUTO_PREPARE_DATABASE: ${AETHER_GATEWAY_AUTO_PREPARE_DATABASE:-true}
     depends_on:
       postgres:
         condition: service_healthy

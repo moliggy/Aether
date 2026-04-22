@@ -134,8 +134,8 @@ impl<'a> AdminAppState<'a> {
             return Ok(admin_adaptive_key_not_found_response(key_id));
         };
         key.learned_rpm_limit = None;
-        key.concurrent_429_count = None;
-        key.rpm_429_count = None;
+        key.concurrent_429_count = Some(0);
+        key.rpm_429_count = Some(0);
         key.last_429_at_unix_secs = None;
         key.last_429_type = None;
         key.adjustment_history = None;

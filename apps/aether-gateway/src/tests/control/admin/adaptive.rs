@@ -440,8 +440,8 @@ async fn gateway_resets_admin_adaptive_learning_locally_with_trusted_admin_princ
         .await
         .expect("repository query should succeed");
     assert_eq!(updated[0].learned_rpm_limit, None);
-    assert_eq!(updated[0].concurrent_429_count, None);
-    assert_eq!(updated[0].rpm_429_count, None);
+    assert_eq!(updated[0].concurrent_429_count, Some(0));
+    assert_eq!(updated[0].rpm_429_count, Some(0));
     assert_eq!(updated[0].adjustment_history, None);
 
     gateway_handle.abort();

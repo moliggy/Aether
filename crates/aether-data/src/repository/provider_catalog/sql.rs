@@ -1738,8 +1738,8 @@ SET
   END,
   oauth_invalid_reason = $26,
   status_snapshot = $27,
-  concurrent_429_count = $28,
-  rpm_429_count = $29,
+  concurrent_429_count = COALESCE($28, 0),
+  rpm_429_count = COALESCE($29, 0),
   last_429_at = CASE
     WHEN $30::double precision IS NULL THEN NULL
     ELSE TO_TIMESTAMP($30::double precision)
