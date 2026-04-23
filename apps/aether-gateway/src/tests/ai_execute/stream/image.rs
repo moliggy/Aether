@@ -16,26 +16,19 @@ use aether_data_contracts::repository::candidate_selection::{
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
-use base64::Engine as _;
 use sha2::{Digest, Sha256};
 
 #[tokio::test]
-async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_refresh() {
+async fn gateway_executes_codex_image_stream_via_local_decision_gate_after_oauth_refresh() {
     #[derive(Debug, Clone)]
-    struct SeenExecutionRuntimeSyncRequest {
+    struct SeenExecutionRuntimeStreamRequest {
         trace_id: String,
         url: String,
         model: String,
         authorization: String,
         x_client_request_id: String,
-        prompt: String,
-        content_is_string: bool,
         tool_type: String,
-        tool_size: String,
-        tool_quality: String,
-        tool_background: String,
-        tool_choice_type: String,
-        tool_has_n: bool,
+        tool_partial_images: Option<u64>,
         request_stream: bool,
         plan_stream: bool,
     }
@@ -81,17 +74,17 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
 
     fn sample_candidate_row() -> StoredMinimalCandidateSelectionRow {
         StoredMinimalCandidateSelectionRow {
-            provider_id: "provider-codex-image-local-1".to_string(),
+            provider_id: "provider-codex-image-stream-local-1".to_string(),
             provider_name: "codex".to_string(),
             provider_type: "codex".to_string(),
             provider_priority: 10,
             provider_is_active: true,
-            endpoint_id: "endpoint-codex-image-local-1".to_string(),
+            endpoint_id: "endpoint-codex-image-stream-local-1".to_string(),
             endpoint_api_format: "openai:image".to_string(),
             endpoint_api_family: Some("openai".to_string()),
             endpoint_kind: Some("image".to_string()),
             endpoint_is_active: true,
-            key_id: "key-codex-image-local-1".to_string(),
+            key_id: "key-codex-image-stream-local-1".to_string(),
             key_name: "oauth".to_string(),
             key_auth_type: "oauth".to_string(),
             key_is_active: true,
@@ -100,8 +93,8 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
             key_capabilities: None,
             key_internal_priority: 5,
             key_global_priority_by_format: Some(serde_json::json!({"openai:image": 1})),
-            model_id: "model-codex-image-local-1".to_string(),
-            global_model_id: "global-model-codex-image-local-1".to_string(),
+            model_id: "model-codex-image-stream-local-1".to_string(),
+            global_model_id: "global-model-codex-image-stream-local-1".to_string(),
             global_model_name: "gpt-image-2".to_string(),
             global_model_mappings: None,
             global_model_supports_streaming: Some(true),
@@ -119,7 +112,7 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
 
     fn sample_provider_catalog_provider() -> StoredProviderCatalogProvider {
         StoredProviderCatalogProvider::new(
-            "provider-codex-image-local-1".to_string(),
+            "provider-codex-image-stream-local-1".to_string(),
             "codex".to_string(),
             Some("https://chatgpt.com".to_string()),
             "codex".to_string(),
@@ -140,8 +133,8 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
 
     fn sample_provider_catalog_endpoint() -> StoredProviderCatalogEndpoint {
         StoredProviderCatalogEndpoint::new(
-            "endpoint-codex-image-local-1".to_string(),
-            "provider-codex-image-local-1".to_string(),
+            "endpoint-codex-image-stream-local-1".to_string(),
+            "provider-codex-image-stream-local-1".to_string(),
             "openai:image".to_string(),
             Some("openai".to_string()),
             Some("image".to_string()),
@@ -164,12 +157,12 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
     fn sample_provider_catalog_key() -> StoredProviderCatalogKey {
         let encrypted_auth_config = encrypt_python_fernet_plaintext(
             DEVELOPMENT_ENCRYPTION_KEY,
-            r#"{"provider_type":"codex","refresh_token":"rt-codex-image-local-123"}"#,
+            r#"{"provider_type":"codex","refresh_token":"rt-codex-image-stream-local-123"}"#,
         )
         .expect("auth config should encrypt");
         StoredProviderCatalogKey::new(
-            "key-codex-image-local-1".to_string(),
-            "provider-codex-image-local-1".to_string(),
+            "key-codex-image-stream-local-1".to_string(),
+            "provider-codex-image-stream-local-1".to_string(),
             "oauth".to_string(),
             "oauth".to_string(),
             None,
@@ -191,20 +184,16 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
         .expect("key transport should build")
     }
 
-    let seen_execution_runtime = Arc::new(Mutex::new(None::<SeenExecutionRuntimeSyncRequest>));
+    let seen_execution_runtime = Arc::new(Mutex::new(None::<SeenExecutionRuntimeStreamRequest>));
     let seen_execution_runtime_clone = Arc::clone(&seen_execution_runtime);
     let seen_refresh = Arc::new(Mutex::new(None::<SeenRefreshRequest>));
     let seen_refresh_clone = Arc::clone(&seen_refresh);
-    let refresh_hits = Arc::new(Mutex::new(0usize));
-    let refresh_hits_clone = Arc::clone(&refresh_hits);
 
     let refresh = Router::new().route(
         "/oauth/token",
         any(move |request: Request| {
             let seen_refresh_inner = Arc::clone(&seen_refresh_clone);
-            let refresh_hits_inner = Arc::clone(&refresh_hits_clone);
             async move {
-                *refresh_hits_inner.lock().expect("mutex should lock") += 1;
                 let (parts, body) = request.into_parts();
                 let raw_body = to_bytes(body, usize::MAX).await.expect("body should read");
                 *seen_refresh_inner.lock().expect("mutex should lock") = Some(SeenRefreshRequest {
@@ -218,8 +207,8 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
                         .expect("refresh body should be utf8"),
                 });
                 Json(json!({
-                    "access_token": "refreshed-codex-image-access-token",
-                    "refresh_token": "rt-codex-image-local-456",
+                    "access_token": "refreshed-codex-image-stream-access-token",
+                    "refresh_token": "rt-codex-image-stream-local-456",
                     "token_type": "Bearer",
                     "expires_in": 3600
                 }))
@@ -228,7 +217,7 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
     );
 
     let execution_runtime = Router::new().route(
-        "/v1/execute/sync",
+        "/v1/execute/stream",
         any(move |request: Request| {
             let seen_execution_runtime_inner = Arc::clone(&seen_execution_runtime_clone);
             async move {
@@ -238,7 +227,7 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
                     .expect("execution runtime payload should parse");
                 *seen_execution_runtime_inner
                     .lock()
-                    .expect("mutex should lock") = Some(SeenExecutionRuntimeSyncRequest {
+                    .expect("mutex should lock") = Some(SeenExecutionRuntimeStreamRequest {
                     trace_id: parts
                         .headers
                         .get(TRACE_ID_HEADER)
@@ -269,22 +258,6 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
                         .and_then(|value| value.as_str())
                         .unwrap_or_default()
                         .to_string(),
-                    prompt: payload
-                        .get("body")
-                        .and_then(|value| value.get("json_body"))
-                        .and_then(|value| value.get("input"))
-                        .and_then(|value| value.get(0))
-                        .and_then(|value| value.get("content"))
-                        .and_then(|value| value.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                    content_is_string: payload
-                        .get("body")
-                        .and_then(|value| value.get("json_body"))
-                        .and_then(|value| value.get("input"))
-                        .and_then(|value| value.get(0))
-                        .and_then(|value| value.get("content"))
-                        .is_some_and(|value| value.is_string()),
                     tool_type: payload
                         .get("body")
                         .and_then(|value| value.get("json_body"))
@@ -294,48 +267,13 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
                         .and_then(|value| value.as_str())
                         .unwrap_or_default()
                         .to_string(),
-                    tool_size: payload
+                    tool_partial_images: payload
                         .get("body")
                         .and_then(|value| value.get("json_body"))
                         .and_then(|value| value.get("tools"))
                         .and_then(|value| value.get(0))
-                        .and_then(|value| value.get("size"))
-                        .and_then(|value| value.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                    tool_quality: payload
-                        .get("body")
-                        .and_then(|value| value.get("json_body"))
-                        .and_then(|value| value.get("tools"))
-                        .and_then(|value| value.get(0))
-                        .and_then(|value| value.get("quality"))
-                        .and_then(|value| value.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                    tool_background: payload
-                        .get("body")
-                        .and_then(|value| value.get("json_body"))
-                        .and_then(|value| value.get("tools"))
-                        .and_then(|value| value.get(0))
-                        .and_then(|value| value.get("background"))
-                        .and_then(|value| value.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                    tool_choice_type: payload
-                        .get("body")
-                        .and_then(|value| value.get("json_body"))
-                        .and_then(|value| value.get("tool_choice"))
-                        .and_then(|value| value.get("type"))
-                        .and_then(|value| value.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                    tool_has_n: payload
-                        .get("body")
-                        .and_then(|value| value.get("json_body"))
-                        .and_then(|value| value.get("tools"))
-                        .and_then(|value| value.get(0))
-                        .and_then(|value| value.as_object())
-                        .is_some_and(|object| object.contains_key("n")),
+                        .and_then(|value| value.get("partial_images"))
+                        .and_then(|value| value.as_u64()),
                     request_stream: payload
                         .get("body")
                         .and_then(|value| value.get("json_body"))
@@ -347,38 +285,33 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
                         .and_then(|value| value.as_bool())
                         .unwrap_or(false),
                 });
-                Json(json!({
-                    "request_id": "trace-codex-image-local-123",
-                    "status_code": 200,
-                    "headers": {
-                        "content-type": "text/event-stream"
-                    },
-                    "body": {
-                        "body_bytes_b64": base64::engine::general_purpose::STANDARD.encode(
-                            concat!(
-                                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_img_123\",\"created_at\":1776839946}}\n\n",
-                                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ig_123\",\"type\":\"image_generation_call\",\"status\":\"generating\",\"output_format\":\"png\",\"quality\":\"medium\",\"size\":\"1024x1024\",\"revised_prompt\":\"中国历史视觉海报\",\"result\":\"aGVsbG8=\"}}\n\n",
-                                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_img_123\",\"object\":\"response\",\"model\":\"__CODEX_IMAGE_MODEL__\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":2440,\"output_tokens\":184,\"total_tokens\":2624},\"tool_usage\":{\"image_gen\":{\"input_tokens\":171,\"input_tokens_details\":{\"image_tokens\":0,\"text_tokens\":171},\"output_tokens\":1372,\"output_tokens_details\":{\"image_tokens\":1372,\"text_tokens\":0},\"total_tokens\":1543}}}}\n\n",
-                                "data: [DONE]\n\n"
-                            )
-                            .replace(
-                                "__CODEX_IMAGE_MODEL__",
-                                CODEX_OPENAI_IMAGE_INTERNAL_MODEL,
-                            )
-                        )
-                    },
-                    "telemetry": {
-                        "elapsed_ms": 41
-                    }
-                }))
+                let frames = concat!(
+                    "{\"type\":\"headers\",\"payload\":{\"kind\":\"headers\",\"status_code\":200,\"headers\":{\"content-type\":\"text/event-stream\"}}}\n",
+                    "{\"type\":\"data\",\"payload\":{\"kind\":\"data\",\"text\":\"event: response.output_item.done\\ndata: {\\\"type\\\":\\\"response.output_item.done\\\",\\\"output_index\\\":0,\\\"item\\\":{\\\"id\\\":\\\"ig_123\\\",\\\"type\\\":\\\"image_generation_call\\\",\\\"result\\\":\\\"aGVsbG8=\\\"}}\\n\\n\"}}\n",
+                    "{\"type\":\"data\",\"payload\":{\"kind\":\"data\",\"text\":\"event: response.completed\\ndata: {\\\"type\\\":\\\"response.completed\\\",\\\"response\\\":{\\\"tool_usage\\\":{\\\"image_gen\\\":{\\\"input_tokens\\\":11,\\\"output_tokens\\\":22,\\\"total_tokens\\\":33}}}}\\n\\n\"}}\n",
+                    "{\"type\":\"telemetry\",\"payload\":{\"kind\":\"telemetry\",\"telemetry\":{\"elapsed_ms\":41}}}\n",
+                    "{\"type\":\"eof\",\"payload\":{\"kind\":\"eof\"}}\n"
+                );
+                let mut response = http::Response::builder()
+                    .status(StatusCode::OK)
+                    .body(Body::from(frames))
+                    .expect("response should build");
+                response.headers_mut().insert(
+                    http::header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("application/x-ndjson"),
+                );
+                response
             }
         }),
     );
 
-    let client_api_key = "sk-client-codex-image-local";
+    let client_api_key = "sk-client-codex-image-stream-local";
     let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
         Some(hash_api_key(client_api_key)),
-        sample_auth_snapshot("key-codex-image-client-123", "user-codex-image-client-123"),
+        sample_auth_snapshot(
+            "key-codex-image-stream-client-123",
+            "user-codex-image-stream-client-123",
+        ),
     )]));
     let candidate_selection_repository =
         Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
@@ -404,7 +337,7 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
             crate::data::GatewayDataState::with_auth_candidate_selection_provider_catalog_and_request_candidate_repository_for_tests(
                 auth_repository,
                 candidate_selection_repository,
-                provider_catalog_repository.clone(),
+                provider_catalog_repository,
                 Arc::new(InMemoryRequestCandidateRepository::default()),
                 DEVELOPMENT_ENCRYPTION_KEY,
             ),
@@ -420,22 +353,30 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
             http::header::AUTHORIZATION,
             format!("Bearer {client_api_key}"),
         )
-        .header(TRACE_ID_HEADER, "trace-codex-image-local-123")
-        .body("{\"model\":\"gpt-image-2\",\"prompt\":\"生成一张中国历史视觉海报\",\"size\":\"1024x1024\",\"n\":1,\"response_format\":\"b64_json\"}")
+        .header(TRACE_ID_HEADER, "trace-codex-image-stream-local-123")
+        .body(
+            "{\"model\":\"gpt-image-2\",\"prompt\":\"生成一张中国历史视觉海报\",\"stream\":true,\"partial_images\":1}",
+        )
         .send()
         .await
         .expect("request should succeed");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let response_json: serde_json::Value = response.json().await.expect("body should parse");
-    assert_eq!(response_json["created"], 1776839946);
-    assert_eq!(response_json["data"][0]["b64_json"], "aGVsbG8=");
     assert_eq!(
-        response_json["data"][0]["revised_prompt"],
-        "中国历史视觉海报"
+        response
+            .headers()
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/event-stream")
     );
-    assert_eq!(response_json["usage"]["input_tokens"], 171);
-    assert_eq!(response_json["usage"]["output_tokens"], 1372);
+    let response_text = response.text().await.expect("body should read");
+    assert!(response_text.contains("event: image_generation.partial_image"));
+    assert!(response_text.contains("\"type\":\"image_generation.partial_image\""));
+    assert!(response_text.contains("\"b64_json\":\"aGVsbG8=\""));
+    assert!(response_text.contains("event: image_generation.completed"));
+    assert!(response_text.contains("\"type\":\"image_generation.completed\""));
+    assert!(response_text.contains("\"total_tokens\":33"));
+    assert!(!response_text.contains("response.completed"));
 
     let seen_refresh_request = seen_refresh
         .lock()
@@ -448,23 +389,16 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
     );
     assert!(seen_refresh_request
         .body
-        .contains("grant_type=refresh_token"));
-    assert!(seen_refresh_request
-        .body
-        .contains("client_id=app_EMoamEEZ73f0CkXaXp7hrann"));
-    assert!(seen_refresh_request
-        .body
-        .contains("refresh_token=rt-codex-image-local-123"));
-    assert_eq!(*refresh_hits.lock().expect("mutex should lock"), 1);
+        .contains("refresh_token=rt-codex-image-stream-local-123"));
 
     let seen_execution_runtime_request = seen_execution_runtime
         .lock()
         .expect("mutex should lock")
         .clone()
-        .expect("execution runtime sync should be captured");
+        .expect("execution runtime stream should be captured");
     assert_eq!(
         seen_execution_runtime_request.trace_id,
-        "trace-codex-image-local-123"
+        "trace-codex-image-stream-local-123"
     );
     assert_eq!(
         seen_execution_runtime_request.url,
@@ -476,48 +410,16 @@ async fn gateway_executes_codex_image_sync_via_local_decision_gate_after_oauth_r
     );
     assert_eq!(
         seen_execution_runtime_request.authorization,
-        "Bearer refreshed-codex-image-access-token"
+        "Bearer refreshed-codex-image-stream-access-token"
     );
     assert_eq!(
         seen_execution_runtime_request.x_client_request_id,
-        "trace-codex-image-local-123"
+        "trace-codex-image-stream-local-123"
     );
-    assert_eq!(
-        seen_execution_runtime_request.prompt,
-        "生成一张中国历史视觉海报"
-    );
-    assert!(seen_execution_runtime_request.content_is_string);
     assert_eq!(seen_execution_runtime_request.tool_type, "image_generation");
-    assert_eq!(seen_execution_runtime_request.tool_size, "1024x1024");
-    assert_eq!(seen_execution_runtime_request.tool_quality, "high");
-    assert_eq!(seen_execution_runtime_request.tool_background, "auto");
-    assert_eq!(
-        seen_execution_runtime_request.tool_choice_type,
-        "image_generation"
-    );
-    assert!(!seen_execution_runtime_request.tool_has_n);
+    assert_eq!(seen_execution_runtime_request.tool_partial_images, Some(1));
     assert!(seen_execution_runtime_request.request_stream);
-    assert!(!seen_execution_runtime_request.plan_stream);
-
-    let persisted_transport_state =
-        crate::data::GatewayDataState::with_provider_transport_reader_for_tests(
-            provider_catalog_repository,
-            DEVELOPMENT_ENCRYPTION_KEY,
-        );
-    let persisted_transport = persisted_transport_state
-        .read_provider_transport_snapshot(
-            "provider-codex-image-local-1",
-            "endpoint-codex-image-local-1",
-            "key-codex-image-local-1",
-        )
-        .await
-        .expect("provider transport should read")
-        .expect("provider transport should exist");
-    assert_eq!(
-        persisted_transport.key.decrypted_api_key,
-        "refreshed-codex-image-access-token"
-    );
-    assert!(persisted_transport.key.expires_at_unix_secs.is_some());
+    assert!(seen_execution_runtime_request.plan_stream);
 
     gateway_handle.abort();
     execution_runtime_handle.abort();

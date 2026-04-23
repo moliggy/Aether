@@ -58,7 +58,7 @@
                   variant="outline"
                   class="text-xs"
                 >
-                  {{ detail.is_stream ? '流式' : '标准' }}
+                  {{ detail ? formatUsageStreamLabel(detail) : '标准' }}
                 </Badge>
               </div>
               <div class="flex items-center gap-1 shrink-0">
@@ -695,6 +695,7 @@ import { formatApiFormat } from '@/api/endpoints/types/api-format'
 import { formatShortRequestId } from '@/utils/format'
 import { log } from '@/utils/logger'
 import { getEffectiveInputTokens } from '../token-normalization'
+import { formatUsageStreamLabel } from '../utils/status'
 
 // 子组件
 import RequestHeadersContent from './RequestDetailDrawer/RequestHeadersContent.vue'

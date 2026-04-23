@@ -985,9 +985,11 @@ fn admin_provider_write_uses_specific_local_owners() {
     for pattern in [
         "mod create;",
         "mod endpoint;",
+        "mod template;",
         "mod update;",
         "pub(crate) use self::create::build_admin_create_provider_record;",
         "pub(crate) use self::endpoint::build_admin_fixed_provider_endpoint_record;",
+        "pub(crate) use self::template::{",
         "pub(crate) use self::update::build_admin_update_provider_record;",
     ] {
         assert!(
@@ -1044,11 +1046,25 @@ fn admin_provider_write_uses_specific_local_owners() {
     for pattern in [
         "pub(crate) fn build_admin_fixed_provider_endpoint_record(",
         "admin_endpoint_signature_parts(",
-        "normalize_admin_base_url(base_url)?",
+        "normalize_admin_base_url(template.base_url)?",
     ] {
         assert!(
             write_provider_endpoint.contains(pattern),
             "handlers/admin/provider/write/provider/endpoint.rs should own {pattern}"
+        );
+    }
+
+    let write_provider_template = read_workspace_file(
+        "apps/aether-gateway/src/handlers/admin/provider/write/provider/template.rs",
+    );
+    for pattern in [
+        "pub(crate) async fn reconcile_admin_fixed_provider_template_endpoints(",
+        "pub(crate) fn apply_admin_fixed_provider_endpoint_template_overrides(",
+        "const FIXED_PROVIDER_TEMPLATE_METADATA_KEY: &str = \"_aether_fixed_provider_template\";",
+    ] {
+        assert!(
+            write_provider_template.contains(pattern),
+            "handlers/admin/provider/write/provider/template.rs should own {pattern}"
         );
     }
 

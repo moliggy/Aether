@@ -147,7 +147,11 @@ import {
   getDateRangeFromPeriod
 } from '@/features/usage/composables'
 import { reconcileActiveRequestDiscovery } from '@/features/usage/utils/activeRequestDiscovery'
-import { hasUsageFallback, isUsageRecordFailed } from '@/features/usage/utils/status'
+import {
+  hasUsageFallback,
+  isUsageRecordFailed,
+  isUsageUpstreamStream
+} from '@/features/usage/utils/status'
 import type { DateRangeParams, FilterStatusValue } from '@/features/usage/types'
 import type { UserOption } from '@/features/usage/components/UsageRecordsTable.vue'
 import { log } from '@/utils/logger'
@@ -334,11 +338,11 @@ const filteredRecords = computed(() => {
     if (filterStatus.value !== '__all__') {
       if (filterStatus.value === 'stream') {
         records = records.filter(record =>
-          record.is_stream && !isUsageRecordFailed(record)
+          isUsageUpstreamStream(record) && !isUsageRecordFailed(record)
         )
       } else if (filterStatus.value === 'standard') {
         records = records.filter(record =>
-          !record.is_stream && !isUsageRecordFailed(record)
+          !isUsageUpstreamStream(record) && !isUsageRecordFailed(record)
         )
       } else if (filterStatus.value === 'active') {
         records = records.filter(record =>
@@ -440,6 +444,18 @@ async function pollActiveRequests() {
         record.rate_multiplier = update.rate_multiplier ?? undefined
         record.response_time_ms = update.response_time_ms ?? undefined
         record.first_byte_time_ms = update.first_byte_time_ms ?? undefined
+        if (typeof update.upstream_is_stream === 'boolean') {
+          record.upstream_is_stream = update.upstream_is_stream
+          record.is_stream = update.upstream_is_stream
+        } else if (typeof update.is_stream === 'boolean') {
+          record.is_stream = update.is_stream
+        }
+        if (typeof update.client_is_stream === 'boolean') {
+          record.client_is_stream = update.client_is_stream
+          record.client_requested_stream = update.client_is_stream
+        } else if (typeof update.client_requested_stream === 'boolean') {
+          record.client_requested_stream = update.client_requested_stream
+        }
         // API 格式/格式转换：streaming 时已可确定，轮询时同步更新
         if (update.api_format != null) record.api_format = update.api_format
         if (update.endpoint_api_format != null) record.endpoint_api_format = update.endpoint_api_format

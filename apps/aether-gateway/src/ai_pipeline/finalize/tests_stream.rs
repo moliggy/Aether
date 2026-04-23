@@ -30,6 +30,94 @@ fn antigravity_stream_rewriter_unwraps_and_injects_tool_ids() {
 }
 
 #[test]
+fn openai_image_stream_rewriter_emits_completed_event_for_generate() {
+    let report_context = json!({
+        "provider_api_format": "openai:image",
+        "client_api_format": "openai:image",
+        "needs_conversion": false,
+        "image_request": {
+            "operation": "generate"
+        }
+    });
+    let mut rewriter =
+        maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
+
+    let first = rewriter
+        .push_chunk(
+            concat!(
+                "event: response.output_item.done\n",
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ig_123\",\"type\":\"image_generation_call\",\"result\":\"aGVsbG8=\"}}\n\n"
+            )
+            .as_bytes(),
+        )
+        .expect("rewrite should succeed");
+    assert!(first.is_empty());
+
+    let second = rewriter
+        .push_chunk(
+            concat!(
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"tool_usage\":{\"image_gen\":{\"input_tokens\":1,\"output_tokens\":2,\"total_tokens\":3}}}}\n\n"
+            )
+            .as_bytes(),
+        )
+        .expect("rewrite should succeed");
+    let output_text = utf8(second);
+    assert!(output_text.contains("event: image_generation.completed"));
+    assert!(output_text.contains("\"type\":\"image_generation.completed\""));
+    assert!(output_text.contains("\"b64_json\":\"aGVsbG8=\""));
+    assert!(output_text.contains("\"input_tokens\":1"));
+    assert!(!output_text.contains("data: [DONE]"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
+}
+
+#[test]
+fn openai_image_stream_rewriter_emits_partial_and_completed_events_for_edit() {
+    let report_context = json!({
+        "provider_api_format": "openai:image",
+        "client_api_format": "openai:image",
+        "needs_conversion": false,
+        "image_request": {
+            "operation": "edit",
+            "partial_images": 2
+        }
+    });
+    let mut rewriter =
+        maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
+
+    let partial = rewriter
+        .push_chunk(
+            concat!(
+                "event: response.output_item.done\n",
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"ig_edit_123\",\"type\":\"image_generation_call\",\"result\":\"d29ybGQ=\"}}\n\n"
+            )
+            .as_bytes(),
+        )
+        .expect("rewrite should succeed");
+    let partial_text = utf8(partial);
+    assert!(partial_text.contains("event: image_edit.partial_image"));
+    assert!(partial_text.contains("\"type\":\"image_edit.partial_image\""));
+    assert!(partial_text.contains("\"b64_json\":\"d29ybGQ=\""));
+    assert!(partial_text.contains("\"partial_image_index\":1"));
+
+    let completed = rewriter
+        .push_chunk(
+            concat!(
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":4,\"output_tokens\":5,\"total_tokens\":9}}}\n\n"
+            )
+            .as_bytes(),
+        )
+        .expect("rewrite should succeed");
+    let completed_text = utf8(completed);
+    assert!(completed_text.contains("event: image_edit.completed"));
+    assert!(completed_text.contains("\"type\":\"image_edit.completed\""));
+    assert!(completed_text.contains("\"b64_json\":\"d29ybGQ=\""));
+    assert!(completed_text.contains("\"total_tokens\":9"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
+}
+
+#[test]
 fn gemini_cli_v1internal_stream_rewriter_unwraps_response_object() {
     let report_context = json!({
         "has_envelope": true,

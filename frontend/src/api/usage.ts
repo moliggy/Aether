@@ -312,6 +312,10 @@ export const usageApi = {
       provider_key_name?: string | null
       api_format?: string | null
       endpoint_api_format?: string | null
+      is_stream?: boolean | null
+      upstream_is_stream?: boolean | null
+      client_requested_stream?: boolean | null
+      client_is_stream?: boolean | null
       has_format_conversion?: boolean | null
       has_fallback?: boolean | null
       target_model?: string | null

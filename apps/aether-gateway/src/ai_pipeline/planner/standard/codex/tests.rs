@@ -22,7 +22,7 @@ fn applies_codex_defaults_when_body_rules_do_not_handle_fields() {
     assert!(body.get("top_p").is_none());
     assert!(body.get("metadata").is_none());
     assert_eq!(body["store"], false);
-    assert_eq!(body["instructions"], "You are GPT-5.");
+    assert_eq!(body["instructions"], "You are ChatGPT.");
 }
 
 #[test]
@@ -125,10 +125,12 @@ fn injects_chatgpt_account_id_and_session_headers_for_codex_requests() {
     );
     assert_eq!(
         headers.get("user-agent"),
-        Some(&"codex-tui/0.122.0 (Aether; x86_64) vscode/3.0.12 (codex-tui; 0.122.0)".to_string())
+        Some(
+            &"codex-tui/0.122.0 (Mac OS 15.2.0; arm64) vscode/2.6.11 (codex-tui; 0.122.0)"
+                .to_string()
+        )
     );
-    assert_eq!(headers.get("version"), Some(&"0.122.0".to_string()));
-    assert_eq!(headers.get("originator"), Some(&"codex_cli_rs".to_string()));
+    assert_eq!(headers.get("originator"), Some(&"codex-tui".to_string()));
     assert_eq!(
         headers.get("session_id"),
         Some(&"ab5ecce4f0d110fe".to_string())
@@ -169,10 +171,6 @@ fn respects_existing_codex_request_and_session_headers() {
         HeaderValue::from_static("user-specified-agent"),
     );
     original_headers.insert(
-        "version",
-        HeaderValue::from_static("user-specified-version"),
-    );
-    original_headers.insert(
         "originator",
         HeaderValue::from_static("user-specified-originator"),
     );
@@ -192,7 +190,6 @@ fn respects_existing_codex_request_and_session_headers() {
         Some(&"kept-by-rule-request".to_string())
     );
     assert!(!headers.contains_key("user-agent"));
-    assert!(!headers.contains_key("version"));
     assert!(!headers.contains_key("originator"));
     assert_eq!(headers.get("session_id"), Some(&"kept-by-rule".to_string()));
     assert!(!headers.contains_key("conversation_id"));
@@ -226,10 +223,12 @@ fn skips_conversation_id_for_compact_codex_requests() {
     );
     assert_eq!(
         headers.get("user-agent"),
-        Some(&"codex-tui/0.122.0 (Aether; x86_64) vscode/3.0.12 (codex-tui; 0.122.0)".to_string())
+        Some(
+            &"codex-tui/0.122.0 (Mac OS 15.2.0; arm64) vscode/2.6.11 (codex-tui; 0.122.0)"
+                .to_string()
+        )
     );
-    assert_eq!(headers.get("version"), Some(&"0.122.0".to_string()));
-    assert_eq!(headers.get("originator"), Some(&"codex_cli_rs".to_string()));
+    assert_eq!(headers.get("originator"), Some(&"codex-tui".to_string()));
     assert_eq!(
         headers.get("session_id"),
         Some(&"ab5ecce4f0d110fe".to_string())

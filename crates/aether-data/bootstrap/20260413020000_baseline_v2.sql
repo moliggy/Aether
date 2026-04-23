@@ -495,7 +495,7 @@ CREATE TABLE IF NOT EXISTS public.provider_api_keys (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     provider_id character varying(36) NOT NULL,
-    api_formats json DEFAULT '[]'::json NOT NULL,
+    api_formats json,
     rate_multipliers json,
     health_by_format jsonb,
     circuit_breaker_by_format jsonb,
@@ -5155,6 +5155,10 @@ ALTER TABLE public.stats_daily
     ADD COLUMN IF NOT EXISTS cache_creation_ephemeral_1h_tokens bigint DEFAULT '0'::bigint NOT NULL;
 
 ALTER TABLE public.stats_user_daily
+    ADD COLUMN IF NOT EXISTS cache_creation_ephemeral_5m_tokens bigint DEFAULT '0'::bigint NOT NULL,
+    ADD COLUMN IF NOT EXISTS cache_creation_ephemeral_1h_tokens bigint DEFAULT '0'::bigint NOT NULL;
+
+ALTER TABLE public.stats_daily_model
     ADD COLUMN IF NOT EXISTS cache_creation_ephemeral_5m_tokens bigint DEFAULT '0'::bigint NOT NULL,
     ADD COLUMN IF NOT EXISTS cache_creation_ephemeral_1h_tokens bigint DEFAULT '0'::bigint NOT NULL;
 

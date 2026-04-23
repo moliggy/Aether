@@ -78,6 +78,7 @@ pub(super) async fn maybe_build_local_openai_image_decision_payload_for_candidat
         original_headers: &parts.headers,
         original_request_body_json: Some(body_json),
         original_request_body_base64: body_base64,
+        client_requested_stream: spec_metadata.require_streaming,
         has_envelope: false,
         needs_conversion: false,
         extra_fields,
@@ -85,7 +86,7 @@ pub(super) async fn maybe_build_local_openai_image_decision_payload_for_candidat
 
     Some(build_local_execution_decision_response(
         LocalExecutionDecisionResponseParts {
-            decision_is_stream: false,
+            decision_is_stream: spec_metadata.require_streaming,
             decision_kind: spec_metadata.decision_kind.to_string(),
             execution_strategy: ExecutionStrategy::LocalSameFormat,
             conversion_mode: ConversionMode::None,
@@ -112,7 +113,7 @@ pub(super) async fn maybe_build_local_openai_image_decision_payload_for_candidat
             proxy,
             tls_profile,
             timeouts: resolve_transport_execution_timeouts(&transport),
-            upstream_is_stream: false,
+            upstream_is_stream: spec_metadata.require_streaming,
             report_kind: spec_metadata.report_kind.map(ToOwned::to_owned),
             report_context: Some(report_context),
             auth_context: input.auth_context.clone(),

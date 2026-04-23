@@ -26,6 +26,7 @@ pub(crate) use self::planner::{
     build_gemini_stream_plan_from_decision, build_gemini_sync_plan_from_decision,
     build_local_gemini_files_stream_plan_and_reports_for_kind,
     build_local_gemini_files_sync_plan_and_reports_for_kind,
+    build_local_image_stream_plan_and_reports_for_kind,
     build_local_image_sync_plan_and_reports_for_kind,
     build_local_openai_chat_stream_plan_and_reports_for_kind,
     build_local_openai_chat_sync_plan_and_reports_for_kind,
@@ -38,9 +39,9 @@ pub(crate) use self::planner::{
     build_standard_stream_plan_from_decision, build_standard_sync_plan_from_decision,
     extract_pool_sticky_session_token, maybe_build_stream_decision_payload,
     maybe_build_stream_plan_payload, maybe_build_sync_decision_payload,
-    maybe_build_sync_plan_payload, set_local_openai_chat_execution_exhausted_diagnostic,
-    GatewayAuthApiKeySnapshot, GatewayProviderTransportSnapshot, LocalResolvedOAuthRequestAuth,
-    PlannerAppState,
+    maybe_build_sync_plan_payload, planner_is_matching_stream_request,
+    set_local_openai_chat_execution_exhausted_diagnostic, GatewayAuthApiKeySnapshot,
+    GatewayProviderTransportSnapshot, LocalResolvedOAuthRequestAuth, PlannerAppState,
 };
 pub(crate) use self::pure::*;
 pub(crate) use crate::control::GatewayControlDecision;

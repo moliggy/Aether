@@ -75,6 +75,7 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
                 original_headers: &parts.headers,
                 original_request_body_json: Some(body_json),
                 original_request_body_base64: None,
+                client_requested_stream: spec_metadata.require_streaming,
                 has_envelope: false,
                 needs_conversion: true,
                 extra_fields,

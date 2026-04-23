@@ -17,6 +17,52 @@ export function hasUsageFallback(
   return record.has_fallback === true
 }
 
+export function resolveUsageStreamModes(
+  record: Pick<
+    UsageRecord,
+    'is_stream' | 'upstream_is_stream' | 'client_requested_stream' | 'client_is_stream'
+  >
+): { clientRequestedStream: boolean, upstreamStream: boolean } {
+  const upstreamStream = typeof record.upstream_is_stream === 'boolean'
+    ? record.upstream_is_stream
+    : record.is_stream
+
+  return {
+    clientRequestedStream: typeof record.client_is_stream === 'boolean'
+      ? record.client_is_stream
+      : typeof record.client_requested_stream === 'boolean'
+        ? record.client_requested_stream
+        : upstreamStream,
+    upstreamStream
+  }
+}
+
+export function isUsageUpstreamStream(
+  record: Pick<
+    UsageRecord,
+    'is_stream' | 'upstream_is_stream' | 'client_requested_stream' | 'client_is_stream'
+  >
+): boolean {
+  return resolveUsageStreamModes(record).upstreamStream
+}
+
+export function formatUsageStreamLabel(
+  record: Pick<
+    UsageRecord,
+    'is_stream' | 'upstream_is_stream' | 'client_requested_stream' | 'client_is_stream'
+  >
+): string {
+  const { clientRequestedStream, upstreamStream } = resolveUsageStreamModes(record)
+  const clientLabel = clientRequestedStream ? '流式' : '标准'
+  const upstreamLabel = upstreamStream ? '流式' : '标准'
+
+  if (clientRequestedStream === upstreamStream) {
+    return clientLabel
+  }
+
+  return `${clientLabel} -> ${upstreamLabel}`
+}
+
 function hasTerminalSuccessStatusCode(
   record: Pick<UsageRecord, 'status_code'>
 ): boolean {

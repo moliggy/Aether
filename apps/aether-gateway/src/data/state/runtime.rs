@@ -710,6 +710,16 @@ impl GatewayDataState {
         }
     }
 
+    pub(crate) async fn find_provider_quotas_by_provider_ids(
+        &self,
+        provider_ids: &[String],
+    ) -> Result<Vec<StoredProviderQuotaSnapshot>, DataLayerError> {
+        match &self.provider_quota_reader {
+            Some(repository) => repository.find_by_provider_ids(provider_ids).await,
+            None => Ok(Vec::new()),
+        }
+    }
+
     #[allow(dead_code)]
 
     pub(crate) async fn upsert_usage(

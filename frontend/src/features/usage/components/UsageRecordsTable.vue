@@ -233,18 +233,13 @@
               取消
             </Badge>
             <Badge
-              v-else-if="record.is_stream"
-              variant="secondary"
-              class="whitespace-nowrap text-[10px] px-1.5 h-4 leading-4 inline-flex items-center"
-            >
-              流式
-            </Badge>
-            <Badge
               v-else
-              variant="outline"
-              class="whitespace-nowrap border-border/60 text-muted-foreground text-[10px] px-1.5 h-4 leading-4 inline-flex items-center"
+              :variant="getUpstreamStream(record) ? 'secondary' : 'outline'"
+              :class="getUpstreamStream(record)
+                ? 'whitespace-nowrap text-[10px] px-1.5 h-4 leading-4 inline-flex items-center'
+                : 'whitespace-nowrap border-border/60 text-muted-foreground text-[10px] px-1.5 h-4 leading-4 inline-flex items-center'"
             >
-              标准
+              {{ getStreamModeLabel(record) }}
             </Badge>
             <span class="text-muted-foreground/50">|</span>
             <span>{{ formatDateTime(record.created_at) }}</span>
@@ -310,7 +305,7 @@
           <TableHead class="h-12 font-semibold w-[120px]">
             API格式
           </TableHead>
-          <TableHead class="h-12 font-semibold w-[70px] text-center">
+          <TableHead class="h-12 font-semibold w-[110px] text-center">
             类型
           </TableHead>
           <TableHead class="h-12 font-semibold w-[140px] text-right">
@@ -535,18 +530,13 @@
               已取消
             </Badge>
             <Badge
-              v-else-if="record.is_stream"
-              variant="secondary"
-              class="whitespace-nowrap"
-            >
-              流式
-            </Badge>
-            <Badge
               v-else
-              variant="outline"
-              class="whitespace-nowrap border-border/60 text-muted-foreground"
+              :variant="getUpstreamStream(record) ? 'secondary' : 'outline'"
+              :class="getUpstreamStream(record)
+                ? 'whitespace-nowrap'
+                : 'whitespace-nowrap border-border/60 text-muted-foreground'"
             >
-              标准
+              {{ getStreamModeLabel(record) }}
             </Badge>
           </TableCell>
           <TableCell class="text-right py-4 w-[140px]">
@@ -678,7 +668,12 @@ import { RefreshCcw, Search } from 'lucide-vue-next'
 import { formatTokens, formatCurrency } from '@/utils/format'
 import { formatDateTime } from '../composables'
 import { getCacheCreationTokens, getEffectiveInputTokens } from '../token-normalization'
-import { isUsageRecordFailed, resolveDisplayRequestStatus } from '../utils/status'
+import {
+  formatUsageStreamLabel,
+  isUsageRecordFailed,
+  isUsageUpstreamStream,
+  resolveDisplayRequestStatus
+} from '../utils/status'
 import { useRowClick } from '@/composables/useRowClick'
 import { formatApiFormat } from '@/api/endpoints/types/api-format'
 import type { DateRangeParams, UsageRecord } from '../types'
@@ -762,6 +757,14 @@ const emitSearchDebounced = useDebounceFn((value: string) => {
 
 function getDisplayStatus(record: UsageRecord) {
   return resolveDisplayRequestStatus(record)
+}
+
+function getStreamModeLabel(record: UsageRecord): string {
+  return formatUsageStreamLabel(record)
+}
+
+function getUpstreamStream(record: UsageRecord): boolean {
+  return isUsageUpstreamStream(record)
 }
 
 watch(() => props.filterSearch, (value) => {

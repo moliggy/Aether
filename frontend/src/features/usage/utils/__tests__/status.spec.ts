@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  formatUsageStreamLabel,
   hasUsageFallback,
   isUsageRecordFailed,
   isUsageRecordSuccessful,
@@ -96,6 +97,22 @@ describe('usage status helpers', () => {
     expect(hasUsageFallback(buildUsageRecord({ has_fallback: true }))).toBe(true)
     expect(hasUsageFallback(buildUsageRecord({ has_fallback: false }))).toBe(false)
     expect(hasUsageFallback(buildUsageRecord({ has_fallback: undefined }))).toBe(false)
+  })
+
+  it('prefers symmetric stream aliases when present', () => {
+    expect(formatUsageStreamLabel(buildUsageRecord({
+      is_stream: true,
+      upstream_is_stream: true,
+      client_requested_stream: true,
+      client_is_stream: false,
+    }))).toBe('标准 -> 流式')
+  })
+
+  it('falls back to legacy stream fields when symmetric aliases are absent', () => {
+    expect(formatUsageStreamLabel(buildUsageRecord({
+      is_stream: true,
+      client_requested_stream: false,
+    }))).toBe('标准 -> 流式')
   })
 
   it('uses status code only as a last fallback for timeline status', () => {

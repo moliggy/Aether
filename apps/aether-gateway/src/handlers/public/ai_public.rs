@@ -17,9 +17,61 @@ const GEMINI_VIDEO_TASK_NOT_FOUND_DETAIL: &str = "Video task not found";
 const AI_PUBLIC_METHOD_NOT_ALLOWED_DETAIL: &str = "Method not allowed";
 const AI_PUBLIC_UNAUTHORIZED_DETAIL: &str = "Unauthorized";
 const OPENAI_CHAT_IMAGE_MODEL_DETAIL: &str =
-    "gpt-image-2 仅支持通过 /v1/images/generations 或 /v1/images/edits 调用";
-const OPENAI_IMAGE_MODEL_DETAIL: &str = "图片接口当前仅支持模型 gpt-image-2";
-const OPENAI_IMAGE_N_DETAIL: &str = "图片接口当前仅支持 n=1";
+    "图片模型仅支持通过 /v1/images/generations、/v1/images/edits 或 /v1/images/variations 调用";
+const OPENAI_IMAGE_PROMPT_DETAIL: &str = "图片生成/编辑请求缺少 prompt";
+const OPENAI_IMAGE_EDIT_INPUT_DETAIL: &str = "图片编辑请求至少需要 1 张输入图片";
+const OPENAI_IMAGE_VARIATION_INPUT_DETAIL: &str = "图片变体请求需要 image 文件";
+const OPENAI_IMAGE_N_DETAIL: &str = "当前 Codex 图片反代仅支持 n=1";
+const OPENAI_IMAGE_STREAM_VARIATION_DETAIL: &str = "图片变体接口当前仅支持同步响应";
+const OPENAI_IMAGE_STREAM_MODEL_DETAIL: &str = "stream/partial_images 仅支持 GPT Image 系列模型";
+const OPENAI_IMAGE_PARTIAL_IMAGES_DETAIL: &str =
+    "partial_images 仅支持 0-3，且必须配合 stream=true";
+const OPENAI_IMAGE_STYLE_DETAIL: &str = "当前 Codex 图片反代暂不支持 style 参数";
+const OPENAI_IMAGE_RESPONSE_FORMAT_DETAIL: &str = "response_format 仅支持 url 或 b64_json";
+const OPENAI_IMAGE_OUTPUT_FORMAT_DETAIL: &str = "output_format 仅支持 png、jpeg 或 webp";
+const OPENAI_IMAGE_QUALITY_DETAIL: &str = "quality 仅支持 low、medium、high、standard 或 hd";
+const OPENAI_IMAGE_BACKGROUND_DETAIL: &str = "background 仅支持 auto、opaque 或 transparent";
+const OPENAI_IMAGE_MODERATION_DETAIL: &str = "moderation 仅支持 auto 或 low";
+const OPENAI_IMAGE_INPUT_FIDELITY_DETAIL: &str = "input_fidelity 仅支持 low 或 high";
+const OPENAI_IMAGE_OUTPUT_COMPRESSION_DETAIL: &str = "output_compression 必须是 0-100 的整数";
+const OPENAI_IMAGE_INVALID_JSON_DETAIL: &str = "图片接口 JSON 请求体无效";
+const OPENAI_IMAGE_INVALID_MULTIPART_DETAIL: &str = "图片接口 multipart/form-data 请求体无效";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpenAiImageOperation {
+    Generate,
+    Edit,
+    Variation,
+}
+
+impl OpenAiImageOperation {
+    fn from_path(path: &str) -> Option<Self> {
+        match path {
+            "/v1/images/generations" => Some(Self::Generate),
+            "/v1/images/edits" => Some(Self::Edit),
+            "/v1/images/variations" => Some(Self::Variation),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct OpenAiImageValidationInput {
+    model: Option<String>,
+    prompt: Option<String>,
+    image_count: usize,
+    n: Option<u64>,
+    stream: bool,
+    partial_images: Option<u64>,
+    response_format: Option<String>,
+    output_format: Option<String>,
+    quality: Option<String>,
+    background: Option<String>,
+    moderation: Option<String>,
+    input_fidelity: Option<String>,
+    output_compression: Option<u64>,
+    style_present: bool,
+}
 
 pub(crate) fn ai_public_local_requires_buffered_body(
     request_context: &GatewayPublicRequestContext,
@@ -76,17 +128,13 @@ fn maybe_build_local_openai_request_validation_response(
     }
 
     let request_body = request_body?;
-    let payload = serde_json::from_slice::<Value>(request_body).ok()?;
 
     if decision.route_kind.as_deref() == Some("chat")
         && request_context.request_path == "/v1/chat/completions"
     {
-        let model = payload
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())?;
-        if model.eq_ignore_ascii_case("gpt-image-2") {
+        let payload = serde_json::from_slice::<Value>(request_body).ok()?;
+        let model = payload.get("model").and_then(Value::as_str)?;
+        if is_openai_image_model(model) {
             return Some(build_ai_public_error_response(
                 http::StatusCode::BAD_REQUEST,
                 OPENAI_CHAT_IMAGE_MODEL_DETAIL,
@@ -98,33 +146,179 @@ fn maybe_build_local_openai_request_validation_response(
     if decision.route_kind.as_deref() != Some("image")
         || !matches!(
             request_context.request_path.as_str(),
-            "/v1/images/generations" | "/v1/images/edits"
+            "/v1/images/generations" | "/v1/images/edits" | "/v1/images/variations"
         )
     {
         return None;
     }
 
-    if let Some(model) = payload
-        .get("model")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        if !model.eq_ignore_ascii_case("gpt-image-2") {
+    let Some(operation) = OpenAiImageOperation::from_path(&request_context.request_path) else {
+        return None;
+    };
+    let validation = match parse_openai_image_validation_input(
+        operation,
+        request_context.request_content_type.as_deref(),
+        request_body,
+    ) {
+        Ok(validation) => validation,
+        Err(detail) => {
             return Some(build_ai_public_error_response(
                 http::StatusCode::BAD_REQUEST,
-                OPENAI_IMAGE_MODEL_DETAIL,
+                detail,
+            ));
+        }
+    };
+
+    if validation
+        .model
+        .as_deref()
+        .is_some_and(|model| !image_model_supported_for_operation(operation, model))
+    {
+        return Some(build_ai_public_error_response(
+            http::StatusCode::BAD_REQUEST,
+            format!(
+                "该接口不支持模型 {}",
+                validation.model.as_deref().unwrap_or_default()
+            ),
+        ));
+    }
+
+    match operation {
+        OpenAiImageOperation::Generate | OpenAiImageOperation::Edit
+            if validation.prompt.is_none() =>
+        {
+            return Some(build_ai_public_error_response(
+                http::StatusCode::BAD_REQUEST,
+                OPENAI_IMAGE_PROMPT_DETAIL,
+            ));
+        }
+        OpenAiImageOperation::Edit if validation.image_count == 0 => {
+            return Some(build_ai_public_error_response(
+                http::StatusCode::BAD_REQUEST,
+                OPENAI_IMAGE_EDIT_INPUT_DETAIL,
+            ));
+        }
+        OpenAiImageOperation::Variation if validation.image_count == 0 => {
+            return Some(build_ai_public_error_response(
+                http::StatusCode::BAD_REQUEST,
+                OPENAI_IMAGE_VARIATION_INPUT_DETAIL,
+            ));
+        }
+        _ => {}
+    }
+
+    if validation.n.is_some_and(|value| value != 1) {
+        return Some(build_ai_public_error_response(
+            http::StatusCode::BAD_REQUEST,
+            OPENAI_IMAGE_N_DETAIL,
+        ));
+    }
+
+    if validation.partial_images.is_some_and(|value| value > 3)
+        || (validation.partial_images.is_some() && !validation.stream)
+    {
+        return Some(build_ai_public_error_response(
+            http::StatusCode::BAD_REQUEST,
+            OPENAI_IMAGE_PARTIAL_IMAGES_DETAIL,
+        ));
+    }
+
+    if validation.style_present {
+        return Some(build_ai_public_error_response(
+            http::StatusCode::BAD_REQUEST,
+            OPENAI_IMAGE_STYLE_DETAIL,
+        ));
+    }
+
+    if validation.stream {
+        if operation == OpenAiImageOperation::Variation {
+            return Some(build_ai_public_error_response(
+                http::StatusCode::BAD_REQUEST,
+                OPENAI_IMAGE_STREAM_VARIATION_DETAIL,
+            ));
+        }
+        if !image_model_supports_streaming(validation.model.as_deref()) {
+            return Some(build_ai_public_error_response(
+                http::StatusCode::BAD_REQUEST,
+                OPENAI_IMAGE_STREAM_MODEL_DETAIL,
             ));
         }
     }
 
-    if let Some(n) = payload.get("n").and_then(image_request_count) {
-        if n != 1 {
-            return Some(build_ai_public_error_response(
-                http::StatusCode::BAD_REQUEST,
-                OPENAI_IMAGE_N_DETAIL,
-            ));
-        }
+    if validation
+        .response_format
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "url" | "b64_json"))
+    {
+        return Some(build_ai_public_error_response(
+            http::StatusCode::BAD_REQUEST,
+            OPENAI_IMAGE_RESPONSE_FORMAT_DETAIL,
+        ));
+    }
+
+    if validation
+        .output_format
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "png" | "jpeg" | "jpg" | "webp"))
+    {
+        return Some(build_ai_public_error_response(
+            http::StatusCode::BAD_REQUEST,
+            OPENAI_IMAGE_OUTPUT_FORMAT_DETAIL,
+        ));
+    }
+
+    if validation
+        .quality
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "low" | "medium" | "high" | "standard" | "hd"))
+    {
+        return Some(build_ai_public_error_response(
+            http::StatusCode::BAD_REQUEST,
+            OPENAI_IMAGE_QUALITY_DETAIL,
+        ));
+    }
+
+    if validation
+        .background
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "auto" | "opaque" | "transparent"))
+    {
+        return Some(build_ai_public_error_response(
+            http::StatusCode::BAD_REQUEST,
+            OPENAI_IMAGE_BACKGROUND_DETAIL,
+        ));
+    }
+
+    if validation
+        .moderation
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "auto" | "low"))
+    {
+        return Some(build_ai_public_error_response(
+            http::StatusCode::BAD_REQUEST,
+            OPENAI_IMAGE_MODERATION_DETAIL,
+        ));
+    }
+
+    if validation
+        .input_fidelity
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "low" | "high"))
+    {
+        return Some(build_ai_public_error_response(
+            http::StatusCode::BAD_REQUEST,
+            OPENAI_IMAGE_INPUT_FIDELITY_DETAIL,
+        ));
+    }
+
+    if validation
+        .output_compression
+        .is_some_and(|value| value > 100)
+    {
+        return Some(build_ai_public_error_response(
+            http::StatusCode::BAD_REQUEST,
+            OPENAI_IMAGE_OUTPUT_COMPRESSION_DETAIL,
+        ));
     }
 
     None
@@ -139,6 +333,306 @@ fn image_request_count(value: &Value) -> Option<u64> {
                 .as_str()
                 .and_then(|text| text.trim().parse::<u64>().ok())
         })
+}
+
+fn is_openai_image_model(model: &str) -> bool {
+    canonicalize_openai_image_model(model).is_some()
+}
+
+fn canonicalize_openai_image_model(model: &str) -> Option<&'static str> {
+    match model.trim().to_ascii_lowercase().as_str() {
+        "gpt-image-1" => Some("gpt-image-1"),
+        "gpt-image-1.5" => Some("gpt-image-1.5"),
+        "gpt-image-1-mini" => Some("gpt-image-1-mini"),
+        "gpt-image-2" => Some("gpt-image-2"),
+        "chatgpt-image-latest" => Some("chatgpt-image-latest"),
+        "dall-e-2" => Some("dall-e-2"),
+        "dall-e-3" => Some("dall-e-3"),
+        _ => None,
+    }
+}
+
+fn image_model_supported_for_operation(operation: OpenAiImageOperation, model: &str) -> bool {
+    match operation {
+        OpenAiImageOperation::Generate => true,
+        OpenAiImageOperation::Edit => !matches!(model, "dall-e-3"),
+        OpenAiImageOperation::Variation => model == "dall-e-2",
+    }
+}
+
+fn image_model_supports_streaming(model: Option<&str>) -> bool {
+    !matches!(model, Some("dall-e-2" | "dall-e-3"))
+}
+
+fn parse_openai_image_validation_input(
+    operation: OpenAiImageOperation,
+    content_type: Option<&str>,
+    request_body: &Bytes,
+) -> Result<OpenAiImageValidationInput, &'static str> {
+    if request_body.is_empty() {
+        return Err(match operation {
+            OpenAiImageOperation::Generate | OpenAiImageOperation::Edit => {
+                OPENAI_IMAGE_PROMPT_DETAIL
+            }
+            OpenAiImageOperation::Variation => OPENAI_IMAGE_VARIATION_INPUT_DETAIL,
+        });
+    }
+
+    let content_type = content_type.unwrap_or_default().to_ascii_lowercase();
+    if content_type.contains("multipart/form-data") {
+        parse_openai_image_validation_input_from_multipart(request_body, &content_type)
+    } else {
+        parse_openai_image_validation_input_from_json(request_body)
+    }
+}
+
+fn parse_openai_image_validation_input_from_json(
+    request_body: &Bytes,
+) -> Result<OpenAiImageValidationInput, &'static str> {
+    let payload = serde_json::from_slice::<Value>(request_body)
+        .map_err(|_| OPENAI_IMAGE_INVALID_JSON_DETAIL)?;
+    let object = payload
+        .as_object()
+        .ok_or(OPENAI_IMAGE_INVALID_JSON_DETAIL)?;
+
+    Ok(OpenAiImageValidationInput {
+        model: normalize_openai_image_model_for_operation(
+            object.get("model").and_then(Value::as_str),
+        )
+        .ok_or(OPENAI_IMAGE_INVALID_JSON_DETAIL)?,
+        prompt: object
+            .get("prompt")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        image_count: count_json_images(object),
+        n: object.get("n").and_then(image_request_count),
+        stream: object
+            .get("stream")
+            .and_then(value_as_bool)
+            .unwrap_or(false),
+        partial_images: object.get("partial_images").and_then(image_request_count),
+        response_format: object
+            .get("response_format")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_ascii_lowercase()),
+        output_format: object
+            .get("output_format")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_ascii_lowercase()),
+        quality: object
+            .get("quality")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_ascii_lowercase()),
+        background: object
+            .get("background")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_ascii_lowercase()),
+        moderation: object
+            .get("moderation")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_ascii_lowercase()),
+        input_fidelity: object
+            .get("input_fidelity")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_ascii_lowercase()),
+        output_compression: object
+            .get("output_compression")
+            .and_then(image_request_count),
+        style_present: object
+            .get("style")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty()),
+    })
+}
+
+fn parse_openai_image_validation_input_from_multipart(
+    request_body: &Bytes,
+    content_type: &str,
+) -> Result<OpenAiImageValidationInput, &'static str> {
+    let boundary = content_type
+        .split(';')
+        .find_map(|segment| segment.trim().strip_prefix("boundary="))
+        .map(|value| value.trim_matches('"').to_string())
+        .ok_or(OPENAI_IMAGE_INVALID_MULTIPART_DETAIL)?;
+    let fields = parse_multipart_fields(request_body, &boundary);
+    if fields.is_empty() {
+        return Err(OPENAI_IMAGE_INVALID_MULTIPART_DETAIL);
+    }
+
+    let model = fields
+        .iter()
+        .find(|field| field.name.trim() == "model")
+        .map(|field| String::from_utf8_lossy(&field.data).trim().to_string());
+
+    Ok(OpenAiImageValidationInput {
+        model: normalize_openai_image_model_for_operation(model.as_deref())
+            .ok_or(OPENAI_IMAGE_INVALID_MULTIPART_DETAIL)?,
+        prompt: multipart_text_field(&fields, "prompt"),
+        image_count: fields
+            .iter()
+            .filter(|field| {
+                matches!(
+                    field.name.trim(),
+                    "image" | "image[]" | "images" | "images[]"
+                )
+            })
+            .count(),
+        n: multipart_text_field(&fields, "n").and_then(|value| value.trim().parse::<u64>().ok()),
+        stream: multipart_text_field(&fields, "stream")
+            .and_then(|value| parse_bool_string(&value))
+            .unwrap_or(false),
+        partial_images: multipart_text_field(&fields, "partial_images")
+            .and_then(|value| value.trim().parse::<u64>().ok()),
+        response_format: multipart_text_field(&fields, "response_format")
+            .map(|value| value.to_ascii_lowercase()),
+        output_format: multipart_text_field(&fields, "output_format")
+            .map(|value| value.to_ascii_lowercase()),
+        quality: multipart_text_field(&fields, "quality").map(|value| value.to_ascii_lowercase()),
+        background: multipart_text_field(&fields, "background")
+            .map(|value| value.to_ascii_lowercase()),
+        moderation: multipart_text_field(&fields, "moderation")
+            .map(|value| value.to_ascii_lowercase()),
+        input_fidelity: multipart_text_field(&fields, "input_fidelity")
+            .map(|value| value.to_ascii_lowercase()),
+        output_compression: multipart_text_field(&fields, "output_compression")
+            .and_then(|value| value.trim().parse::<u64>().ok()),
+        style_present: multipart_text_field(&fields, "style").is_some(),
+    })
+}
+
+fn normalize_openai_image_model_for_operation(model: Option<&str>) -> Option<Option<String>> {
+    let Some(model) = model.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Some(None);
+    };
+    canonicalize_openai_image_model(model).map(|canonical| Some(canonical.to_string()))
+}
+
+fn count_json_images(object: &serde_json::Map<String, Value>) -> usize {
+    let mut count = 0usize;
+    if let Some(value) = object.get("image") {
+        count += json_image_count(value);
+    }
+    if let Some(values) = object.get("images").and_then(Value::as_array) {
+        count += values.iter().map(json_image_count).sum::<usize>();
+    }
+    count
+}
+
+fn json_image_count(value: &Value) -> usize {
+    match value {
+        Value::Array(values) => values.iter().map(json_image_count).sum(),
+        Value::String(text) => (!text.trim().is_empty()) as usize,
+        Value::Object(_) => 1,
+        _ => 0,
+    }
+}
+
+fn value_as_bool(value: &Value) -> Option<bool> {
+    value
+        .as_bool()
+        .or_else(|| value.as_str().and_then(parse_bool_string))
+}
+
+fn parse_bool_string(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" => Some(true),
+        "false" | "0" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+#[derive(Debug)]
+struct MultipartField {
+    name: String,
+    data: Vec<u8>,
+}
+
+fn multipart_text_field(fields: &[MultipartField], name: &str) -> Option<String> {
+    fields
+        .iter()
+        .find(|field| field.name.trim() == name)
+        .map(|field| String::from_utf8_lossy(&field.data).trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn parse_multipart_fields(body: &[u8], boundary: &str) -> Vec<MultipartField> {
+    let delimiter = format!("--{boundary}").into_bytes();
+    let mut parts = Vec::new();
+    let mut cursor = 0usize;
+
+    while let Some(index) = find_subslice(&body[cursor..], &delimiter) {
+        let start = cursor + index + delimiter.len();
+        if body.get(start..start + 2) == Some(b"--") {
+            break;
+        }
+        let mut part = &body[start..];
+        if part.starts_with(b"\r\n") {
+            part = &part[2..];
+        }
+        let Some(next) = find_subslice(part, &delimiter) else {
+            break;
+        };
+        let raw = &part[..next];
+        let raw = raw.strip_suffix(b"\r\n").unwrap_or(raw);
+        if let Some(field) = parse_multipart_field(raw) {
+            parts.push(field);
+        }
+        cursor = start + next;
+    }
+
+    parts
+}
+
+fn parse_multipart_field(raw: &[u8]) -> Option<MultipartField> {
+    let header_end = find_subslice(raw, b"\r\n\r\n")?;
+    let headers = &raw[..header_end];
+    let data = raw.get(header_end + 4..)?.to_vec();
+    let header_text = String::from_utf8_lossy(headers);
+
+    let mut name = None;
+    for line in header_text.lines() {
+        let trimmed = line.trim();
+        if trimmed
+            .to_ascii_lowercase()
+            .starts_with("content-disposition:")
+        {
+            name = extract_quoted_header_value(trimmed, "name");
+        }
+    }
+
+    Some(MultipartField { name: name?, data })
+}
+
+fn extract_quoted_header_value(header: &str, key: &str) -> Option<String> {
+    let pattern = format!("{key}=\"");
+    let start = header.find(&pattern)? + pattern.len();
+    let rest = &header[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn maybe_build_local_ai_public_route_guard_response(

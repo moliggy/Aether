@@ -45,7 +45,7 @@ pub(crate) async fn maybe_execute_via_sync_decision_path(
     };
 
     if let Some(stream_plan_kind) = resolve_execution_runtime_stream_plan_kind(parts, decision) {
-        if is_matching_stream_request(stream_plan_kind, parts, &body_json) {
+        if is_matching_stream_request(stream_plan_kind, parts, &body_json, body_base64.as_deref()) {
             return Ok(LocalExecutionRequestOutcome::NoPath);
         }
     }

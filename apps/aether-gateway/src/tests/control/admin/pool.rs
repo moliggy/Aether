@@ -1482,6 +1482,83 @@ async fn gateway_marks_exhausted_codex_pool_key_as_blocked_when_flag_enabled() {
 }
 
 #[tokio::test]
+async fn gateway_lists_inherited_fixed_provider_api_formats_for_pool_keys() {
+    let mut provider = sample_provider("provider-codex", "codex", 10).with_transport_fields(
+        true,
+        false,
+        true,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(json!({
+            "pool_advanced": {
+                "enabled": true
+            }
+        })),
+    );
+    provider.provider_type = "codex".to_string();
+
+    let mut key = sample_key(
+        "key-codex-inherited",
+        "provider-codex",
+        "openai:cli",
+        "oauth-placeholder",
+    );
+    key.name = "codex inherited".to_string();
+    key.auth_type = "oauth".to_string();
+    key.api_formats = Some(json!(["openai:cli", "openai:compact"]));
+
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        vec![
+            sample_endpoint(
+                "endpoint-codex-cli",
+                "provider-codex",
+                "openai:cli",
+                "https://chatgpt.com/backend-api/codex",
+            ),
+            sample_endpoint(
+                "endpoint-codex-image",
+                "provider-codex",
+                "openai:image",
+                "https://chatgpt.com/backend-api/codex",
+            ),
+        ],
+        vec![key],
+    ));
+    let state = AppState::new()
+        .expect("gateway should build")
+        .with_data_state_for_tests(GatewayDataState::with_provider_catalog_reader_for_tests(
+            provider_catalog_repository,
+        ));
+
+    let response = local_admin_pool_response(
+        &state,
+        http::Method::GET,
+        "/api/admin/pool/provider-codex/keys?page=1&page_size=50&status=all",
+        None,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = serde_json::from_slice(
+        &to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read"),
+    )
+    .expect("json body should parse");
+    let keys = payload["keys"].as_array().expect("keys should be array");
+
+    assert_eq!(keys.len(), 1);
+    assert_eq!(
+        keys[0]["api_formats"],
+        json!(["openai:cli", "openai:image"])
+    );
+}
+
+#[tokio::test]
 async fn gateway_prefers_status_snapshot_codex_quota_over_stale_metadata() {
     let mut provider = sample_provider("provider-codex", "codex", 10).with_transport_fields(
         true,

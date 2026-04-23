@@ -1,4 +1,5 @@
 use crate::ai_pipeline::GatewayControlDecision;
+use crate::ai_pipeline::CODEX_OPENAI_IMAGE_DEFAULT_OUTPUT_FORMAT;
 use crate::ai_pipeline::{build_generated_tool_call_id, canonicalize_tool_arguments};
 use crate::{usage::GatewaySyncReportRequest, GatewayError};
 use base64::Engine as _;
@@ -105,6 +106,20 @@ fn maybe_build_local_openai_image_sync_finalize_response(
     let Some(body_base64) = payload.body_base64.as_deref() else {
         return Ok(None);
     };
+    let response_format = report_context
+        .get("image_request")
+        .and_then(|value| value.get("response_format"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("url");
+    let default_output_format = report_context
+        .get("image_request")
+        .and_then(|value| value.get("output_format"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(CODEX_OPENAI_IMAGE_DEFAULT_OUTPUT_FORMAT);
     let body_bytes = base64::engine::general_purpose::STANDARD
         .decode(body_base64)
         .map_err(|err| GatewayError::Internal(err.to_string()))?;
@@ -157,6 +172,7 @@ fn maybe_build_local_openai_image_sync_finalize_response(
                 };
                 images.push(serde_json::json!({
                     "b64_json": result,
+                    "output_format": item.get("output_format").cloned().unwrap_or(serde_json::Value::String(default_output_format.to_string())),
                     "revised_prompt": item.get("revised_prompt").cloned().unwrap_or(serde_json::Value::Null),
                 }));
             }
@@ -191,13 +207,46 @@ fn maybe_build_local_openai_image_sync_finalize_response(
             .iter()
             .map(|image| serde_json::json!({
                 "type": "image_generation_call",
+                "output_format": image.get("output_format").cloned().unwrap_or(serde_json::Value::Null),
                 "revised_prompt": image.get("revised_prompt").cloned().unwrap_or(serde_json::Value::Null),
             }))
             .collect::<Vec<_>>(),
     });
+    let client_images = images
+        .iter()
+        .map(|image| {
+            let revised_prompt = image
+                .get("revised_prompt")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let b64_json = image
+                .get("b64_json")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let output_format = image
+                .get("output_format")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(default_output_format);
+            if response_format.eq_ignore_ascii_case("b64_json") {
+                serde_json::json!({
+                    "b64_json": b64_json,
+                    "revised_prompt": revised_prompt,
+                })
+            } else {
+                serde_json::json!({
+                    "url": format!(
+                        "data:{};base64,{}",
+                        image_output_mime_type(output_format),
+                        b64_json
+                    ),
+                    "revised_prompt": revised_prompt,
+                })
+            }
+        })
+        .collect::<Vec<_>>();
     let client_body_json = serde_json::json!({
         "created": created.unwrap_or_default(),
-        "data": images,
+        "data": client_images,
         "usage": provider_body_json.get("usage").cloned().unwrap_or(serde_json::Value::Null),
     });
 
@@ -208,6 +257,14 @@ fn maybe_build_local_openai_image_sync_finalize_response(
         client_body_json,
         provider_body_json,
     )?))
+}
+
+fn image_output_mime_type(output_format: &str) -> &'static str {
+    match output_format.trim().to_ascii_lowercase().as_str() {
+        "jpeg" | "jpg" => "image/jpeg",
+        "webp" => "image/webp",
+        _ => "image/png",
+    }
 }
 
 #[cfg(test)]

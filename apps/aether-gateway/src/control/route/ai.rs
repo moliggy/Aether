@@ -33,7 +33,7 @@ pub(super) fn classify_ai_public_route(
     } else if method == http::Method::POST
         && matches!(
             normalized_path,
-            "/v1/images/generations" | "/v1/images/edits"
+            "/v1/images/generations" | "/v1/images/edits" | "/v1/images/variations"
         )
     {
         Some(classified(

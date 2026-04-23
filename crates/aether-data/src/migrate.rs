@@ -8,7 +8,7 @@ use tracing::{error, info, warn};
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 static BASELINE_V2_SQL: &str = include_str!("../bootstrap/20260413020000_baseline_v2.sql");
-const BASELINE_V2_CUTOFF_VERSION: i64 = 20260422120000;
+const BASELINE_V2_CUTOFF_VERSION: i64 = 20260423010000;
 const MIGRATIONS_TABLE_EXISTS_SQL: &str =
     "SELECT to_regclass('public._sqlx_migrations') IS NOT NULL";
 const PUBLIC_BASE_TABLE_COUNT_SQL: &str = r#"
@@ -662,6 +662,8 @@ SELECT EXISTS (
                 20260421000000,
                 20260422110000,
                 20260422120000,
+                20260423000000,
+                20260423010000,
             ]
         );
     }
@@ -708,6 +710,24 @@ SELECT EXISTS (
         ));
         assert!(BASELINE_V2_SQL.contains("successful_response_time_sum_ms double precision"));
         assert!(BASELINE_V2_SQL.contains("cache_hit_total_requests bigint DEFAULT 0 NOT NULL"));
+        assert!(BASELINE_V2_SQL.contains(
+            "ALTER TABLE public.stats_daily_model\n    ADD COLUMN IF NOT EXISTS cache_creation_ephemeral_5m_tokens bigint DEFAULT '0'::bigint NOT NULL,"
+        ));
+    }
+
+    #[test]
+    fn provider_api_keys_api_formats_remains_nullable_in_baselines() {
+        let baseline_migration = MIGRATOR
+            .iter()
+            .find(|migration| migration.version == 20260403000000)
+            .expect("baseline migration should be embedded");
+
+        assert!(baseline_migration.sql.contains("api_formats json,"));
+        assert!(!baseline_migration
+            .sql
+            .contains("api_formats json DEFAULT '[]'::json NOT NULL"));
+        assert!(BASELINE_V2_SQL.contains("api_formats json,"));
+        assert!(!BASELINE_V2_SQL.contains("api_formats json DEFAULT '[]'::json NOT NULL"));
     }
 
     #[test]
@@ -790,6 +810,8 @@ SELECT EXISTS (
                 20260421000000,
                 20260422110000,
                 20260422120000,
+                20260423000000,
+                20260423010000,
             ]
         );
     }

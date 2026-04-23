@@ -124,6 +124,9 @@ pub(super) async fn build_admin_pool_list_keys_response(
     };
 
     let key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
+    let endpoints = state
+        .list_provider_catalog_endpoints_by_provider_ids(std::slice::from_ref(&provider.id))
+        .await?;
     let runtime = match (state.redis_kv_runner(), pool_config.as_ref()) {
         (Some(runner), Some(pool_config)) if !key_ids.is_empty() => {
             read_admin_provider_pool_runtime_state(
@@ -143,6 +146,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
             pool_payloads::build_admin_pool_key_payload(
                 state,
                 &provider.provider_type,
+                &endpoints,
                 &key,
                 &runtime,
                 pool_config.clone(),

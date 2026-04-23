@@ -30,28 +30,24 @@ use crate::clock::current_unix_secs;
 use crate::AppState;
 use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
 
-pub(super) const OPENAI_IMAGE_DEFAULT_MODEL: &str = "gpt-image-2";
-
 pub(super) use crate::ai_pipeline::planner::candidate_materialization::LocalExecutionCandidateAttempt as LocalOpenAiImageCandidateAttempt;
 pub(super) use crate::ai_pipeline::planner::decision_input::LocalRequestedModelDecisionInput as LocalOpenAiImageDecisionInput;
 
+use super::request::resolve_requested_image_model_for_request;
+
 pub(super) async fn resolve_local_openai_image_decision_input(
     state: &AppState,
+    parts: &http::request::Parts,
+    body_json: &serde_json::Value,
+    body_base64: Option<&str>,
     trace_id: &str,
     decision: &GatewayControlDecision,
-    body_json: &serde_json::Value,
 ) -> Option<LocalOpenAiImageDecisionInput> {
     let Some(auth_context) = resolve_local_openai_image_auth_context(decision) else {
         return None;
     };
 
-    let requested_model = body_json
-        .get("model")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(OPENAI_IMAGE_DEFAULT_MODEL)
-        .to_string();
+    let requested_model = resolve_requested_image_model_for_request(parts, body_json, body_base64)?;
 
     let resolved_input = match resolve_local_authenticated_decision_input(
         state,

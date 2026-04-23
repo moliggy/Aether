@@ -67,6 +67,7 @@ pub(crate) fn sanitize_usage_request_metadata_ref(value: Option<&Value>) -> Opti
 
 fn copy_allowed_metadata_fields(source: &Map<String, Value>, target: &mut Map<String, Value>) {
     copy_non_empty_string(source, target, "trace_id");
+    copy_bool(source, target, "client_requested_stream");
     copy_number(source, target, "provider_request_body_base64_bytes");
     copy_number(source, target, "provider_response_body_base64_bytes");
     copy_number(source, target, "client_response_body_base64_bytes");
@@ -87,6 +88,7 @@ fn copy_allowed_metadata_fields(source: &Map<String, Value>, target: &mut Map<St
 
 fn move_allowed_metadata_fields(mut source: Map<String, Value>, target: &mut Map<String, Value>) {
     remove_non_empty_string(&mut source, target, "trace_id");
+    remove_bool(&mut source, target, "client_requested_stream");
     remove_number(&mut source, target, "provider_request_body_base64_bytes");
     remove_number(&mut source, target, "provider_response_body_base64_bytes");
     remove_number(&mut source, target, "client_response_body_base64_bytes");
@@ -366,6 +368,7 @@ mod tests {
             "model": "gpt-5",
             "candidate_index": 2,
             "trace_id": "trace-1",
+            "client_requested_stream": false,
             "provider_request_body_base64_bytes": 512,
             "provider_response_body_base64_bytes": 1024,
             "client_response_body_base64_bytes": 2048,
@@ -391,6 +394,7 @@ mod tests {
             metadata,
             json!({
                 "trace_id": "trace-1",
+                "client_requested_stream": false,
                 "provider_request_body_base64_bytes": 512,
                 "provider_response_body_base64_bytes": 1024,
                 "client_response_body_base64_bytes": 2048,
@@ -444,6 +448,7 @@ mod tests {
                 json!({
                     "request_id": "req-1",
                     "candidate_index": 0,
+                    "client_requested_stream": false,
                     "provider_id": "provider-1",
                     "billing_snapshot": {"status": "complete"}
                 })
@@ -456,6 +461,7 @@ mod tests {
         assert_eq!(
             metadata,
             json!({
+                "client_requested_stream": false,
                 "billing_snapshot": {"status": "complete"}
             })
         );

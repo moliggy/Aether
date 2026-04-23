@@ -86,6 +86,7 @@ pub(super) async fn maybe_build_local_gemini_files_decision_payload_for_candidat
         original_headers: &parts.headers,
         original_request_body_json: Some(body_json),
         original_request_body_base64: resolved.provider_request_body_base64.as_deref(),
+        client_requested_stream: spec_metadata.require_streaming,
         has_envelope: false,
         needs_conversion: false,
         extra_fields,

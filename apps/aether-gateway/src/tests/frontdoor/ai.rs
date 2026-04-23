@@ -578,7 +578,7 @@ async fn gateway_rejects_gpt_image_2_on_chat_completions_without_hitting_fallbac
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(
         payload["detail"],
-        "gpt-image-2 仅支持通过 /v1/images/generations 或 /v1/images/edits 调用"
+        "图片模型仅支持通过 /v1/images/generations、/v1/images/edits 或 /v1/images/variations 调用"
     );
     assert_eq!(*fallback_probe_hits.lock().expect("mutex should lock"), 0);
 
@@ -640,7 +640,66 @@ async fn gateway_rejects_image_request_with_n_greater_than_one_without_hitting_f
         Some(EXECUTION_PATH_LOCAL_AI_PUBLIC)
     );
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
-    assert_eq!(payload["detail"], "图片接口当前仅支持 n=1");
+    assert_eq!(payload["detail"], "当前 Codex 图片反代仅支持 n=1");
+    assert_eq!(*fallback_probe_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    fallback_probe_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_rejects_variation_request_without_image_without_hitting_fallback_probe() {
+    let fallback_probe_hits = Arc::new(Mutex::new(0usize));
+    let fallback_probe_hits_clone = Arc::clone(&fallback_probe_hits);
+    let fallback_probe = Router::new().route(
+        "/{*path}",
+        any(move |_request: Request| {
+            let fallback_probe_hits_inner = Arc::clone(&fallback_probe_hits_clone);
+            async move {
+                *fallback_probe_hits_inner.lock().expect("mutex should lock") += 1;
+                (StatusCode::OK, Json(json!({"proxied": true}))).into_response()
+            }
+        }),
+    );
+
+    let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
+        Some(hash_api_key("sk-openai-image-variation")),
+        unrestricted_models_snapshot("key-openai-image-variation", "user-openai-image-variation"),
+    )]));
+
+    let (_unused_fallback_probe_url, fallback_probe_handle) = start_server(fallback_probe).await;
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_auth_api_key_data_reader_for_tests(auth_repository),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/images/variations"))
+        .header("authorization", "Bearer sk-openai-image-variation")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(
+            serde_json::to_vec(&json!({
+                "model": "dall-e-2",
+                "response_format": "url"
+            }))
+            .expect("request body should encode"),
+        )
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response
+            .headers()
+            .get(EXECUTION_PATH_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some(EXECUTION_PATH_LOCAL_AI_PUBLIC)
+    );
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["detail"], "图片变体请求需要 image 文件");
     assert_eq!(*fallback_probe_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();

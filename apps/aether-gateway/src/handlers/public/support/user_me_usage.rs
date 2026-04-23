@@ -194,6 +194,55 @@ fn build_users_me_usage_api_key_payload(
     }
 }
 
+fn users_me_usage_request_body_stream_flag(item: &StoredRequestUsageAudit) -> Option<bool> {
+    item.request_body
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .and_then(|body| body.get("stream"))
+        .and_then(serde_json::Value::as_bool)
+}
+
+fn users_me_usage_api_format_defaults_to_non_stream(item: &StoredRequestUsageAudit) -> bool {
+    let api_format = item
+        .api_format
+        .as_deref()
+        .or(item.endpoint_api_format.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    matches!(
+        api_format,
+        Some(value)
+            if value.eq_ignore_ascii_case("openai:chat")
+                || value.eq_ignore_ascii_case("openai:cli")
+                || value.eq_ignore_ascii_case("openai:compact")
+                || value.eq_ignore_ascii_case("openai:image")
+                || value.eq_ignore_ascii_case("claude:chat")
+                || value.eq_ignore_ascii_case("claude:cli")
+    )
+}
+
+fn users_me_usage_request_body_implies_default_non_stream(item: &StoredRequestUsageAudit) -> bool {
+    let Some(body) = item
+        .request_body
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+    else {
+        return false;
+    };
+    !body.contains_key("stream") && users_me_usage_api_format_defaults_to_non_stream(item)
+}
+
+fn users_me_usage_client_is_stream(item: &StoredRequestUsageAudit) -> bool {
+    item.request_metadata
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .and_then(|metadata| metadata.get("client_requested_stream"))
+        .and_then(serde_json::Value::as_bool)
+        .or_else(|| users_me_usage_request_body_stream_flag(item))
+        .or_else(|| users_me_usage_request_body_implies_default_non_stream(item).then_some(false))
+        .unwrap_or(item.is_stream)
+}
+
 fn build_users_me_usage_record_payload(
     item: &StoredRequestUsageAudit,
     include_actual_cost: bool,
@@ -206,6 +255,7 @@ fn build_users_me_usage_record_payload(
     let cache_read_price_per_1m = item.settlement_cache_read_price_per_1m();
     let cache_creation_input_tokens = users_me_usage_cache_creation_tokens(item);
     let rate_multiplier = item.settlement_rate_multiplier();
+    let client_is_stream = users_me_usage_client_is_stream(item);
     let mut payload = json!({
         "id": item.id,
         "model": item.model,
@@ -221,6 +271,9 @@ fn build_users_me_usage_record_payload(
         "response_time_ms": item.response_time_ms,
         "first_byte_time_ms": item.first_byte_time_ms,
         "is_stream": item.is_stream,
+        "upstream_is_stream": item.is_stream,
+        "client_requested_stream": client_is_stream,
+        "client_is_stream": client_is_stream,
         "status": item.status,
         "has_fallback": item.has_fallback(),
         "created_at": unix_secs_to_rfc3339(item.created_at_unix_ms),
@@ -253,6 +306,7 @@ fn build_users_me_usage_record_payload(
 
 fn build_users_me_usage_active_payload(item: &StoredRequestUsageAudit) -> serde_json::Value {
     let cache_creation_input_tokens = users_me_usage_cache_creation_tokens(item);
+    let client_is_stream = users_me_usage_client_is_stream(item);
     let mut payload = json!({
         "id": item.id,
         "status": item.status,
@@ -270,6 +324,10 @@ fn build_users_me_usage_active_payload(item: &StoredRequestUsageAudit) -> serde_
         "first_byte_time_ms": item.first_byte_time_ms,
         "api_format": item.api_format,
         "endpoint_api_format": item.endpoint_api_format,
+        "is_stream": item.is_stream,
+        "upstream_is_stream": item.is_stream,
+        "client_requested_stream": client_is_stream,
+        "client_is_stream": client_is_stream,
         "has_format_conversion": item.has_format_conversion,
         "target_model": item.target_model,
         "has_fallback": item.has_fallback(),
@@ -543,7 +601,7 @@ pub(super) async fn handle_users_me_usage_get(
                     http::StatusCode::INTERNAL_SERVER_ERROR,
                     format!("user usage summary lookup failed: {err:?}"),
                     false,
-                )
+                );
             }
         };
         summary_by_model = match state
@@ -561,7 +619,7 @@ pub(super) async fn handle_users_me_usage_get(
                     http::StatusCode::INTERNAL_SERVER_ERROR,
                     format!("user usage model breakdown lookup failed: {err:?}"),
                     false,
-                )
+                );
             }
         };
         summary_by_provider = match state
@@ -579,7 +637,7 @@ pub(super) async fn handle_users_me_usage_get(
                     http::StatusCode::INTERNAL_SERVER_ERROR,
                     format!("user usage provider breakdown lookup failed: {err:?}"),
                     false,
-                )
+                );
             }
         };
         summary_by_api_format = match state
@@ -597,7 +655,7 @@ pub(super) async fn handle_users_me_usage_get(
                     http::StatusCode::INTERNAL_SERVER_ERROR,
                     format!("user usage api_format breakdown lookup failed: {err:?}"),
                     false,
-                )
+                );
             }
         };
 
@@ -614,7 +672,7 @@ pub(super) async fn handle_users_me_usage_get(
                             http::StatusCode::INTERNAL_SERVER_ERROR,
                             format!("user api key search context lookup failed: {err:?}"),
                             false,
-                        )
+                        );
                     }
                 };
             let keyword_query = UsageAuditKeywordSearchQuery {
@@ -648,7 +706,7 @@ pub(super) async fn handle_users_me_usage_get(
                         http::StatusCode::INTERNAL_SERVER_ERROR,
                         format!("user usage search count lookup failed: {err:?}"),
                         false,
-                    )
+                    );
                 }
             };
             record_items = match state
@@ -665,7 +723,7 @@ pub(super) async fn handle_users_me_usage_get(
                         http::StatusCode::INTERNAL_SERVER_ERROR,
                         format!("user usage search lookup failed: {err:?}"),
                         false,
-                    )
+                    );
                 }
             };
         } else {
@@ -692,7 +750,7 @@ pub(super) async fn handle_users_me_usage_get(
                         http::StatusCode::INTERNAL_SERVER_ERROR,
                         format!("user usage count lookup failed: {err:?}"),
                         false,
-                    )
+                    );
                 }
             };
             record_items = match state
@@ -718,7 +776,7 @@ pub(super) async fn handle_users_me_usage_get(
                         http::StatusCode::INTERNAL_SERVER_ERROR,
                         format!("user usage records lookup failed: {err:?}"),
                         false,
-                    )
+                    );
                 }
             };
             api_key_names = match resolve_users_me_api_key_names(state, &record_items).await {
@@ -728,7 +786,7 @@ pub(super) async fn handle_users_me_usage_get(
                         http::StatusCode::INTERNAL_SERVER_ERROR,
                         format!("user api key name lookup failed: {err:?}"),
                         false,
-                    )
+                    );
                 }
             };
         }
@@ -826,7 +884,7 @@ pub(super) async fn handle_users_me_usage_active_get(
                     http::StatusCode::INTERNAL_SERVER_ERROR,
                     format!("user active usage lookup failed: {err:?}"),
                     false,
-                )
+                );
             }
         },
         None => match state
@@ -852,7 +910,7 @@ pub(super) async fn handle_users_me_usage_active_get(
                     http::StatusCode::INTERNAL_SERVER_ERROR,
                     format!("user active usage lookup failed: {err:?}"),
                     false,
-                )
+                );
             }
         },
     };
@@ -907,7 +965,7 @@ pub(super) async fn handle_users_me_usage_interval_timeline_get(
                 http::StatusCode::INTERNAL_SERVER_ERROR,
                 format!("user interval timeline lookup failed: {err:?}"),
                 false,
-            )
+            );
         }
     };
 
@@ -976,7 +1034,7 @@ pub(super) async fn handle_users_me_usage_heatmap_get(
                 http::StatusCode::INTERNAL_SERVER_ERROR,
                 format!("user heatmap lookup failed: {err:?}"),
                 false,
-            )
+            );
         }
     };
 
@@ -1089,8 +1147,12 @@ mod tests {
     use std::collections::BTreeMap;
 
     use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
+    use serde_json::json;
 
-    use super::{build_users_me_usage_active_payload, build_users_me_usage_record_payload};
+    use super::{
+        build_users_me_usage_active_payload, build_users_me_usage_record_payload,
+        users_me_usage_client_is_stream,
+    };
 
     fn sample_usage(status: &str) -> StoredRequestUsageAudit {
         StoredRequestUsageAudit::new(
@@ -1164,5 +1226,81 @@ mod tests {
         assert_eq!(payload["cache_creation_input_tokens"], 10);
         assert_eq!(payload["cache_creation_ephemeral_5m_input_tokens"], 4);
         assert_eq!(payload["cache_creation_ephemeral_1h_input_tokens"], 6);
+    }
+
+    #[test]
+    fn user_usage_payloads_include_symmetric_stream_fields() {
+        let item = StoredRequestUsageAudit {
+            is_stream: true,
+            request_metadata: Some(json!({
+                "client_requested_stream": false
+            })),
+            ..sample_usage("completed")
+        };
+
+        assert!(!users_me_usage_client_is_stream(&item));
+
+        let record_payload =
+            build_users_me_usage_record_payload(&item, false, &BTreeMap::new(), false);
+        assert_eq!(record_payload["is_stream"], true);
+        assert_eq!(record_payload["upstream_is_stream"], true);
+        assert_eq!(record_payload["client_requested_stream"], false);
+        assert_eq!(record_payload["client_is_stream"], false);
+
+        let active_payload = build_users_me_usage_active_payload(&item);
+        assert_eq!(active_payload["is_stream"], true);
+        assert_eq!(active_payload["upstream_is_stream"], true);
+        assert_eq!(active_payload["client_requested_stream"], false);
+        assert_eq!(active_payload["client_is_stream"], false);
+    }
+
+    #[test]
+    fn user_usage_stream_inference_falls_back_to_request_body_stream_flag() {
+        let item = StoredRequestUsageAudit {
+            is_stream: true,
+            request_body: Some(json!({
+                "model": "gpt-5.4",
+                "stream": false
+            })),
+            ..sample_usage("completed")
+        };
+
+        assert!(!users_me_usage_client_is_stream(&item));
+
+        let record_payload =
+            build_users_me_usage_record_payload(&item, false, &BTreeMap::new(), false);
+        assert_eq!(record_payload["is_stream"], true);
+        assert_eq!(record_payload["upstream_is_stream"], true);
+        assert_eq!(record_payload["client_requested_stream"], false);
+        assert_eq!(record_payload["client_is_stream"], false);
+    }
+
+    #[test]
+    fn user_usage_stream_defaults_to_non_stream_for_openai_cli_request_body_without_flag() {
+        let item = StoredRequestUsageAudit {
+            is_stream: true,
+            api_format: Some("openai:cli".to_string()),
+            request_body: Some(json!({
+                "model": "gpt-5.4",
+                "input": [{"role": "user", "content": "hi"}],
+                "store": false
+            })),
+            ..sample_usage("completed")
+        };
+
+        assert!(!users_me_usage_client_is_stream(&item));
+
+        let record_payload =
+            build_users_me_usage_record_payload(&item, false, &BTreeMap::new(), false);
+        assert_eq!(record_payload["is_stream"], true);
+        assert_eq!(record_payload["upstream_is_stream"], true);
+        assert_eq!(record_payload["client_requested_stream"], false);
+        assert_eq!(record_payload["client_is_stream"], false);
+
+        let active_payload = build_users_me_usage_active_payload(&item);
+        assert_eq!(active_payload["is_stream"], true);
+        assert_eq!(active_payload["upstream_is_stream"], true);
+        assert_eq!(active_payload["client_requested_stream"], false);
+        assert_eq!(active_payload["client_is_stream"], false);
     }
 }

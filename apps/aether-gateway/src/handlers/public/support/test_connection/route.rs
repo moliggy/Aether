@@ -124,7 +124,13 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
     }
     let Some(key) = active_keys
         .iter()
-        .find(|key| provider_catalog_key_supports_format(key, &format_value))
+        .find(|key| {
+            provider_catalog_key_supports_format(
+                key,
+                provider.provider_type.as_str(),
+                &format_value,
+            )
+        })
         .cloned()
         .or_else(|| active_keys.into_iter().next())
     else {

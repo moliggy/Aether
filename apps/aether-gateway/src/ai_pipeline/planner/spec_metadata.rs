@@ -84,7 +84,7 @@ pub(crate) fn local_openai_image_spec_metadata(
         api_format: spec.api_format,
         decision_kind: spec.decision_kind,
         report_kind: Some(spec.report_kind),
-        require_streaming: false,
+        require_streaming: spec.require_streaming,
         requested_model_family: Some(RequestedModelFamily::Standard),
     }
 }

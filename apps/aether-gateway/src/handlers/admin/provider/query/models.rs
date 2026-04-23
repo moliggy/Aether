@@ -14,6 +14,9 @@ use crate::ai_pipeline::{maybe_build_sync_finalize_outcome, GatewayControlDecisi
 use crate::execution_runtime;
 use crate::handlers::admin::request::{AdminAppState, AdminGatewayProviderTransportSnapshot};
 use crate::model_fetch::ModelFetchRuntimeState;
+use crate::provider_key_auth::{
+    provider_key_configured_api_formats, provider_key_inherits_provider_api_formats,
+};
 use crate::provider_transport::kiro::{
     build_kiro_generate_assistant_response_url, build_kiro_provider_headers,
     build_kiro_provider_request_body, supports_local_kiro_request_transport_with_network,
@@ -272,9 +275,13 @@ fn provider_query_select_kiro_endpoint<'a>(
 
 fn provider_query_key_supports_endpoint(
     key: &StoredProviderCatalogKey,
+    provider_type: &str,
     endpoint_api_format: &str,
 ) -> bool {
-    let formats = json_string_list(key.api_formats.as_ref());
+    if provider_key_inherits_provider_api_formats(key, provider_type) {
+        return true;
+    }
+    let formats = provider_key_configured_api_formats(key);
     formats.is_empty()
         || formats
             .iter()
@@ -321,7 +328,11 @@ async fn provider_query_select_preferred_non_kiro_endpoint(
         for key in keys {
             if !key.is_active
                 || selected_key_id.is_some_and(|value| value != key.id.as_str())
-                || !provider_query_key_supports_endpoint(key, &endpoint.api_format)
+                || !provider_query_key_supports_endpoint(
+                    key,
+                    &provider.provider_type,
+                    &endpoint.api_format,
+                )
             {
                 continue;
             }
@@ -348,7 +359,11 @@ async fn provider_query_select_preferred_non_kiro_endpoint(
         for key in keys {
             if !key.is_active
                 || selected_key_id.is_some_and(|value| value != key.id.as_str())
-                || !provider_query_key_supports_endpoint(key, &endpoint.api_format)
+                || !provider_query_key_supports_endpoint(
+                    key,
+                    &provider.provider_type,
+                    &endpoint.api_format,
+                )
             {
                 continue;
             }
@@ -375,7 +390,11 @@ async fn provider_query_select_preferred_non_kiro_endpoint(
                 && keys.iter().any(|key| {
                     key.is_active
                         && selected_key_id.is_none_or(|value| value == key.id.as_str())
-                        && provider_query_key_supports_endpoint(key, &endpoint.api_format)
+                        && provider_query_key_supports_endpoint(
+                            key,
+                            &provider.provider_type,
+                            &endpoint.api_format,
+                        )
                 })
         })
         .or_else(|| endpoints.iter().find(|endpoint| endpoint.is_active))
@@ -531,7 +550,13 @@ async fn provider_query_build_kiro_test_candidates(
                 ADMIN_PROVIDER_QUERY_API_KEY_NOT_FOUND_DETAIL,
             ));
         };
-        if !key.is_active || !provider_query_key_supports_endpoint(key, &endpoint.api_format) {
+        if !key.is_active
+            || !provider_query_key_supports_endpoint(
+                key,
+                &provider.provider_type,
+                &endpoint.api_format,
+            )
+        {
             return Err(build_admin_provider_query_not_found_response(
                 ADMIN_PROVIDER_QUERY_NO_ACTIVE_TEST_CANDIDATE_DETAIL,
             ));
@@ -567,7 +592,9 @@ async fn provider_query_build_kiro_test_candidates(
                 .as_deref()
                 .is_none_or(|value| value == key.id.as_str())
         })
-        .filter(|key| provider_query_key_supports_endpoint(key, &endpoint.api_format))
+        .filter(|key| {
+            provider_query_key_supports_endpoint(key, &provider.provider_type, &endpoint.api_format)
+        })
         .collect::<Vec<_>>();
     keys.sort_by_key(|key| {
         provider_query_test_key_sort_key(provider.provider_type.as_str(), key, &endpoint.api_format)
