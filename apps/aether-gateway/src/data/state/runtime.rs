@@ -1241,6 +1241,22 @@ impl GatewayDataState {
         }
     }
 
+    pub(crate) async fn find_billing_model_context_by_model_id(
+        &self,
+        provider_id: &str,
+        provider_api_key_id: Option<&str>,
+        model_id: &str,
+    ) -> Result<Option<StoredBillingModelContext>, DataLayerError> {
+        match &self.billing_reader {
+            Some(repository) => {
+                repository
+                    .find_model_context_by_model_id(provider_id, provider_api_key_id, model_id)
+                    .await
+            }
+            None => Ok(None),
+        }
+    }
+
     pub(crate) async fn read_request_candidate_trace(
         &self,
         request_id: &str,

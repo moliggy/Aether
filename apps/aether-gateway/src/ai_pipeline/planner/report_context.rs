@@ -16,6 +16,9 @@ pub(crate) struct LocalExecutionReportContextParts<'a> {
     pub(crate) endpoint_id: &'a str,
     pub(crate) key_id: &'a str,
     pub(crate) key_name: Option<&'a str>,
+    pub(crate) model_id: Option<&'a str>,
+    pub(crate) global_model_id: Option<&'a str>,
+    pub(crate) global_model_name: Option<&'a str>,
     pub(crate) provider_api_format: &'a str,
     pub(crate) client_api_format: &'a str,
     pub(crate) mapped_model: Option<&'a str>,
@@ -135,6 +138,21 @@ pub(crate) fn build_local_execution_report_context(
 
     if let Some(key_name) = parts.key_name {
         object.insert("key_name".to_string(), Value::String(key_name.to_string()));
+    }
+    if let Some(model_id) = parts.model_id {
+        object.insert("model_id".to_string(), Value::String(model_id.to_string()));
+    }
+    if let Some(global_model_id) = parts.global_model_id {
+        object.insert(
+            "global_model_id".to_string(),
+            Value::String(global_model_id.to_string()),
+        );
+    }
+    if let Some(global_model_name) = parts.global_model_name {
+        object.insert(
+            "global_model_name".to_string(),
+            Value::String(global_model_name.to_string()),
+        );
     }
     if let Some(mapped_model) = parts.mapped_model {
         object.insert(

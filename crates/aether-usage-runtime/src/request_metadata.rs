@@ -75,6 +75,9 @@ fn copy_allowed_metadata_fields(source: &Map<String, Value>, target: &mut Map<St
     copy_non_null_value(source, target, "billing_snapshot");
     copy_non_empty_string(source, target, "billing_snapshot_schema_version");
     copy_non_empty_string(source, target, "billing_snapshot_status");
+    copy_non_empty_string(source, target, "model_id");
+    copy_non_empty_string(source, target, "global_model_id");
+    copy_non_empty_string(source, target, "global_model_name");
     copy_non_null_value(source, target, "dimensions");
     copy_non_null_value(source, target, "billing_rule_snapshot");
     copy_non_null_value(source, target, "scheduling_audit");
@@ -97,6 +100,9 @@ fn move_allowed_metadata_fields(mut source: Map<String, Value>, target: &mut Map
     remove_non_null_value(&mut source, target, "billing_snapshot");
     remove_non_empty_string(&mut source, target, "billing_snapshot_schema_version");
     remove_non_empty_string(&mut source, target, "billing_snapshot_status");
+    remove_non_empty_string(&mut source, target, "model_id");
+    remove_non_empty_string(&mut source, target, "global_model_id");
+    remove_non_empty_string(&mut source, target, "global_model_name");
     remove_non_null_value(&mut source, target, "dimensions");
     remove_non_null_value(&mut source, target, "billing_rule_snapshot");
     remove_non_null_value(&mut source, target, "scheduling_audit");
@@ -378,6 +384,9 @@ mod tests {
             "billing_snapshot": {"status": "complete"},
             "billing_snapshot_schema_version": "2.0",
             "billing_snapshot_status": "complete",
+            "model_id": "model-1",
+            "global_model_id": "global-model-1",
+            "global_model_name": "gpt-5",
             "dimensions": {"total_input_context": 10},
             "rate_multiplier": 1.25,
             "is_free_tier": false,
@@ -405,6 +414,9 @@ mod tests {
                 "billing_snapshot": {"status": "complete"},
                 "billing_snapshot_schema_version": "2.0",
                 "billing_snapshot_status": "complete",
+                "model_id": "model-1",
+                "global_model_id": "global-model-1",
+                "global_model_name": "gpt-5",
                 "dimensions": {"total_input_context": 10},
                 "rate_multiplier": 1.25,
                 "is_free_tier": false,
@@ -455,6 +467,9 @@ mod tests {
                     "client_requested_stream": false,
                     "upstream_is_stream": true,
                     "provider_id": "provider-1",
+                    "model_id": "model-1",
+                    "global_model_id": "global-model-1",
+                    "global_model_name": "gpt-5",
                     "billing_snapshot": {"status": "complete"}
                 })
                 .as_object()
@@ -468,6 +483,9 @@ mod tests {
             json!({
                 "client_requested_stream": false,
                 "upstream_is_stream": true,
+                "model_id": "model-1",
+                "global_model_id": "global-model-1",
+                "global_model_name": "gpt-5",
                 "billing_snapshot": {"status": "complete"}
             })
         );

@@ -285,6 +285,9 @@ fn admin_usage_strip_routing_metadata(metadata: &mut serde_json::Map<String, Val
     metadata.remove("candidate_id");
     metadata.remove("candidate_index");
     metadata.remove("key_name");
+    metadata.remove("model_id");
+    metadata.remove("global_model_id");
+    metadata.remove("global_model_name");
     metadata.remove("planner_kind");
     metadata.remove("route_family");
     metadata.remove("route_kind");
@@ -794,6 +797,17 @@ fn admin_usage_routing_json(
         &mut routing,
         "key_name",
         provider_key_name.or_else(|| item.routing_key_name()),
+    );
+    maybe_insert_string_field(&mut routing, "model_id", item.routing_model_id());
+    maybe_insert_string_field(
+        &mut routing,
+        "global_model_id",
+        item.routing_global_model_id(),
+    );
+    maybe_insert_string_field(
+        &mut routing,
+        "global_model_name",
+        item.routing_global_model_name(),
     );
     maybe_insert_string_field(&mut routing, "planner_kind", item.routing_planner_kind());
     maybe_insert_string_field(&mut routing, "route_family", item.routing_route_family());
@@ -2395,7 +2409,10 @@ mod tests {
     fn detail_payload_exposes_typed_routing_section() {
         let item = StoredRequestUsageAudit {
             request_metadata: Some(json!({
-                "trace_id": "trace-routing-detail"
+                "trace_id": "trace-routing-detail",
+                "model_id": "model-1",
+                "global_model_id": "global-model-1",
+                "global_model_name": "gpt-5"
             })),
             candidate_id: Some("cand-1".to_string()),
             candidate_index: Some(2),
@@ -2423,6 +2440,9 @@ mod tests {
         assert_eq!(payload["routing"]["candidate_id"], "cand-1");
         assert_eq!(payload["routing"]["candidate_index"], 2);
         assert_eq!(payload["routing"]["key_name"], "resolved-primary");
+        assert_eq!(payload["routing"]["model_id"], "model-1");
+        assert_eq!(payload["routing"]["global_model_id"], "global-model-1");
+        assert_eq!(payload["routing"]["global_model_name"], "gpt-5");
         assert_eq!(payload["routing"]["planner_kind"], "claude_cli_sync");
         assert_eq!(payload["routing"]["route_family"], "claude");
         assert_eq!(payload["routing"]["route_kind"], "cli");
@@ -2437,6 +2457,9 @@ mod tests {
         assert!(payload["metadata"]["candidate_id"].is_null());
         assert!(payload["metadata"]["candidate_index"].is_null());
         assert!(payload["metadata"]["key_name"].is_null());
+        assert!(payload["metadata"]["model_id"].is_null());
+        assert!(payload["metadata"]["global_model_id"].is_null());
+        assert!(payload["metadata"]["global_model_name"].is_null());
         assert!(payload["metadata"]["planner_kind"].is_null());
         assert!(payload["metadata"]["trace_id"].is_null());
         assert!(payload["metadata"]["route_family"].is_null());
