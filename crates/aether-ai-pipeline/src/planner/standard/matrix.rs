@@ -150,7 +150,124 @@ pub fn build_standard_upstream_url(
 #[cfg(test)]
 mod tests {
     use super::build_standard_request_body;
-    use serde_json::json;
+    use serde_json::{json, Value};
+
+    const STANDARD_SURFACES: &[&str] = &[
+        "openai:chat",
+        "openai:cli",
+        "claude:chat",
+        "claude:cli",
+        "gemini:chat",
+        "gemini:cli",
+    ];
+
+    fn sample_request_for(api_format: &str) -> (Value, &'static str) {
+        match api_format {
+            "openai:chat" => (
+                json!({
+                    "model": "source-model",
+                    "messages": [
+                        {"role": "system", "content": "Be concise."},
+                        {"role": "user", "content": "Hello matrix"}
+                    ],
+                    "max_tokens": 32
+                }),
+                "/v1/chat/completions",
+            ),
+            "openai:cli" => (
+                json!({
+                    "model": "source-model",
+                    "instructions": "Be concise.",
+                    "input": "Hello matrix",
+                    "max_output_tokens": 32
+                }),
+                "/v1/responses",
+            ),
+            "claude:chat" | "claude:cli" => (
+                json!({
+                    "model": "source-model",
+                    "system": "Be concise.",
+                    "messages": [{
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Hello matrix"}]
+                    }],
+                    "max_tokens": 32
+                }),
+                "/v1/messages",
+            ),
+            "gemini:chat" | "gemini:cli" => (
+                json!({
+                    "systemInstruction": {
+                        "parts": [{"text": "Be concise."}]
+                    },
+                    "contents": [{
+                        "role": "user",
+                        "parts": [{"text": "Hello matrix"}]
+                    }],
+                    "generationConfig": {
+                        "maxOutputTokens": 32
+                    }
+                }),
+                "/v1beta/models/source-model:generateContent",
+            ),
+            other => panic!("unexpected api format: {other}"),
+        }
+    }
+
+    fn assert_stream_flag(provider_api_format: &str, upstream_is_stream: bool, converted: &Value) {
+        match provider_api_format {
+            "openai:chat" | "openai:cli" | "claude:chat" | "claude:cli" => {
+                assert_eq!(
+                    converted
+                        .get("stream")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    upstream_is_stream,
+                    "{provider_api_format} stream flag should follow upstream_is_stream"
+                );
+            }
+            "gemini:chat" | "gemini:cli" => {
+                assert!(
+                    converted.get("stream").is_none(),
+                    "gemini streaming is represented by endpoint URL, not request body"
+                );
+            }
+            other => panic!("unexpected provider api format: {other}"),
+        }
+    }
+
+    #[test]
+    fn builds_request_body_for_all_standard_surface_pairs_in_sync_and_stream_modes() {
+        for client_api_format in STANDARD_SURFACES {
+            let (request, request_path) = sample_request_for(client_api_format);
+            for provider_api_format in STANDARD_SURFACES {
+                for upstream_is_stream in [false, true] {
+                    let converted = build_standard_request_body(
+                        &request,
+                        client_api_format,
+                        "mapped-model",
+                        "custom",
+                        provider_api_format,
+                        request_path,
+                        upstream_is_stream,
+                        None,
+                        None,
+                    )
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{client_api_format} -> {provider_api_format} should build with upstream_is_stream={upstream_is_stream}"
+                        )
+                    });
+
+                    assert_stream_flag(provider_api_format, upstream_is_stream, &converted);
+                    assert!(
+                        converted.to_string().contains("Hello matrix"),
+                        "{client_api_format} -> {provider_api_format} should retain user content"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn builds_openai_chat_request_from_claude_chat_source() {

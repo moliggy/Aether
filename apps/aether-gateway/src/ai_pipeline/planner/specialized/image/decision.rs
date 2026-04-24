@@ -57,6 +57,11 @@ pub(super) async fn maybe_build_local_openai_image_decision_payload_for_candidat
         extra_fields.insert("proxy".to_string(), proxy_value);
     }
     extra_fields.insert("image_request".to_string(), resolved.input_summary.clone());
+    let upstream_is_stream = resolved
+        .provider_request_body
+        .get("stream")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(spec_metadata.require_streaming);
     let report_context = build_local_execution_report_context(LocalExecutionReportContextParts {
         auth_context: &input.auth_context,
         request_id: trace_id,
@@ -82,7 +87,7 @@ pub(super) async fn maybe_build_local_openai_image_decision_payload_for_candidat
         original_request_body_json: Some(body_json),
         original_request_body_base64: body_base64,
         client_requested_stream: spec_metadata.require_streaming,
-        upstream_is_stream: spec_metadata.require_streaming,
+        upstream_is_stream,
         has_envelope: false,
         needs_conversion: false,
         extra_fields,
@@ -117,7 +122,7 @@ pub(super) async fn maybe_build_local_openai_image_decision_payload_for_candidat
             proxy,
             tls_profile,
             timeouts: resolve_transport_execution_timeouts(&transport),
-            upstream_is_stream: spec_metadata.require_streaming,
+            upstream_is_stream,
             report_kind: spec_metadata.report_kind.map(ToOwned::to_owned),
             report_context: Some(report_context),
             auth_context: input.auth_context.clone(),

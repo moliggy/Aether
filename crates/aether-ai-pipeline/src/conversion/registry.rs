@@ -396,6 +396,25 @@ mod tests {
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
     };
 
+    const STANDARD_SURFACES: &[&str] = &[
+        "openai:chat",
+        "openai:cli",
+        "claude:chat",
+        "claude:cli",
+        "gemini:chat",
+        "gemini:cli",
+    ];
+
+    fn expected_request_conversion_kind(provider_api_format: &str) -> RequestConversionKind {
+        match provider_api_format {
+            "openai:chat" => RequestConversionKind::ToOpenAIChat,
+            "openai:cli" => RequestConversionKind::ToOpenAIFamilyCli,
+            "claude:chat" | "claude:cli" => RequestConversionKind::ToClaudeStandard,
+            "gemini:chat" | "gemini:cli" => RequestConversionKind::ToGeminiStandard,
+            other => panic!("unexpected provider api format: {other}"),
+        }
+    }
+
     #[test]
     fn request_conversion_registry_supports_bidirectional_standard_matrix() {
         assert_eq!(
@@ -434,6 +453,27 @@ mod tests {
     }
 
     #[test]
+    fn request_conversion_registry_covers_all_standard_surface_pairs() {
+        for client_api_format in STANDARD_SURFACES {
+            for provider_api_format in STANDARD_SURFACES {
+                let actual = request_conversion_kind(client_api_format, provider_api_format);
+                if client_api_format == provider_api_format {
+                    assert_eq!(
+                        actual, None,
+                        "{client_api_format} -> {provider_api_format} should be same-format"
+                    );
+                } else {
+                    assert_eq!(
+                        actual,
+                        Some(expected_request_conversion_kind(provider_api_format)),
+                        "{client_api_format} -> {provider_api_format} should be routable"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn sync_response_conversion_registry_supports_bidirectional_standard_matrix() {
         assert_eq!(
             sync_chat_response_conversion_kind("openai:chat", "claude:chat"),
@@ -467,6 +507,57 @@ mod tests {
             sync_cli_response_conversion_kind("gemini:cli", "claude:cli"),
             Some(SyncCliResponseConversionKind::ToClaudeCli)
         );
+    }
+
+    #[test]
+    fn sync_response_conversion_registry_covers_all_standard_surface_pairs() {
+        for provider_api_format in STANDARD_SURFACES {
+            for client_api_format in ["openai:chat", "claude:chat", "gemini:chat"] {
+                let actual =
+                    sync_chat_response_conversion_kind(provider_api_format, client_api_format);
+                if *provider_api_format == client_api_format {
+                    assert_eq!(
+                        actual, None,
+                        "{provider_api_format} -> {client_api_format} should be same-format"
+                    );
+                } else {
+                    let expected = match client_api_format {
+                        "openai:chat" => SyncChatResponseConversionKind::ToOpenAIChat,
+                        "claude:chat" => SyncChatResponseConversionKind::ToClaudeChat,
+                        "gemini:chat" => SyncChatResponseConversionKind::ToGeminiChat,
+                        other => panic!("unexpected chat client api format: {other}"),
+                    };
+                    assert_eq!(
+                        actual,
+                        Some(expected),
+                        "{provider_api_format} -> {client_api_format} should finalize to chat"
+                    );
+                }
+            }
+
+            for client_api_format in ["openai:cli", "claude:cli", "gemini:cli"] {
+                let actual =
+                    sync_cli_response_conversion_kind(provider_api_format, client_api_format);
+                if *provider_api_format == client_api_format {
+                    assert_eq!(
+                        actual, None,
+                        "{provider_api_format} -> {client_api_format} should be same-format"
+                    );
+                } else {
+                    let expected = match client_api_format {
+                        "openai:cli" => SyncCliResponseConversionKind::ToOpenAIFamilyCli,
+                        "claude:cli" => SyncCliResponseConversionKind::ToClaudeCli,
+                        "gemini:cli" => SyncCliResponseConversionKind::ToGeminiCli,
+                        other => panic!("unexpected cli client api format: {other}"),
+                    };
+                    assert_eq!(
+                        actual,
+                        Some(expected),
+                        "{provider_api_format} -> {client_api_format} should finalize to cli"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

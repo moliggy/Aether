@@ -1945,14 +1945,14 @@ async fn local_finalize_handles_openai_image_stream_response_from_output_item_do
 }
 
 #[tokio::test]
-async fn local_finalize_handles_openai_image_stream_response_with_url_response_format() {
+async fn local_finalize_returns_b64_json_even_when_url_response_format_requested() {
     let payload = GatewaySyncReportRequest {
         trace_id: "trace-openai-image-finalize-url-123".to_string(),
         report_kind: "openai_image_sync_finalize".to_string(),
         report_context: Some(json!({
             "client_api_format": "openai:image",
             "provider_api_format": "openai:image",
-            "model": "gpt-image-1",
+            "model": "dall-e-3",
             "mapped_model": "gpt-5.4",
             "image_request": {
                 "operation": "generate",
@@ -1994,12 +1994,113 @@ async fn local_finalize_handles_openai_image_stream_response_with_url_response_f
         .expect("response body should read");
     let response_json: serde_json::Value =
         serde_json::from_slice(&response_body).expect("response should be json");
-    assert_eq!(
-        response_json["data"][0]["url"],
-        "data:image/webp;base64,aGVsbG8="
-    );
+    assert_eq!(response_json["data"][0]["b64_json"], "aGVsbG8=");
+    assert!(response_json["data"][0].get("url").is_none());
     assert_eq!(
         response_json["data"][0]["revised_prompt"],
         "revised webp prompt"
     );
+}
+
+#[tokio::test]
+async fn local_finalize_defaults_gpt_image_stream_response_to_b64_json() {
+    let payload = GatewaySyncReportRequest {
+        trace_id: "trace-openai-image-finalize-default-b64-123".to_string(),
+        report_kind: "openai_image_sync_finalize".to_string(),
+        report_context: Some(json!({
+            "client_api_format": "openai:image",
+            "provider_api_format": "openai:image",
+            "model": "gpt-image-2",
+            "mapped_model": "gpt-5.4",
+            "image_request": {
+                "operation": "generate",
+                "output_format": "png"
+            }
+        })),
+        status_code: 200,
+        headers: BTreeMap::from([(
+            "content-type".to_string(),
+            "text/event-stream".to_string(),
+        )]),
+        body_json: None,
+        client_body_json: None,
+        body_base64: Some(base64::engine::general_purpose::STANDARD.encode(
+            concat!(
+                "event: response.output_item.done\n",
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ig_default_123\",\"type\":\"image_generation_call\",\"output_format\":\"png\",\"result\":\"aGVsbG8=\"}}\n\n",
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_img_default_123\",\"object\":\"response\",\"model\":\"gpt-5.4\",\"status\":\"completed\",\"output\":[]}}\n\n"
+            )
+            .as_bytes(),
+        )),
+        telemetry: None,
+    };
+
+    let outcome = maybe_build_local_core_sync_finalize_response(
+        "trace-openai-image-finalize-default-b64-123",
+        &test_decision(),
+        &payload,
+    )
+    .expect("image finalize should succeed")
+    .expect("image finalize should match");
+
+    let response_body = to_bytes(outcome.response.into_body(), usize::MAX)
+        .await
+        .expect("response body should read");
+    let response_json: serde_json::Value =
+        serde_json::from_slice(&response_body).expect("response should be json");
+    assert_eq!(response_json["data"][0]["b64_json"], "aGVsbG8=");
+    assert!(response_json["data"][0].get("url").is_none());
+}
+
+#[tokio::test]
+async fn local_finalize_forces_gpt_image_stream_response_to_b64_json_even_when_url_requested() {
+    let payload = GatewaySyncReportRequest {
+        trace_id: "trace-openai-image-finalize-force-b64-123".to_string(),
+        report_kind: "openai_image_sync_finalize".to_string(),
+        report_context: Some(json!({
+            "client_api_format": "openai:image",
+            "provider_api_format": "openai:image",
+            "model": "gpt-image-2",
+            "mapped_model": "gpt-5.4",
+            "image_request": {
+                "operation": "generate",
+                "response_format": "url",
+                "output_format": "png"
+            }
+        })),
+        status_code: 200,
+        headers: BTreeMap::from([(
+            "content-type".to_string(),
+            "text/event-stream".to_string(),
+        )]),
+        body_json: None,
+        client_body_json: None,
+        body_base64: Some(base64::engine::general_purpose::STANDARD.encode(
+            concat!(
+                "event: response.output_item.done\n",
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ig_force_123\",\"type\":\"image_generation_call\",\"output_format\":\"png\",\"result\":\"aGVsbG8=\"}}\n\n",
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_img_force_123\",\"object\":\"response\",\"model\":\"gpt-5.4\",\"status\":\"completed\",\"output\":[]}}\n\n"
+            )
+            .as_bytes(),
+        )),
+        telemetry: None,
+    };
+
+    let outcome = maybe_build_local_core_sync_finalize_response(
+        "trace-openai-image-finalize-force-b64-123",
+        &test_decision(),
+        &payload,
+    )
+    .expect("image finalize should succeed")
+    .expect("image finalize should match");
+
+    let response_body = to_bytes(outcome.response.into_body(), usize::MAX)
+        .await
+        .expect("response body should read");
+    let response_json: serde_json::Value =
+        serde_json::from_slice(&response_body).expect("response should be json");
+    assert_eq!(response_json["data"][0]["b64_json"], "aGVsbG8=");
+    assert!(response_json["data"][0].get("url").is_none());
 }

@@ -106,13 +106,6 @@ fn maybe_build_local_openai_image_sync_finalize_response(
     let Some(body_base64) = payload.body_base64.as_deref() else {
         return Ok(None);
     };
-    let response_format = report_context
-        .get("image_request")
-        .and_then(|value| value.get("response_format"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("url");
     let default_output_format = report_context
         .get("image_request")
         .and_then(|value| value.get("output_format"))
@@ -227,21 +220,10 @@ fn maybe_build_local_openai_image_sync_finalize_response(
                 .get("output_format")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or(default_output_format);
-            if response_format.eq_ignore_ascii_case("b64_json") {
-                serde_json::json!({
-                    "b64_json": b64_json,
-                    "revised_prompt": revised_prompt,
-                })
-            } else {
-                serde_json::json!({
-                    "url": format!(
-                        "data:{};base64,{}",
-                        image_output_mime_type(output_format),
-                        b64_json
-                    ),
-                    "revised_prompt": revised_prompt,
-                })
-            }
+            serde_json::json!({
+                "b64_json": b64_json,
+                "revised_prompt": revised_prompt,
+            })
         })
         .collect::<Vec<_>>();
     let client_body_json = serde_json::json!({
@@ -257,14 +239,6 @@ fn maybe_build_local_openai_image_sync_finalize_response(
         client_body_json,
         provider_body_json,
     )?))
-}
-
-fn image_output_mime_type(output_format: &str) -> &'static str {
-    match output_format.trim().to_ascii_lowercase().as_str() {
-        "jpeg" | "jpg" => "image/jpeg",
-        "webp" => "image/webp",
-        _ => "image/png",
-    }
 }
 
 #[cfg(test)]
