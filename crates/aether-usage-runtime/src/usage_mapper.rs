@@ -229,9 +229,11 @@ fn resolve_usage_value<'a>(
         }
     }
 
-    if let Some(nested) = response.get("response") {
-        if let Some(usage) = resolve_usage_value(nested, family) {
-            return Some(usage);
+    for nested_key in ["response", "message", "item"] {
+        if let Some(nested) = response.get(nested_key) {
+            if let Some(usage) = resolve_usage_value(nested, family) {
+                return Some(usage);
+            }
         }
     }
 
@@ -419,6 +421,69 @@ mod tests {
     }
 
     #[test]
+    fn maps_claude_usage_from_stream_chunks() {
+        let usage = map_usage_from_response(
+            &serde_json::json!({
+                "chunks": [
+                    {
+                        "type": "message_start",
+                        "message": {
+                            "usage": {
+                                "input_tokens": 5,
+                                "cache_creation_input_tokens": 59_573,
+                                "cache_read_input_tokens": 0,
+                                "output_tokens": 0
+                            }
+                        }
+                    },
+                    {
+                        "type": "message_delta",
+                        "usage": {
+                            "input_tokens": 5,
+                            "cache_creation_input_tokens": 59_573,
+                            "cache_read_input_tokens": 0,
+                            "output_tokens": 162
+                        }
+                    }
+                ]
+            }),
+            "claude:chat",
+        );
+
+        assert_eq!(usage.input_tokens, 5);
+        assert_eq!(usage.output_tokens, 162);
+        assert_eq!(usage.cache_creation_tokens, 59_573);
+        assert_eq!(usage.cache_read_tokens, 0);
+    }
+
+    #[test]
+    fn maps_claude_usage_from_message_start_chunk() {
+        let usage = map_usage_from_response(
+            &serde_json::json!({
+                "chunks": [
+                    {
+                        "type": "message_start",
+                        "message": {
+                            "usage": {
+                                "input_tokens": 5,
+                                "cache_creation_input_tokens": 59_573,
+                                "cache_read_input_tokens": 0,
+                                "output_tokens": 0
+                            }
+                        }
+                    }
+                ]
+            }),
+            "claude:chat",
+        );
+
+        assert_eq!(usage.input_tokens, 5);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.cache_creation_tokens, 59_573);
+        assert_eq!(usage.cache_read_tokens, 0);
+    }
+
+    #[test]
     fn maps_claude_usage_with_large_cache_read_tokens_without_subtracting_input() {
         let usage = map_usage(
             &serde_json::json!({
@@ -499,6 +564,37 @@ mod tests {
                     "candidatesTokenCount": 6,
                     "cachedContentTokenCount": 2
                 }
+            }),
+            "gemini:chat",
+        );
+
+        assert_eq!(usage.input_tokens, 14);
+        assert_eq!(usage.output_tokens, 6);
+        assert_eq!(usage.cache_read_tokens, 2);
+    }
+
+    #[test]
+    fn maps_gemini_usage_from_stream_chunks() {
+        let usage = map_usage_from_response(
+            &serde_json::json!({
+                "chunks": [
+                    {
+                        "candidates": [
+                            {
+                                "content": {
+                                    "parts": [{ "text": "hello" }]
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "usageMetadata": {
+                            "promptTokenCount": 14,
+                            "candidatesTokenCount": 6,
+                            "cachedContentTokenCount": 2
+                        }
+                    }
+                ]
             }),
             "gemini:chat",
         );

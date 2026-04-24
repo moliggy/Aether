@@ -543,6 +543,8 @@ async fn gateway_executes_codex_cli_stream_via_local_decision_gate_after_oauth_r
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     let stored_usage = stored_usage.expect("usage should be recorded");
+    assert_eq!(stored_usage.input_tokens, 1);
+    assert_eq!(stored_usage.output_tokens, 2);
     assert_eq!(stored_usage.total_tokens, 3);
     assert!(stored_usage.request_body.is_none());
     assert!(stored_usage.provider_request_body.is_none());

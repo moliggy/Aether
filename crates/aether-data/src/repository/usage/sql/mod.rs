@@ -6323,18 +6323,28 @@ ORDER BY "usage".user_id ASC
                         .bind(&usage.provider_endpoint_kind)
                         .bind(usage.has_format_conversion)
                         .bind(usage.is_stream)
-                        .bind(None::<i32>)
-                        .bind(None::<i32>)
-                        .bind(None::<i32>)
-                        .bind(None::<i32>)
-                        .bind(None::<i32>)
-                        .bind(None::<i32>)
-                        .bind(None::<i32>)
+                        .bind(usage.input_tokens.map(to_i32).transpose()?)
+                        .bind(usage.output_tokens.map(to_i32).transpose()?)
+                        .bind(usage.total_tokens.map(to_i32).transpose()?)
+                        .bind(usage.cache_creation_input_tokens.map(to_i32).transpose()?)
+                        .bind(
+                            usage
+                                .cache_creation_ephemeral_5m_input_tokens
+                                .map(to_i32)
+                                .transpose()?,
+                        )
+                        .bind(
+                            usage
+                                .cache_creation_ephemeral_1h_input_tokens
+                                .map(to_i32)
+                                .transpose()?,
+                        )
+                        .bind(usage.cache_read_input_tokens.map(to_i32).transpose()?)
+                        .bind(usage.cache_creation_cost_usd)
+                        .bind(usage.cache_read_cost_usd)
                         .bind(None::<f64>)
-                        .bind(None::<f64>)
-                        .bind(None::<f64>)
-                        .bind(None::<f64>)
-                        .bind(None::<f64>)
+                        .bind(usage.total_cost_usd)
+                        .bind(usage.actual_total_cost_usd)
                         .bind(usage.status_code.map(i32::from))
                         .bind(&usage.error_message)
                         .bind(&usage.error_category)

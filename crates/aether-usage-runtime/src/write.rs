@@ -532,18 +532,13 @@ fn build_terminal_usage_event_from_seed_impl(
     let endpoint_kind = infer_endpoint_kind(&client_contract).map(ToOwned::to_owned);
     let provider_api_family = infer_api_family(&provider_contract).map(ToOwned::to_owned);
     let provider_endpoint_kind = infer_endpoint_kind(&provider_contract).map(ToOwned::to_owned);
-    let derived_standardized_usage = standardized_usage
+    let derived_standardized_usage = provider_response
         .as_ref()
-        .is_none()
-        .then(|| {
-            provider_response
-                .as_ref()
-                .filter(|response_body| response_body.is_object())
-                .map(|response_body| {
-                    map_usage_from_response(response_body, provider_contract.as_str())
-                })
-        })
-        .flatten();
+        .filter(|response_body| response_body.is_object())
+        .map(|response_body| map_usage_from_response(response_body, provider_contract.as_str()))
+        .filter(StandardizedUsage::has_token_signal);
+    let standardized_usage =
+        StandardizedUsage::choose_more_complete(standardized_usage, derived_standardized_usage);
     let request_metadata = if trusted_request_metadata {
         merge_usage_request_metadata_owned(request_metadata, audit_payload)
     } else {
@@ -608,9 +603,6 @@ fn build_terminal_usage_event_from_seed_impl(
         apply_standardized_usage_seed(usage, &mut data);
     }
 
-    if let Some(usage) = derived_standardized_usage.as_ref() {
-        apply_standardized_usage_seed(usage, &mut data);
-    }
     if data.total_tokens.is_none() {
         if let Some(tokens) = data
             .response_body
@@ -2785,6 +2777,111 @@ mod tests {
         assert_eq!(event.data.cache_read_input_tokens, Some(3));
         assert!(event.data.response_body.is_none());
         assert!(event.data.client_response_body.is_none());
+    }
+
+    #[test]
+    fn stream_terminal_usage_prefers_more_complete_provider_chunks_usage() {
+        let plan = ExecutionPlan {
+            request_id: "req-stream-provider-chunks-usage-1".to_string(),
+            candidate_id: Some("cand-stream-provider-chunks-usage-1".to_string()),
+            provider_name: Some("OpenAI".to_string()),
+            provider_id: "provider-1".to_string(),
+            endpoint_id: "endpoint-1".to_string(),
+            key_id: "key-1".to_string(),
+            method: "POST".to_string(),
+            url: "https://example.com/v1/responses".to_string(),
+            headers: BTreeMap::new(),
+            content_type: None,
+            content_encoding: None,
+            body: RequestBody {
+                json_body: None,
+                body_bytes_b64: None,
+                body_ref: None,
+            },
+            stream: true,
+            client_api_format: "openai:cli".to_string(),
+            provider_api_format: "openai:cli".to_string(),
+            model_name: Some("gpt-5.5".to_string()),
+            proxy: None,
+            tls_profile: None,
+            timeouts: None,
+        };
+        let mut partial_summary_usage = StandardizedUsage::new();
+        partial_summary_usage.output_tokens = 148;
+        let provider_body = json!({
+            "chunks": [
+                {
+                    "type": "response.created",
+                    "response": {
+                        "id": "resp_123",
+                        "object": "response",
+                        "model": "gpt-5.5",
+                        "status": "in_progress",
+                        "usage": null
+                    }
+                },
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp_123",
+                        "object": "response",
+                        "model": "gpt-5.5",
+                        "status": "completed",
+                        "usage": {
+                            "input_tokens": 26,
+                            "input_tokens_details": {
+                                "cached_tokens": 0
+                            },
+                            "output_tokens": 148,
+                            "output_tokens_details": {
+                                "reasoning_tokens": 10
+                            },
+                            "total_tokens": 174
+                        }
+                    },
+                    "sequence_number": 141
+                }
+            ],
+            "metadata": {
+                "stream": true,
+                "total_chunks": 142,
+                "stored_chunks": 142
+            }
+        });
+        let payload = GatewayStreamReportRequest {
+            trace_id: "trace-stream-provider-chunks-usage-1".to_string(),
+            report_kind: "openai_cli_stream_success".to_string(),
+            report_context: Some(json!({
+                "client_api_format": "openai:cli",
+                "provider_api_format": "openai:cli",
+            })),
+            status_code: 200,
+            headers: BTreeMap::new(),
+            provider_body_base64: Some(
+                base64::engine::general_purpose::STANDARD.encode(provider_body.to_string()),
+            ),
+            provider_body_state: Some(UsageBodyCaptureState::Inline),
+            client_body_base64: None,
+            client_body_state: Some(UsageBodyCaptureState::None),
+            terminal_summary: Some(ExecutionStreamTerminalSummary {
+                standardized_usage: Some(partial_summary_usage),
+                finish_reason: None,
+                response_id: Some("resp_123".to_string()),
+                model: Some("gpt-5.5".to_string()),
+                observed_finish: true,
+                parser_error: None,
+            }),
+            telemetry: None,
+        };
+
+        let event =
+            build_stream_terminal_usage_event(&plan, payload.report_context.as_ref(), &payload)
+                .expect("usage event should build");
+
+        assert_eq!(event.data.input_tokens, Some(26));
+        assert_eq!(event.data.output_tokens, Some(148));
+        assert_eq!(event.data.total_tokens, Some(174));
+        assert_eq!(event.data.cache_read_input_tokens, None);
     }
 
     #[test]

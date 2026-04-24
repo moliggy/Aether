@@ -195,3 +195,53 @@ pub(crate) fn build_local_execution_report_context(
     object.extend(parts.extra_fields);
     Value::Object(object)
 }
+
+pub(crate) fn provider_stream_event_api_format_for_provider_type(
+    provider_type: &str,
+) -> Option<&'static str> {
+    match provider_type.trim().to_ascii_lowercase().as_str() {
+        "codex" => Some("openai:cli"),
+        _ => None,
+    }
+}
+
+pub(crate) fn insert_provider_stream_event_api_format(
+    extra_fields: &mut Map<String, Value>,
+    provider_type: &str,
+) {
+    if let Some(api_format) = provider_stream_event_api_format_for_provider_type(provider_type) {
+        extra_fields.insert(
+            "provider_stream_event_api_format".to_string(),
+            Value::String(api_format.to_string()),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::provider_stream_event_api_format_for_provider_type;
+
+    #[test]
+    fn codex_provider_uses_openai_cli_stream_event_format() {
+        assert_eq!(
+            provider_stream_event_api_format_for_provider_type("codex"),
+            Some("openai:cli")
+        );
+        assert_eq!(
+            provider_stream_event_api_format_for_provider_type("CODEX"),
+            Some("openai:cli")
+        );
+    }
+
+    #[test]
+    fn ordinary_providers_do_not_override_stream_event_format() {
+        assert_eq!(
+            provider_stream_event_api_format_for_provider_type("openai"),
+            None
+        );
+        assert_eq!(
+            provider_stream_event_api_format_for_provider_type("anthropic"),
+            None
+        );
+    }
+}

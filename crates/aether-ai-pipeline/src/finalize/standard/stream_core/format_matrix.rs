@@ -238,12 +238,15 @@ enum ClientStreamEmitter {
 }
 
 fn provider_api_format_for_context(report_context: &Value) -> String {
-    report_context
-        .get("provider_api_format")
-        .and_then(Value::as_str)
+    string_context_field(report_context, "provider_stream_event_api_format")
+        .or_else(|| string_context_field(report_context, "provider_stream_api_format"))
+        .or_else(|| string_context_field(report_context, "provider_api_format"))
         .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
+}
+
+fn string_context_field(report_context: &Value, key: &str) -> Option<String> {
+    let value = report_context.get(key)?.as_str()?.trim();
+    (!value.is_empty()).then(|| value.to_ascii_lowercase())
 }
 
 fn client_api_format_for_context(report_context: &Value) -> String {
@@ -317,12 +320,7 @@ impl ClientStreamEmitter {
 
 fn build_client_error_body_for_line(report_context: &Value, line: &[u8]) -> Option<Value> {
     let value = decode_json_data_line(line)?;
-    let provider_api_format = report_context
-        .get("provider_api_format")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
+    let provider_api_format = provider_api_format_for_context(report_context);
     let client_api_format = report_context
         .get("client_api_format")
         .and_then(Value::as_str)
@@ -800,5 +798,79 @@ mod tests {
         assert_eq!(usage.output_tokens, 20);
         assert_eq!(usage.cache_creation_tokens, 42_262);
         assert_eq!(usage.cache_read_tokens, 0);
+    }
+
+    #[test]
+    fn terminal_observer_uses_explicit_provider_stream_event_api_format() {
+        let mut report_context = report_context("openai:chat", "openai:cli");
+        report_context["provider_stream_event_api_format"] = json!("openai:cli");
+        let mut observer = StreamingStandardTerminalObserver::default();
+
+        observer
+            .push_line(
+                &report_context,
+                data_line(json!({
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp_codex_123",
+                        "object": "response",
+                        "model": "gpt-5.5",
+                        "status": "completed",
+                        "output": [],
+                        "usage": {
+                            "input_tokens": 26,
+                            "input_tokens_details": {
+                                "cached_tokens": 0,
+                            },
+                            "output_tokens": 137,
+                            "output_tokens_details": {
+                                "reasoning_tokens": 0,
+                            },
+                            "total_tokens": 163,
+                        },
+                    },
+                    "sequence_number": 139,
+                })),
+            )
+            .expect("response.completed should parse");
+
+        let summary = observer
+            .latest_summary()
+            .cloned()
+            .expect("summary should exist");
+        let usage = summary
+            .standardized_usage
+            .expect("standardized usage should exist");
+
+        assert_eq!(usage.input_tokens, 26);
+        assert_eq!(usage.output_tokens, 137);
+        assert_eq!(usage.cache_read_tokens, 0);
+    }
+
+    #[test]
+    fn terminal_observer_does_not_infer_provider_stream_event_api_format() {
+        let report_context = report_context("openai:chat", "openai:cli");
+        let mut observer = StreamingStandardTerminalObserver::default();
+
+        observer
+            .push_line(
+                &report_context,
+                data_line(json!({
+                    "type": "response.completed",
+                    "response": {
+                        "usage": {
+                            "input_tokens": 26,
+                            "output_tokens": 137,
+                            "total_tokens": 163,
+                        },
+                    },
+                })),
+            )
+            .expect("line should be ignored by explicitly selected chat parser");
+
+        assert!(
+            observer.latest_summary().is_none(),
+            "provider stream parser selection must come from report context, not event sniffing"
+        );
     }
 }

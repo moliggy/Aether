@@ -788,7 +788,6 @@ impl ClaudeClientEmitter {
         )?);
         Ok(out)
     }
-
 }
 
 fn merge_claude_usage(mut current: CanonicalUsage, next: CanonicalUsage) -> CanonicalUsage {

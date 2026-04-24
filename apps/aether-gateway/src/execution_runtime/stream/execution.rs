@@ -264,7 +264,10 @@ fn merge_stream_terminal_summary(
         return Some(observed);
     };
 
-    if current_summary.standardized_usage.is_none() {
+    if should_replace_stream_usage(
+        current_summary.standardized_usage.as_ref(),
+        observed.standardized_usage.as_ref(),
+    ) {
         current_summary.standardized_usage = observed.standardized_usage;
     }
     if current_summary.finish_reason.is_none() {
@@ -282,6 +285,20 @@ fn merge_stream_terminal_summary(
     }
 
     current
+}
+
+fn should_replace_stream_usage(
+    current: Option<&aether_contracts::StandardizedUsage>,
+    observed: Option<&aether_contracts::StandardizedUsage>,
+) -> bool {
+    let Some(observed) = observed else {
+        return false;
+    };
+    let Some(current) = current else {
+        return true;
+    };
+
+    observed.is_more_complete_than(current)
 }
 
 async fn execute_in_process_stream(
@@ -2135,7 +2152,10 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use aether_contracts::{ExecutionPlan, ExecutionTimeouts, RequestBody};
+    use aether_contracts::{
+        ExecutionPlan, ExecutionStreamTerminalSummary, ExecutionTimeouts, RequestBody,
+        StandardizedUsage,
+    };
     use aether_data::repository::usage::InMemoryUsageReadRepository;
     use aether_data_contracts::repository::usage::UsageReadRepository;
     use aether_usage_runtime::UsageRuntimeConfig;
@@ -2149,8 +2169,8 @@ mod tests {
     use tokio::sync::{watch, Notify};
 
     use super::{
-        execute_execution_runtime_stream, should_probe_success_failover_before_stream,
-        should_skip_direct_finalize_prefetch,
+        execute_execution_runtime_stream, merge_stream_terminal_summary,
+        should_probe_success_failover_before_stream, should_skip_direct_finalize_prefetch,
     };
     use crate::control::GatewayControlDecision;
     use crate::tunnel::{tunnel_protocol, TunnelProxyConn};
@@ -2176,6 +2196,39 @@ mod tests {
             url: None,
             extra: Some(json!({"tunnel_base_url": base_url})),
         }
+    }
+
+    #[test]
+    fn merge_stream_terminal_summary_prefers_more_complete_observed_usage() {
+        let mut runtime_usage = StandardizedUsage::new();
+        runtime_usage.output_tokens = 137;
+        let mut observed_usage = StandardizedUsage::new();
+        observed_usage.input_tokens = 26;
+        observed_usage.output_tokens = 137;
+
+        let merged = merge_stream_terminal_summary(
+            Some(ExecutionStreamTerminalSummary {
+                standardized_usage: Some(runtime_usage),
+                model: Some("gpt-5.5".to_string()),
+                ..ExecutionStreamTerminalSummary::default()
+            }),
+            Some(ExecutionStreamTerminalSummary {
+                standardized_usage: Some(observed_usage),
+                response_id: Some("resp_123".to_string()),
+                observed_finish: true,
+                ..ExecutionStreamTerminalSummary::default()
+            }),
+        )
+        .expect("summary should merge");
+        let usage = merged
+            .standardized_usage
+            .expect("merged usage should exist");
+
+        assert_eq!(usage.input_tokens, 26);
+        assert_eq!(usage.output_tokens, 137);
+        assert_eq!(merged.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(merged.response_id.as_deref(), Some("resp_123"));
+        assert!(merged.observed_finish);
     }
 
     #[test]

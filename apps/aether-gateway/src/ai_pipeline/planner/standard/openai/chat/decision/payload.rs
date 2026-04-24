@@ -3,7 +3,8 @@ use crate::ai_pipeline::planner::payload_metadata::{
     build_local_execution_decision_response, LocalExecutionDecisionResponseParts,
 };
 use crate::ai_pipeline::planner::report_context::{
-    build_local_execution_report_context, LocalExecutionReportContextParts,
+    build_local_execution_report_context, insert_provider_stream_event_api_format,
+    LocalExecutionReportContextParts,
 };
 use crate::ai_pipeline::transport::{
     resolve_transport_execution_timeouts, resolve_transport_tls_profile,
@@ -75,6 +76,10 @@ pub(crate) async fn maybe_build_local_openai_chat_decision_payload_for_candidate
             serde_json::Value::String(envelope_name.to_string()),
         );
     }
+    insert_provider_stream_event_api_format(
+        &mut extra_fields,
+        resolved.transport.provider.provider_type.as_str(),
+    );
     let report_context = append_local_failover_policy_to_value(
         append_execution_contract_fields_to_value(
             build_local_execution_report_context(LocalExecutionReportContextParts {

@@ -110,6 +110,19 @@ impl OpenAIChatProviderState {
 
         let mut out = Vec::new();
         let Some(chunk_choices) = chunk_object.get("choices").and_then(Value::as_array) else {
+            if let Some(usage) = Self::finish_usage(chunk_object.get("usage")) {
+                self.ensure_started(report_context, &mut out);
+                let (id, model) = self.identity(report_context);
+                out.push(CanonicalStreamFrame {
+                    id,
+                    model,
+                    event: CanonicalStreamEvent::Finish {
+                        finish_reason: self.pending_finish_reason.take(),
+                        usage: Some(usage),
+                    },
+                });
+                self.finished = true;
+            }
             return Ok(out);
         };
         if chunk_choices.is_empty() {
@@ -1836,6 +1849,104 @@ mod tests {
         assert_eq!(usage.input_tokens, 20_435);
         assert_eq!(usage.output_tokens, 177);
         assert_eq!(usage.cache_read_tokens, 19_840);
+    }
+
+    #[test]
+    fn openai_chat_provider_state_accepts_usage_only_terminal_chunk() {
+        let mut state = OpenAIChatProviderState::default();
+        let report_context = json!({});
+        let _ = state
+            .push_line(
+                &report_context,
+                data_line(json!({
+                    "id": "chatcmpl_123",
+                    "object": "chat.completion.chunk",
+                    "model": "gpt-5.4",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }],
+                })),
+            )
+            .expect("finish chunk should parse");
+        let frames = state
+            .push_line(
+                &report_context,
+                data_line(json!({
+                    "usage": {
+                        "input_tokens": 26,
+                        "input_tokens_details": {
+                            "cached_tokens": 0,
+                        },
+                        "output_tokens": 144,
+                        "output_tokens_details": {
+                            "reasoning_tokens": 10,
+                        },
+                        "total_tokens": 170,
+                    },
+                })),
+            )
+            .expect("usage-only chunk should parse");
+
+        assert!(frames.iter().any(|frame| matches!(
+            frame.event,
+            CanonicalStreamEvent::Finish {
+                finish_reason: Some(ref reason),
+                usage: Some(CanonicalUsage {
+                    input_tokens: 26,
+                    output_tokens: 144,
+                    cache_read_tokens: 0,
+                    ..
+                }),
+            } if reason == "stop"
+        )));
+    }
+
+    #[test]
+    fn openai_cli_provider_state_extracts_response_completed_usage() {
+        let mut state = OpenAICliProviderState::default();
+        let report_context = json!({});
+        let frames = state
+            .push_line(
+                &report_context,
+                data_line(json!({
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp_063494bbd780be940169eb8191c4ec8191916347b2080805ee",
+                        "object": "response",
+                        "model": "gpt-5.5",
+                        "status": "completed",
+                        "output": [],
+                        "usage": {
+                            "input_tokens": 26,
+                            "input_tokens_details": {
+                                "cached_tokens": 0,
+                            },
+                            "output_tokens": 137,
+                            "output_tokens_details": {
+                                "reasoning_tokens": 0,
+                            },
+                            "total_tokens": 163,
+                        },
+                    },
+                    "sequence_number": 139,
+                })),
+            )
+            .expect("completed event should parse");
+
+        assert!(frames.iter().any(|frame| matches!(
+            frame.event,
+            CanonicalStreamEvent::Finish {
+                usage: Some(CanonicalUsage {
+                    input_tokens: 26,
+                    output_tokens: 137,
+                    cache_read_tokens: 0,
+                    ..
+                }),
+                ..
+            }
+        )));
     }
 
     #[test]

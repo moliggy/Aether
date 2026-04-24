@@ -585,27 +585,46 @@ fn usage_sql_writes_usage_settlement_pricing_snapshots() {
 }
 
 #[test]
-fn usage_sql_does_not_update_deprecated_billing_mirror_columns() {
+fn usage_sql_updates_usage_mirror_columns_from_terminal_events_only() {
     for assignment in [
-        "input_tokens = \"usage\".input_tokens",
-        "output_tokens = \"usage\".output_tokens",
-        "total_tokens = \"usage\".total_tokens",
-        "cache_creation_input_tokens = \"usage\".cache_creation_input_tokens",
-        "cache_creation_input_tokens_5m = \"usage\".cache_creation_input_tokens_5m",
-        "cache_creation_input_tokens_1h = \"usage\".cache_creation_input_tokens_1h",
-        "cache_read_input_tokens = \"usage\".cache_read_input_tokens",
-        "cache_creation_cost_usd = \"usage\".cache_creation_cost_usd",
-        "cache_read_cost_usd = \"usage\".cache_read_cost_usd",
-        "total_cost_usd = \"usage\".total_cost_usd",
-        "actual_total_cost_usd = \"usage\".actual_total_cost_usd",
+        "input_tokens = CASE WHEN \"usage\".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST(\"usage\".input_tokens, EXCLUDED.input_tokens) ELSE \"usage\".input_tokens END",
+        "output_tokens = CASE WHEN \"usage\".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST(\"usage\".output_tokens, EXCLUDED.output_tokens) ELSE \"usage\".output_tokens END",
+        "total_tokens = CASE WHEN \"usage\".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST(\"usage\".total_tokens, EXCLUDED.total_tokens) ELSE \"usage\".total_tokens END",
+        "cache_creation_input_tokens = CASE WHEN \"usage\".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST(\"usage\".cache_creation_input_tokens, EXCLUDED.cache_creation_input_tokens) ELSE \"usage\".cache_creation_input_tokens END",
+        "cache_creation_input_tokens_5m = CASE WHEN \"usage\".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST(\"usage\".cache_creation_input_tokens_5m, EXCLUDED.cache_creation_input_tokens_5m) ELSE \"usage\".cache_creation_input_tokens_5m END",
+        "cache_creation_input_tokens_1h = CASE WHEN \"usage\".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST(\"usage\".cache_creation_input_tokens_1h, EXCLUDED.cache_creation_input_tokens_1h) ELSE \"usage\".cache_creation_input_tokens_1h END",
+        "cache_read_input_tokens = CASE WHEN \"usage\".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST(\"usage\".cache_read_input_tokens, EXCLUDED.cache_read_input_tokens) ELSE \"usage\".cache_read_input_tokens END",
+        "cache_creation_cost_usd = CASE WHEN \"usage\".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST(\"usage\".cache_creation_cost_usd, EXCLUDED.cache_creation_cost_usd) ELSE \"usage\".cache_creation_cost_usd END",
+        "cache_read_cost_usd = CASE WHEN \"usage\".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST(\"usage\".cache_read_cost_usd, EXCLUDED.cache_read_cost_usd) ELSE \"usage\".cache_read_cost_usd END",
+        "total_cost_usd = CASE WHEN \"usage\".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST(\"usage\".total_cost_usd, EXCLUDED.total_cost_usd) ELSE \"usage\".total_cost_usd END",
+        "actual_total_cost_usd = CASE WHEN \"usage\".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST(\"usage\".actual_total_cost_usd, EXCLUDED.actual_total_cost_usd) ELSE \"usage\".actual_total_cost_usd END",
     ] {
         assert!(
             super::UPSERT_SQL.contains(assignment),
-            "missing deprecated mirror no-op assignment: {assignment}"
+            "missing terminal mirror assignment: {assignment}"
         );
     }
-    assert!(!super::UPSERT_SQL.contains("EXCLUDED.input_tokens"));
-    assert!(!super::UPSERT_SQL.contains("EXCLUDED.total_cost_usd"));
+}
+
+#[test]
+fn usage_sql_binds_usage_mirror_values_for_terminal_upserts() {
+    let source = include_str!("mod.rs");
+    for binding in [
+        ".bind(usage.input_tokens.map(to_i32).transpose()?)",
+        ".bind(usage.output_tokens.map(to_i32).transpose()?)",
+        ".bind(usage.total_tokens.map(to_i32).transpose()?)",
+        ".bind(usage.cache_creation_input_tokens.map(to_i32).transpose()?)",
+        ".bind(usage.cache_read_input_tokens.map(to_i32).transpose()?)",
+        ".bind(usage.cache_creation_cost_usd)",
+        ".bind(usage.cache_read_cost_usd)",
+        ".bind(usage.total_cost_usd)",
+        ".bind(usage.actual_total_cost_usd)",
+    ] {
+        assert!(
+            source.contains(binding),
+            "missing usage upsert bind: {binding}"
+        );
+    }
 }
 
 #[test]
