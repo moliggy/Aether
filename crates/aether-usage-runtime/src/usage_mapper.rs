@@ -26,6 +26,7 @@ impl UsageMapper {
             }
         }
 
+        derive_missing_input_tokens(raw_usage, api_format, &mut usage);
         usage.normalize_cache_creation_breakdown()
     }
 
@@ -166,6 +167,36 @@ fn base_mapping(api_format: &str) -> BTreeMap<String, String> {
     mapping
 }
 
+fn derive_missing_input_tokens(
+    raw_usage: &serde_json::Value,
+    api_format: &str,
+    usage: &mut StandardizedUsage,
+) {
+    if usage.input_tokens > 0 || api_family(api_format).as_str() != "openai" {
+        return;
+    }
+
+    let Some(total_tokens) = numeric_i64(raw_usage.get("total_tokens")) else {
+        return;
+    };
+    let output_tokens = usage
+        .output_tokens
+        .max(numeric_i64(raw_usage.get("completion_tokens")).unwrap_or_default())
+        .max(numeric_i64(raw_usage.get("output_tokens")).unwrap_or_default());
+    let inferred_input_tokens = total_tokens.saturating_sub(output_tokens);
+    if inferred_input_tokens > 0 {
+        usage.input_tokens = inferred_input_tokens;
+    }
+}
+
+fn numeric_i64(value: Option<&serde_json::Value>) -> Option<i64> {
+    value.and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
+    })
+}
+
 fn get_nested_value<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
     let mut current = value;
     for segment in path.split('.') {
@@ -266,6 +297,44 @@ mod tests {
         assert_eq!(usage.cache_creation_tokens, 2);
         assert_eq!(usage.cache_read_tokens, 3);
         assert_eq!(usage.reasoning_tokens, 1);
+    }
+
+    #[test]
+    fn maps_openai_responses_usage_with_missing_input_from_total() {
+        let usage = map_usage_from_response(
+            &serde_json::json!({
+                "usage": {
+                    "output_tokens": 899,
+                    "total_tokens": 53_499,
+                    "input_tokens_details": {
+                        "cached_tokens": 52_600
+                    }
+                }
+            }),
+            "openai:cli",
+        );
+
+        assert_eq!(usage.input_tokens, 52_600);
+        assert_eq!(usage.output_tokens, 899);
+        assert_eq!(usage.cache_read_tokens, 52_600);
+    }
+
+    #[test]
+    fn keeps_missing_input_derivation_scoped_to_openai() {
+        let usage = map_usage_from_response(
+            &serde_json::json!({
+                "usage": {
+                    "output_tokens": 7,
+                    "total_tokens": 17,
+                    "cache_read_input_tokens": 10
+                }
+            }),
+            "claude:chat",
+        );
+
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 7);
+        assert_eq!(usage.cache_read_tokens, 10);
     }
 
     #[test]

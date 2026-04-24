@@ -425,8 +425,10 @@ export function useUsageData(options: UseUsageDataOptions) {
           // 保留本地的状态和所有通过轮询更新的字段
           status: mergedStatus,
           provider: protectProvider ? existing.provider : (record.provider || existing.provider),
-          input_tokens: existing.input_tokens || record.input_tokens,
-          effective_input_tokens: existing.effective_input_tokens ?? record.effective_input_tokens,
+          input_tokens: Number.isFinite(record.input_tokens)
+            ? record.input_tokens
+            : existing.input_tokens,
+          effective_input_tokens: record.effective_input_tokens ?? existing.effective_input_tokens,
           output_tokens: existing.output_tokens || record.output_tokens,
           cache_creation_input_tokens: existing.cache_creation_input_tokens ?? record.cache_creation_input_tokens,
           cache_creation_ephemeral_5m_input_tokens:

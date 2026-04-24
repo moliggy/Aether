@@ -20,7 +20,7 @@ SELECT
   "usage".provider_endpoint_kind,
   COALESCE("usage".has_format_conversion, FALSE) AS has_format_conversion,
   COALESCE("usage".is_stream, FALSE) AS is_stream,
-  CAST(COALESCE(usage_settlement_snapshots.billing_input_tokens, "usage".input_tokens) AS INTEGER) AS input_tokens,
+  CAST("usage".input_tokens AS INTEGER) AS input_tokens,
   CAST(COALESCE(usage_settlement_snapshots.billing_output_tokens, "usage".output_tokens) AS INTEGER) AS output_tokens,
   CAST(COALESCE(
     CASE

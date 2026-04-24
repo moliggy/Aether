@@ -452,8 +452,9 @@ fn usage_sql_reads_settlement_snapshots_for_single_record_fetches() {
     assert!(super::FIND_BY_REQUEST_ID_SQL.contains("settlement_billing_snapshot_schema_version"));
     assert!(super::FIND_BY_ID_SQL.contains("settlement_price_per_request"));
     for sql in [super::FIND_BY_REQUEST_ID_SQL, super::FIND_BY_ID_SQL] {
+        assert!(sql.contains("CAST(\"usage\".input_tokens AS INTEGER) AS input_tokens"));
         assert!(sql.contains(
-            "COALESCE(usage_settlement_snapshots.billing_input_tokens, \"usage\".input_tokens)"
+            "usage_settlement_snapshots.billing_input_tokens AS settlement_billing_input_tokens"
         ));
         assert!(sql.contains("usage_settlement_snapshots.billing_cache_creation_5m_tokens"));
         assert!(sql.contains(
@@ -523,8 +524,9 @@ fn usage_sql_uses_json_null_placeholders_for_usage_payload_columns() {
         super::LIST_USAGE_AUDITS_PREFIX,
         super::LIST_RECENT_USAGE_AUDITS_PREFIX,
     ] {
+        assert!(sql.contains("CAST(\"usage\".input_tokens AS INTEGER) AS input_tokens"));
         assert!(sql.contains(
-            "COALESCE(usage_settlement_snapshots.billing_input_tokens, \"usage\".input_tokens)"
+            "usage_settlement_snapshots.billing_input_tokens AS settlement_billing_input_tokens"
         ));
         assert!(sql.contains("usage_settlement_snapshots.billing_cache_creation_1h_tokens"));
         assert!(sql.contains(
