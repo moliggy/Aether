@@ -23,6 +23,7 @@ pub struct SchedulerRequestCandidateReportContext {
     pub header_rules: Option<Value>,
     pub body_rules: Option<Value>,
     pub proxy: Option<Value>,
+    pub error_flow: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -45,6 +46,19 @@ pub struct SchedulerResolvedReportRequestCandidateSlot {
 pub struct SchedulerExecutionRequestCandidateSeed {
     pub upsert_record: UpsertRequestCandidateRecord,
     pub report_context: Value,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ReportCandidateExtraDataInput {
+    client_api_format: Option<String>,
+    provider_api_format: Option<String>,
+    upstream_url: Option<String>,
+    mapped_model: Option<String>,
+    key_name: Option<String>,
+    header_rules: Option<Value>,
+    body_rules: Option<Value>,
+    proxy: Option<Value>,
+    error_flow: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +137,10 @@ pub fn parse_request_candidate_report_context(
             .get("proxy")
             .cloned()
             .filter(|value| !value.is_null()),
+        error_flow: report_context
+            .get("error_flow")
+            .cloned()
+            .filter(|value| !value.is_null()),
     })
 }
 
@@ -151,6 +169,7 @@ pub fn resolve_report_request_candidate_slot(
         header_rules,
         body_rules,
         proxy,
+        error_flow,
     } = metadata;
     let request_id = request_id?;
     let synthesized_extra_data = build_report_candidate_extra_data(ReportCandidateExtraDataInput {
@@ -162,6 +181,7 @@ pub fn resolve_report_request_candidate_slot(
         header_rules,
         body_rules,
         proxy,
+        error_flow,
     });
     let created_at_unix_ms = matched_candidate
         .as_ref()
@@ -325,6 +345,7 @@ pub fn build_local_request_candidate_status_record(
         header_rules: metadata.header_rules.clone(),
         body_rules: metadata.body_rules.clone(),
         proxy: metadata.proxy.clone(),
+        error_flow: metadata.error_flow.clone(),
     });
     let created_at_unix_ms = started_at_unix_ms.or(finished_at_unix_ms);
 
@@ -526,17 +547,6 @@ fn next_candidate_index(candidates: &[StoredRequestCandidate]) -> u32 {
         .unwrap_or_default()
 }
 
-struct ReportCandidateExtraDataInput {
-    client_api_format: Option<String>,
-    provider_api_format: Option<String>,
-    upstream_url: Option<String>,
-    mapped_model: Option<String>,
-    key_name: Option<String>,
-    header_rules: Option<Value>,
-    body_rules: Option<Value>,
-    proxy: Option<Value>,
-}
-
 fn build_report_candidate_extra_data(input: ReportCandidateExtraDataInput) -> Option<Value> {
     let ReportCandidateExtraDataInput {
         client_api_format,
@@ -547,6 +557,7 @@ fn build_report_candidate_extra_data(input: ReportCandidateExtraDataInput) -> Op
         header_rules,
         body_rules,
         proxy,
+        error_flow,
     } = input;
     let mut extra_data = Map::with_capacity(8);
     extra_data.insert("gateway_execution_runtime".to_string(), Value::Bool(true));
@@ -580,6 +591,9 @@ fn build_report_candidate_extra_data(input: ReportCandidateExtraDataInput) -> Op
     }
     if let Some(proxy) = proxy {
         extra_data.insert("proxy".to_string(), proxy);
+    }
+    if let Some(error_flow) = error_flow {
+        extra_data.insert("error_flow".to_string(), error_flow);
     }
     (!extra_data.is_empty()).then_some(Value::Object(extra_data))
 }
@@ -729,6 +743,11 @@ mod tests {
                 "node_id": "proxy-node-1",
                 "node_name": "edge-1",
                 "source": "provider"
+            },
+            "error_flow": {
+                "classification": "retry_upstream_failure",
+                "decision": "retry_next_candidate",
+                "propagation": "suppressed"
             }
         })))
         .expect("metadata");
@@ -776,6 +795,13 @@ mod tests {
                 .and_then(Value::as_array)
                 .map(Vec::len),
             Some(1)
+        );
+        assert_eq!(
+            slot.extra_data
+                .as_ref()
+                .and_then(|value| value.get("error_flow"))
+                .and_then(|value| value.get("propagation")),
+            Some(&json!("suppressed"))
         );
     }
 

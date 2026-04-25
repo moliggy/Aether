@@ -35,10 +35,10 @@ use crate::execution_runtime::{
 };
 use crate::log_ids::short_request_id;
 use crate::orchestration::{
-    apply_local_execution_effect, LocalAdaptiveRateLimitEffect, LocalAdaptiveSuccessEffect,
-    LocalAttemptFailureEffect, LocalExecutionEffect, LocalExecutionEffectContext,
-    LocalHealthFailureEffect, LocalHealthSuccessEffect, LocalOAuthInvalidationEffect,
-    LocalPoolErrorEffect,
+    apply_local_execution_effect, build_local_error_flow_metadata, with_error_flow_report_context,
+    LocalAdaptiveRateLimitEffect, LocalAdaptiveSuccessEffect, LocalAttemptFailureEffect,
+    LocalExecutionEffect, LocalExecutionEffectContext, LocalHealthFailureEffect,
+    LocalHealthSuccessEffect, LocalOAuthInvalidationEffect, LocalPoolErrorEffect,
 };
 use crate::request_candidate_runtime::{
     ensure_execution_request_candidate_slot, record_local_request_candidate_status,
@@ -426,10 +426,20 @@ pub(crate) async fn execute_execution_runtime_sync(
         LocalFailoverDecision::RetryNextCandidate
     ) {
         let terminal_unix_secs = current_request_candidate_unix_ms();
+        let error_flow_report_context = with_error_flow_report_context(
+            report_context.as_ref(),
+            build_local_error_flow_metadata(
+                result.status_code,
+                local_failover_response_text.as_deref(),
+                local_failover_analysis,
+            ),
+        );
         record_local_request_candidate_status(
             state,
             &plan,
-            report_context.as_ref(),
+            error_flow_report_context
+                .as_ref()
+                .or(report_context.as_ref()),
             SchedulerRequestCandidateStatusUpdate {
                 status: RequestCandidateStatus::Failed,
                 status_code: Some(result.status_code),
@@ -488,10 +498,20 @@ pub(crate) async fn execute_execution_runtime_sync(
         mapped_error_finalize_kind.is_some(),
     ) {
         let terminal_unix_secs = current_request_candidate_unix_ms();
+        let error_flow_report_context = with_error_flow_report_context(
+            report_context.as_ref(),
+            build_local_error_flow_metadata(
+                result.status_code,
+                local_failover_response_text.as_deref(),
+                local_failover_analysis,
+            ),
+        );
         record_local_request_candidate_status(
             state,
             &plan,
-            report_context.as_ref(),
+            error_flow_report_context
+                .as_ref()
+                .or(report_context.as_ref()),
             SchedulerRequestCandidateStatusUpdate {
                 status: RequestCandidateStatus::Failed,
                 status_code: Some(result.status_code),
@@ -507,10 +527,24 @@ pub(crate) async fn execute_execution_runtime_sync(
     }
 
     let terminal_unix_secs = current_request_candidate_unix_ms();
+    let error_flow_report_context = (result.status_code >= 400)
+        .then(|| {
+            with_error_flow_report_context(
+                report_context.as_ref(),
+                build_local_error_flow_metadata(
+                    result.status_code,
+                    local_failover_response_text.as_deref(),
+                    local_failover_analysis,
+                ),
+            )
+        })
+        .flatten();
     record_local_request_candidate_status(
         state,
         &plan,
-        report_context.as_ref(),
+        error_flow_report_context
+            .as_ref()
+            .or(report_context.as_ref()),
         SchedulerRequestCandidateStatusUpdate {
             status: if result.status_code >= 400 {
                 RequestCandidateStatus::Failed

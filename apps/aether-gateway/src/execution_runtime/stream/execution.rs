@@ -70,10 +70,10 @@ use crate::execution_runtime::{
 use crate::execution_runtime::{MAX_STREAM_PREFETCH_BYTES, MAX_STREAM_PREFETCH_FRAMES};
 use crate::log_ids::short_request_id;
 use crate::orchestration::{
-    apply_local_execution_effect, LocalAdaptiveRateLimitEffect, LocalAdaptiveSuccessEffect,
-    LocalAttemptFailureEffect, LocalExecutionEffect, LocalExecutionEffectContext,
-    LocalHealthFailureEffect, LocalHealthSuccessEffect, LocalOAuthInvalidationEffect,
-    LocalPoolErrorEffect,
+    apply_local_execution_effect, build_local_error_flow_metadata, with_error_flow_report_context,
+    LocalAdaptiveRateLimitEffect, LocalAdaptiveSuccessEffect, LocalAttemptFailureEffect,
+    LocalExecutionEffect, LocalExecutionEffectContext, LocalHealthFailureEffect,
+    LocalHealthSuccessEffect, LocalOAuthInvalidationEffect, LocalPoolErrorEffect,
 };
 use crate::request_candidate_runtime::{
     ensure_execution_request_candidate_slot, record_local_request_candidate_status,
@@ -893,10 +893,20 @@ async fn execute_stream_from_frame_stream(
         );
         if matches!(failover_decision, LocalFailoverDecision::RetryNextCandidate) {
             let terminal_unix_secs = current_request_candidate_unix_ms();
+            let error_flow_report_context = with_error_flow_report_context(
+                report_context.as_ref(),
+                build_local_error_flow_metadata(
+                    status_code,
+                    error_response_text.as_deref(),
+                    failover_analysis,
+                ),
+            );
             record_local_request_candidate_status(
                 state,
                 &plan,
-                report_context.as_ref(),
+                error_flow_report_context
+                    .as_ref()
+                    .or(report_context.as_ref()),
                 SchedulerRequestCandidateStatusUpdate {
                     status: RequestCandidateStatus::Failed,
                     status_code: Some(status_code),
@@ -934,10 +944,20 @@ async fn execute_stream_from_frame_stream(
             )
         {
             let terminal_unix_secs = current_request_candidate_unix_ms();
+            let error_flow_report_context = with_error_flow_report_context(
+                report_context.as_ref(),
+                build_local_error_flow_metadata(
+                    status_code,
+                    error_response_text.as_deref(),
+                    failover_analysis,
+                ),
+            );
             record_local_request_candidate_status(
                 state,
                 &plan,
-                report_context.as_ref(),
+                error_flow_report_context
+                    .as_ref()
+                    .or(report_context.as_ref()),
                 SchedulerRequestCandidateStatusUpdate {
                     status: RequestCandidateStatus::Failed,
                     status_code: Some(status_code),
@@ -970,10 +990,20 @@ async fn execute_stream_from_frame_stream(
         );
         record_sync_terminal_usage(state, &plan, payload.report_context.as_ref(), &payload);
         let terminal_unix_secs = current_request_candidate_unix_ms();
+        let error_flow_report_context = with_error_flow_report_context(
+            payload.report_context.as_ref(),
+            build_local_error_flow_metadata(
+                status_code,
+                error_response_text.as_deref(),
+                failover_analysis,
+            ),
+        );
         record_local_request_candidate_status(
             state,
             &plan,
-            payload.report_context.as_ref(),
+            error_flow_report_context
+                .as_ref()
+                .or(payload.report_context.as_ref()),
             SchedulerRequestCandidateStatusUpdate {
                 status: RequestCandidateStatus::Failed,
                 status_code: Some(status_code),
