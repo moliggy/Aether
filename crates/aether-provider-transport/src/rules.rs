@@ -32,50 +32,7 @@ pub fn header_rules_are_locally_supported(rules: Option<&Value>) -> bool {
     let Some(rules) = rules else {
         return true;
     };
-    let Some(rules) = rules.as_array() else {
-        return false;
-    };
-
-    rules.iter().all(|rule| {
-        let Some(rule) = rule.as_object() else {
-            return false;
-        };
-        if rule
-            .get("condition")
-            .is_some_and(|value| !value.is_null() && !condition_is_locally_supported(value))
-        {
-            return false;
-        }
-
-        match rule
-            .get("action")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .map(str::to_ascii_lowercase)
-            .as_deref()
-        {
-            Some("set") => {
-                rule.get("key")
-                    .and_then(Value::as_str)
-                    .is_some_and(|value| !value.trim().is_empty())
-                    && rule.get("value").is_some_and(Value::is_string)
-            }
-            Some("drop") => rule
-                .get("key")
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.trim().is_empty()),
-            Some("rename") => {
-                rule.get("from")
-                    .and_then(Value::as_str)
-                    .is_some_and(|value| !value.trim().is_empty())
-                    && rule
-                        .get("to")
-                        .and_then(Value::as_str)
-                        .is_some_and(|value| !value.trim().is_empty())
-            }
-            _ => false,
-        }
-    })
+    rules.is_array()
 }
 
 pub fn apply_local_header_rules(
@@ -98,11 +55,11 @@ pub fn apply_local_header_rules(
 
     for rule in rules {
         let Some(rule) = rule.as_object() else {
-            return false;
+            continue;
         };
         if let Some(condition) = rule.get("condition").filter(|value| !value.is_null()) {
             if !condition_is_locally_supported(condition) {
-                return false;
+                continue;
             }
             if !evaluate_local_condition(body, condition, original_body) {
                 continue;
@@ -118,135 +75,66 @@ pub fn apply_local_header_rules(
         {
             Some("set") => {
                 let Some(key) = rule.get("key").and_then(Value::as_str).map(str::trim) else {
-                    return false;
-                };
-                let Some(value) = rule.get("value").and_then(Value::as_str) else {
-                    return false;
+                    continue;
                 };
                 let key = key.to_ascii_lowercase();
-                if !protected_keys.contains(&key) {
-                    headers.insert(key, value.to_string());
+                if key.is_empty() || protected_keys.contains(&key) {
+                    continue;
                 }
+                let value = rule
+                    .get("value")
+                    .map(header_rule_value_to_string)
+                    .unwrap_or_default();
+                headers.insert(key, value);
             }
             Some("drop") => {
                 let Some(key) = rule.get("key").and_then(Value::as_str).map(str::trim) else {
-                    return false;
+                    continue;
                 };
                 let key = key.to_ascii_lowercase();
-                if !protected_keys.contains(&key) {
+                if !key.is_empty() && !protected_keys.contains(&key) {
                     headers.remove(&key);
                 }
             }
             Some("rename") => {
                 let Some(from) = rule.get("from").and_then(Value::as_str).map(str::trim) else {
-                    return false;
+                    continue;
                 };
                 let Some(to) = rule.get("to").and_then(Value::as_str).map(str::trim) else {
-                    return false;
+                    continue;
                 };
                 let from = from.to_ascii_lowercase();
                 let to = to.to_ascii_lowercase();
-                if protected_keys.contains(&from) || protected_keys.contains(&to) {
+                if from.is_empty()
+                    || to.is_empty()
+                    || protected_keys.contains(&from)
+                    || protected_keys.contains(&to)
+                {
                     continue;
                 }
                 if let Some(value) = headers.remove(&from) {
                     headers.insert(to, value);
                 }
             }
-            _ => return false,
+            _ => continue,
         }
     }
 
     true
 }
 
+fn header_rule_value_to_string(value: &Value) -> String {
+    value
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| value.to_string())
+}
+
 pub fn body_rules_are_locally_supported(rules: Option<&Value>) -> bool {
     let Some(rules) = rules else {
         return true;
     };
-    let Some(rules) = rules.as_array() else {
-        return false;
-    };
-
-    rules.iter().all(|rule| {
-        let Some(rule) = rule.as_object() else {
-            return false;
-        };
-        if rule
-            .get("condition")
-            .is_some_and(|value| !value.is_null() && !condition_is_locally_supported(value))
-        {
-            return false;
-        }
-
-        match rule
-            .get("action")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .map(str::to_ascii_lowercase)
-            .as_deref()
-        {
-            Some("set") | Some("drop") | Some("append") => rule
-                .get("path")
-                .and_then(Value::as_str)
-                .and_then(parse_body_path)
-                .is_some(),
-            Some("rename") => {
-                rule.get("from")
-                    .and_then(Value::as_str)
-                    .and_then(parse_body_path)
-                    .is_some()
-                    && rule
-                        .get("to")
-                        .and_then(Value::as_str)
-                        .and_then(parse_body_path)
-                        .is_some()
-            }
-            Some("insert") => {
-                rule.get("path")
-                    .and_then(Value::as_str)
-                    .and_then(parse_body_path)
-                    .is_some()
-                    && rule.get("index").and_then(parse_insert_index).is_some()
-            }
-            Some("regex_replace") => {
-                let Some(path) = rule
-                    .get("path")
-                    .and_then(Value::as_str)
-                    .and_then(parse_body_path)
-                else {
-                    return false;
-                };
-                let Some(pattern) = rule.get("pattern").and_then(Value::as_str) else {
-                    return false;
-                };
-                let Some(_replacement) = rule.get("replacement").and_then(Value::as_str) else {
-                    return false;
-                };
-                let Some(flags) = rule.get("flags").map_or(Some(""), |value| value.as_str()) else {
-                    return false;
-                };
-                let Some(_count) = rule
-                    .get("count")
-                    .map_or(Some(0usize), parse_non_negative_count)
-                else {
-                    return false;
-                };
-                !path.is_empty() && !pattern.is_empty() && compile_regex(pattern, flags).is_some()
-            }
-            Some("name_style") => {
-                rule.get("path")
-                    .and_then(Value::as_str)
-                    .and_then(parse_body_path)
-                    .is_some()
-                    && rule
-                        .get("style")
-                        .and_then(Value::as_str)
-                        .is_some_and(valid_name_style)
-            }
-            _ => false,
-        }
-    })
+    rules.is_array()
 }
 
 pub fn body_rules_handle_path(rules: Option<&Value>, path: &str) -> bool {
@@ -308,14 +196,14 @@ pub fn apply_local_body_rules(
 
     for rule in rules {
         let Some(rule) = rule.as_object() else {
-            return false;
+            continue;
         };
 
         let condition = rule.get("condition").filter(|value| !value.is_null());
         let item_condition = condition.is_some_and(condition_has_item_ref);
         if let Some(condition) = condition {
             if !condition_is_locally_supported(condition) {
-                return false;
+                continue;
             }
             if !item_condition && !evaluate_local_condition(body, condition, original_body) {
                 continue;
@@ -335,7 +223,7 @@ pub fn apply_local_body_rules(
                     .and_then(Value::as_str)
                     .and_then(parse_body_path)
                 else {
-                    return false;
+                    continue;
                 };
                 let targets = iter_wildcard_targets(
                     body,
@@ -363,7 +251,7 @@ pub fn apply_local_body_rules(
                     .and_then(Value::as_str)
                     .and_then(parse_body_path)
                 else {
-                    return false;
+                    continue;
                 };
                 for target_path in iter_wildcard_targets(
                     body,
@@ -383,14 +271,14 @@ pub fn apply_local_body_rules(
                     .and_then(Value::as_str)
                     .and_then(parse_body_path)
                 else {
-                    return false;
+                    continue;
                 };
                 let Some(to) = rule
                     .get("to")
                     .and_then(Value::as_str)
                     .and_then(parse_body_path)
                 else {
-                    return false;
+                    continue;
                 };
                 if has_wildcard(&from) || has_wildcard(&to) {
                     continue;
@@ -403,7 +291,7 @@ pub fn apply_local_body_rules(
                     .and_then(Value::as_str)
                     .and_then(parse_body_path)
                 else {
-                    return false;
+                    continue;
                 };
                 let value = rule.get("value").cloned().unwrap_or(Value::Null);
                 for target_path in iter_wildcard_targets(
@@ -428,10 +316,10 @@ pub fn apply_local_body_rules(
                     .and_then(Value::as_str)
                     .and_then(parse_body_path)
                 else {
-                    return false;
+                    continue;
                 };
                 let Some(index) = rule.get("index").and_then(parse_insert_index) else {
-                    return false;
+                    continue;
                 };
                 if has_wildcard(&path) {
                     continue;
@@ -450,28 +338,24 @@ pub fn apply_local_body_rules(
                     .and_then(Value::as_str)
                     .and_then(parse_body_path)
                 else {
-                    return false;
+                    continue;
                 };
                 let Some(pattern) = rule.get("pattern").and_then(Value::as_str) else {
-                    return false;
+                    continue;
                 };
                 let Some(replacement) = rule.get("replacement").and_then(Value::as_str) else {
-                    return false;
+                    continue;
                 };
-                let Some(flags) = rule.get("flags").map_or(Some(""), |value| value.as_str()) else {
-                    return false;
-                };
-                let Some(count) = rule
+                let flags = rule.get("flags").and_then(Value::as_str).unwrap_or("");
+                let count = rule
                     .get("count")
-                    .map_or(Some(0usize), parse_non_negative_count)
-                else {
-                    return false;
-                };
+                    .and_then(parse_non_negative_count)
+                    .unwrap_or(0);
                 if pattern.is_empty() {
-                    return false;
+                    continue;
                 }
                 let Some(pattern) = compile_regex(pattern, flags) else {
-                    return false;
+                    continue;
                 };
                 for target_path in iter_wildcard_targets(
                     body,
@@ -501,13 +385,13 @@ pub fn apply_local_body_rules(
                     .and_then(Value::as_str)
                     .and_then(parse_body_path)
                 else {
-                    return false;
+                    continue;
                 };
                 let Some(style) = rule.get("style").and_then(Value::as_str) else {
-                    return false;
+                    continue;
                 };
                 if !valid_name_style(style) {
-                    return false;
+                    continue;
                 }
                 for target_path in iter_wildcard_targets(
                     body,
@@ -526,7 +410,7 @@ pub fn apply_local_body_rules(
                     }
                 }
             }
-            _ => return false,
+            _ => continue,
         }
     }
 
@@ -1156,7 +1040,7 @@ fn compile_regex(pattern: &str, flags: &str) -> Option<Regex> {
             's' => {
                 builder.dot_matches_new_line(true);
             }
-            _ => return None,
+            _ => {}
         }
     }
     builder.build().ok()
@@ -1629,16 +1513,87 @@ mod tests {
     }
 
     #[test]
-    fn body_rules_reject_invalid_regex_flags_and_negative_count() {
+    fn body_rules_tolerate_invalid_regex_flags_and_negative_count() {
         let invalid_flags = serde_json::json!([
             {"action":"regex_replace","path":"text","pattern":"foo","replacement":"bar","flags":"ix"}
         ]);
         let invalid_count = serde_json::json!([
             {"action":"regex_replace","path":"text","pattern":"foo","replacement":"bar","count":-1}
         ]);
+        let mut flags_body = serde_json::json!({"text":"foo"});
+        let mut count_body = serde_json::json!({"text":"foo foo"});
 
-        assert!(!body_rules_are_locally_supported(Some(&invalid_flags)));
-        assert!(!body_rules_are_locally_supported(Some(&invalid_count)));
+        assert!(body_rules_are_locally_supported(Some(&invalid_flags)));
+        assert!(body_rules_are_locally_supported(Some(&invalid_count)));
+        assert!(apply_local_body_rules(
+            &mut flags_body,
+            Some(&invalid_flags),
+            None
+        ));
+        assert!(apply_local_body_rules(
+            &mut count_body,
+            Some(&invalid_count),
+            None
+        ));
+        assert_eq!(flags_body["text"], "bar");
+        assert_eq!(count_body["text"], "bar bar");
+    }
+
+    #[test]
+    fn body_rules_skip_invalid_entries_without_rejecting_whole_body() {
+        let rules = serde_json::json!([
+            {"action":"set","path":".bad","value":1},
+            {"action":"drop","path":"missing."},
+            {"action":"regex_replace","path":"text","pattern":"(","replacement":"x"},
+            {"op":"remove","path":"/legacy"},
+            {"action":"set","path":"ok","value":true}
+        ]);
+        let mut body = serde_json::json!({
+            "text": "keep",
+            "legacy": true
+        });
+
+        assert!(apply_local_body_rules(&mut body, Some(&rules), None));
+
+        assert_eq!(body["text"], "keep");
+        assert_eq!(body["legacy"], true);
+        assert_eq!(body["ok"], true);
+    }
+
+    #[test]
+    fn header_rules_skip_invalid_entries_without_rejecting_whole_headers() {
+        let rules = serde_json::json!([
+            {"action":"set","key":"","value":"bad"},
+            {"action":"set","key":"x-json","value":{"nested":true}},
+            {"action":"drop","key":null},
+            {"action":"rename","from":"x-missing","to":""},
+            {"op":"remove","key":"x-legacy"},
+            {"action":"set","key":"x-ok","value":"yes"}
+        ]);
+        let mut headers = std::collections::BTreeMap::from([(
+            "authorization".to_string(),
+            "Bearer keep".to_string(),
+        )]);
+
+        assert!(header_rules_are_locally_supported(Some(&rules)));
+        assert!(apply_local_header_rules(
+            &mut headers,
+            Some(&rules),
+            &["authorization"],
+            &serde_json::json!({}),
+            None,
+        ));
+
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer keep")
+        );
+        assert_eq!(
+            headers.get("x-json").map(String::as_str),
+            Some("{\"nested\":true}")
+        );
+        assert_eq!(headers.get("x-ok").map(String::as_str), Some("yes"));
+        assert!(!headers.contains_key("x-legacy"));
     }
 
     #[test]

@@ -236,6 +236,21 @@ mod tests {
         }
     }
 
+    fn codex_default_body_rules() -> Value {
+        json!([
+            {"action":"drop","path":"max_output_tokens"},
+            {"action":"drop","path":"temperature"},
+            {"action":"drop","path":"top_p"},
+            {"action":"set","path":"store","value":false},
+            {
+                "action":"set",
+                "path":"instructions",
+                "value":"You are GPT-5.",
+                "condition":{"path":"instructions","op":"not_exists"}
+            }
+        ])
+    }
+
     #[test]
     fn builds_request_body_for_all_standard_surface_pairs_in_sync_and_stream_modes() {
         for client_api_format in STANDARD_SURFACES {
@@ -266,6 +281,45 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn applies_codex_body_rules_for_all_standard_sources_to_openai_cli() {
+        let body_rules = codex_default_body_rules();
+
+        for client_api_format in STANDARD_SURFACES {
+            let (mut request, request_path) = sample_request_for(client_api_format);
+            if let Some(object) = request.as_object_mut() {
+                object.insert("temperature".to_string(), json!(0.7));
+                object.insert("top_p".to_string(), json!(0.8));
+            }
+
+            let converted = build_standard_request_body(
+                &request,
+                client_api_format,
+                "gpt-5.5",
+                "codex",
+                "openai:cli",
+                request_path,
+                true,
+                Some(&body_rules),
+                Some("key-1"),
+            )
+            .unwrap_or_else(|| {
+                panic!("{client_api_format} -> openai:cli should build with codex body rules")
+            });
+
+            assert_eq!(converted["model"], "gpt-5.5");
+            assert_eq!(converted["stream"], true);
+            assert_eq!(converted["store"], false);
+            assert!(converted.get("max_output_tokens").is_none());
+            assert!(converted.get("temperature").is_none());
+            assert!(converted.get("top_p").is_none());
+            assert!(
+                converted.get("instructions").is_some(),
+                "{client_api_format} -> openai:cli should keep or inject instructions"
+            );
         }
     }
 
