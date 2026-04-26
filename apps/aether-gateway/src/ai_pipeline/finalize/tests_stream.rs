@@ -888,7 +888,7 @@ fn gemini_to_openai_responses_stream_rewriter_converts_function_call_to_complete
 }
 
 #[test]
-fn gemini_to_openai_compact_stream_rewriter_converts_function_call_to_completed_event() {
+fn gemini_to_openai_responses_compact_stream_rewriter_converts_function_call_to_completed_event() {
     let report_context = json!({
         "provider_api_format": "gemini:cli",
         "client_api_format": "openai:responses:compact",

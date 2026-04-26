@@ -3226,7 +3226,7 @@ mod tests {
         });
 
         let body_json = maybe_build_openai_responses_same_family_sync_body_from_normalized_payload(
-            "openai_compact_sync_finalize",
+            "openai_responses_compact_sync_finalize",
             200,
             Some(&report_context),
             None,
@@ -3385,7 +3385,7 @@ mod tests {
         });
 
         let body_json = maybe_build_openai_responses_same_family_sync_body_from_normalized_payload(
-            "openai_compact_sync_finalize",
+            "openai_responses_compact_sync_finalize",
             200,
             Some(&report_context),
             None,
@@ -3412,7 +3412,7 @@ mod tests {
         });
 
         let body_json = maybe_build_openai_responses_same_family_sync_body_from_normalized_payload(
-            "openai_compact_sync_finalize",
+            "openai_responses_compact_sync_finalize",
             200,
             Some(&report_context),
             Some(&provider_body_json),
@@ -4006,7 +4006,7 @@ mod tests {
 
         let product =
             maybe_build_openai_responses_cross_format_sync_product_from_normalized_payload(
-                "openai_compact_sync_finalize",
+                "openai_responses_compact_sync_finalize",
                 200,
                 Some(&report_context),
                 Some(&provider_body_json),
@@ -4109,7 +4109,7 @@ mod tests {
         });
 
         let product = maybe_build_standard_sync_finalize_product_from_normalized_payload(
-            "openai_compact_sync_finalize",
+            "openai_responses_compact_sync_finalize",
             200,
             Some(&report_context),
             Some(&provider_body_json),

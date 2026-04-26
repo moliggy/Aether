@@ -6,8 +6,7 @@ use crate::ai_pipeline::planner::common::{
     GEMINI_CLI_SYNC_PLAN_KIND, GEMINI_FILES_DELETE_PLAN_KIND, GEMINI_FILES_DOWNLOAD_PLAN_KIND,
     GEMINI_FILES_GET_PLAN_KIND, GEMINI_FILES_LIST_PLAN_KIND, GEMINI_VIDEO_CANCEL_SYNC_PLAN_KIND,
     GEMINI_VIDEO_CREATE_SYNC_PLAN_KIND, OPENAI_CHAT_STREAM_PLAN_KIND, OPENAI_CHAT_SYNC_PLAN_KIND,
-    OPENAI_CLI_STREAM_PLAN_KIND, OPENAI_CLI_SYNC_PLAN_KIND, OPENAI_COMPACT_STREAM_PLAN_KIND,
-    OPENAI_COMPACT_SYNC_PLAN_KIND, OPENAI_IMAGE_STREAM_PLAN_KIND, OPENAI_IMAGE_SYNC_PLAN_KIND,
+    OPENAI_IMAGE_STREAM_PLAN_KIND, OPENAI_IMAGE_SYNC_PLAN_KIND,
     OPENAI_RESPONSES_COMPACT_STREAM_PLAN_KIND, OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND,
     OPENAI_RESPONSES_STREAM_PLAN_KIND, OPENAI_RESPONSES_SYNC_PLAN_KIND,
     OPENAI_VIDEO_CANCEL_SYNC_PLAN_KIND, OPENAI_VIDEO_CONTENT_PLAN_KIND,
@@ -98,11 +97,11 @@ fn build_sync_plan_payload_from_decision(
         OPENAI_CHAT_SYNC_PLAN_KIND => {
             build_openai_chat_sync_plan_from_decision(parts, body_json, payload)?
         }
-        OPENAI_RESPONSES_SYNC_PLAN_KIND | OPENAI_CLI_SYNC_PLAN_KIND => {
+        OPENAI_RESPONSES_SYNC_PLAN_KIND => {
             build_openai_responses_sync_plan_from_decision(parts, body_json, payload, false)?
         }
         OPENAI_IMAGE_SYNC_PLAN_KIND => build_passthrough_sync_plan_from_decision(parts, payload)?,
-        OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND | OPENAI_COMPACT_SYNC_PLAN_KIND => {
+        OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND => {
             build_openai_responses_sync_plan_from_decision(parts, body_json, payload, true)?
         }
         CLAUDE_CHAT_SYNC_PLAN_KIND | CLAUDE_CLI_SYNC_PLAN_KIND => {
@@ -139,13 +138,13 @@ fn build_stream_plan_payload_from_decision(
         OPENAI_CHAT_STREAM_PLAN_KIND => {
             build_openai_chat_stream_plan_from_decision(parts, body_json, payload)?
         }
-        OPENAI_RESPONSES_STREAM_PLAN_KIND | OPENAI_CLI_STREAM_PLAN_KIND => {
+        OPENAI_RESPONSES_STREAM_PLAN_KIND => {
             build_openai_responses_stream_plan_from_decision(parts, body_json, payload, false)?
         }
         OPENAI_IMAGE_STREAM_PLAN_KIND => {
             build_standard_stream_plan_from_decision(parts, body_json, payload, false)?
         }
-        OPENAI_RESPONSES_COMPACT_STREAM_PLAN_KIND | OPENAI_COMPACT_STREAM_PLAN_KIND => {
+        OPENAI_RESPONSES_COMPACT_STREAM_PLAN_KIND => {
             build_openai_responses_stream_plan_from_decision(parts, body_json, payload, true)?
         }
         CLAUDE_CHAT_STREAM_PLAN_KIND | CLAUDE_CLI_STREAM_PLAN_KIND => {

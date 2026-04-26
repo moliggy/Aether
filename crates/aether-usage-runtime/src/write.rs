@@ -2851,7 +2851,7 @@ mod tests {
         });
         let payload = GatewayStreamReportRequest {
             trace_id: "trace-stream-provider-chunks-usage-1".to_string(),
-            report_kind: "openai_cli_stream_success".to_string(),
+            report_kind: "openai_responses_stream_success".to_string(),
             report_context: Some(json!({
                 "client_api_format": "openai:responses",
                 "provider_api_format": "openai:responses",
@@ -2917,14 +2917,14 @@ mod tests {
             "event: response.created\n",
             "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_123\",\"object\":\"response\",\"model\":\"gpt-5.4\",\"status\":\"in_progress\"}}\n\n",
             "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello from CLI stream\"}\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello from Responses stream\"}\n\n",
             "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_123\",\"object\":\"response\",\"model\":\"gpt-5.4\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello from CLI stream\"}]}],\"usage\":{\"input_tokens\":3,\"input_tokens_details\":{\"cached_tokens\":2,\"cached_creation_tokens\":1},\"output_tokens\":5,\"output_tokens_details\":{\"reasoning_tokens\":1},\"total_tokens\":8}}}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_123\",\"object\":\"response\",\"model\":\"gpt-5.4\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello from Responses stream\"}]}],\"usage\":{\"input_tokens\":3,\"input_tokens_details\":{\"cached_tokens\":2,\"cached_creation_tokens\":1},\"output_tokens\":5,\"output_tokens_details\":{\"reasoning_tokens\":1},\"total_tokens\":8}}}\n\n",
             "data: [DONE]\n",
         );
         let payload = GatewayStreamReportRequest {
             trace_id: "trace-stream-usage-2".to_string(),
-            report_kind: "openai_cli_stream_success".to_string(),
+            report_kind: "openai_responses_stream_success".to_string(),
             report_context: Some(json!({
                 "client_api_format": "openai:responses",
                 "provider_api_format": "openai:responses",
@@ -2963,7 +2963,7 @@ mod tests {
                     },
                     {
                         "type": "response.output_text.delta",
-                        "delta": "Hello from CLI stream"
+                        "delta": "Hello from Responses stream"
                     },
                     {
                         "type": "response.completed",
@@ -2979,7 +2979,7 @@ mod tests {
                                     "content": [
                                         {
                                             "type": "output_text",
-                                            "text": "Hello from CLI stream"
+                                            "text": "Hello from Responses stream"
                                         }
                                     ]
                                 }
@@ -3146,7 +3146,7 @@ mod tests {
         };
         let payload = GatewaySyncReportRequest {
             trace_id: "trace-sync-upstream-stream-1".to_string(),
-            report_kind: "openai_cli_sync_success".to_string(),
+            report_kind: "openai_responses_sync_success".to_string(),
             report_context: Some(json!({
                 "client_api_format": "openai:responses",
                 "provider_api_format": "openai:responses",
@@ -3326,7 +3326,7 @@ mod tests {
         };
         let payload = GatewaySyncReportRequest {
             trace_id: "trace-sync-body-ref-1".to_string(),
-            report_kind: "openai_cli_sync_success".to_string(),
+            report_kind: "openai_responses_sync_success".to_string(),
             report_context: Some(json!({
                 "client_api_format": "openai:responses",
                 "provider_api_format": "openai:responses",
@@ -3475,7 +3475,7 @@ mod tests {
         };
         let payload = GatewayStreamReportRequest {
             trace_id: "trace-stream-usage-large-1".to_string(),
-            report_kind: "openai_cli_stream_success".to_string(),
+            report_kind: "openai_responses_stream_success".to_string(),
             report_context: Some(json!({
                 "client_api_format": "openai:responses",
                 "provider_api_format": "openai:responses",

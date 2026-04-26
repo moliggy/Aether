@@ -359,7 +359,7 @@ async fn gateway_handles_admin_provider_query_models_respecting_key_api_formats(
                     .lock()
                     .expect("mutex should lock") += 1;
                 assert_eq!(plan.endpoint_id, "endpoint-openai-cli");
-                assert_eq!(plan.provider_api_format, "openai:cli");
+                assert_eq!(plan.provider_api_format, "openai:responses");
                 Json(json!({
                     "request_id": "req-provider-query-cli",
                     "status_code": 200,
@@ -410,7 +410,7 @@ async fn gateway_handles_admin_provider_query_models_respecting_key_api_formats(
             StoredProviderCatalogEndpoint::new(
                 "endpoint-openai-cli".to_string(),
                 "provider-openai".to_string(),
-                "openai:cli".to_string(),
+                "openai:responses".to_string(),
                 Some("cli".to_string()),
                 Some("secondary".to_string()),
                 true,
@@ -431,7 +431,7 @@ async fn gateway_handles_admin_provider_query_models_respecting_key_api_formats(
         vec![sample_key(
             "key-openai-cli",
             "provider-openai",
-            "openai:cli",
+            "openai:responses",
             "sk-test-cli",
         )],
     ));
@@ -648,7 +648,7 @@ async fn gateway_handles_admin_provider_query_models_for_fixed_provider_without_
         vec![sample_key(
             "key-codex-oauth",
             "provider-codex",
-            "openai:cli",
+            "openai:responses",
             "sk-test-codex",
         )],
     ));
@@ -1506,7 +1506,7 @@ async fn gateway_handles_non_kiro_multi_model_failover_locally() {
 }
 
 #[tokio::test]
-async fn gateway_handles_openai_cli_test_model_locally() {
+async fn gateway_handles_openai_responses_test_model_locally() {
     let prompt = "Tell me whether the CLI request preserved this prompt.";
     let execution_runtime = Router::new().route(
         "/v1/execute/sync",
@@ -1514,7 +1514,7 @@ async fn gateway_handles_openai_cli_test_model_locally() {
             assert_eq!(plan.provider_id, "provider-openai");
             assert_eq!(plan.endpoint_id, "endpoint-openai-cli");
             assert_eq!(plan.key_id, "key-openai-cli");
-            assert_eq!(plan.provider_api_format, "openai:cli");
+            assert_eq!(plan.provider_api_format, "openai:responses");
             assert_eq!(plan.url, "https://tiger.bookapi.cc/codex/responses");
             assert!(!plan.stream);
             assert_eq!(
@@ -1617,13 +1617,13 @@ async fn gateway_handles_openai_cli_test_model_locally() {
         vec![sample_endpoint(
             "endpoint-openai-cli",
             "provider-openai",
-            "openai:cli",
+            "openai:responses",
             "https://tiger.bookapi.cc/codex",
         )],
         vec![sample_key(
             "key-openai-cli",
             "provider-openai",
-            "openai:cli",
+            "openai:responses",
             "sk-test-cli",
         )],
     ));
@@ -1646,7 +1646,7 @@ async fn gateway_handles_openai_cli_test_model_locally() {
         .json(&json!({
             "provider_id": "provider-openai",
             "model": "gpt-5.4-mini",
-            "api_format": "openai:cli",
+            "api_format": "openai:responses",
             "message": prompt,
             "request_headers": {
                 "x-stainless-runtime": "node"
@@ -1765,7 +1765,7 @@ async fn gateway_prefers_supported_non_kiro_endpoint_when_api_format_is_omitted(
             sample_endpoint(
                 "endpoint-openai-cli",
                 "provider-openai",
-                "openai:cli",
+                "openai:responses",
                 "https://api.openai.example",
             ),
             sample_endpoint(
@@ -1779,7 +1779,7 @@ async fn gateway_prefers_supported_non_kiro_endpoint_when_api_format_is_omitted(
             sample_key(
                 "key-openai-cli",
                 "provider-openai",
-                "openai:cli",
+                "openai:responses",
                 "sk-test-cli",
             ),
             sample_key(
@@ -2028,7 +2028,7 @@ async fn gateway_uses_compatible_cli_endpoint_when_api_format_is_omitted() {
         "/v1/execute/sync",
         any(move |Json(plan): Json<ExecutionPlan>| async move {
             assert_eq!(plan.endpoint_id, "endpoint-openai-cli");
-            assert_eq!(plan.provider_api_format, "openai:cli");
+            assert_eq!(plan.provider_api_format, "openai:responses");
             assert_eq!(plan.key_id, "key-openai-cli");
             Json(json!({
                 "request_id": plan.request_id,
@@ -2070,14 +2070,14 @@ async fn gateway_uses_compatible_cli_endpoint_when_api_format_is_omitted() {
             sample_endpoint(
                 "endpoint-openai-cli",
                 "provider-openai",
-                "openai:cli",
+                "openai:responses",
                 "https://api.openai.example",
             ),
         ],
         vec![sample_key(
             "key-openai-cli",
             "provider-openai",
-            "openai:cli",
+            "openai:responses",
             "sk-test-cli",
         )],
     ));
@@ -2123,7 +2123,7 @@ async fn gateway_uses_runnable_cli_endpoint_after_chat_preference_when_api_forma
         "/v1/execute/sync",
         any(move |Json(plan): Json<ExecutionPlan>| async move {
             assert_eq!(plan.endpoint_id, "endpoint-openai-cli-runnable");
-            assert_eq!(plan.provider_api_format, "openai:cli");
+            assert_eq!(plan.provider_api_format, "openai:responses");
             assert_eq!(plan.key_id, "key-openai-shared");
             Json(json!({
                 "request_id": plan.request_id,
@@ -2163,7 +2163,7 @@ async fn gateway_uses_runnable_cli_endpoint_after_chat_preference_when_api_forma
     let cli_endpoint = sample_endpoint(
         "endpoint-openai-cli-runnable",
         "provider-openai",
-        "openai:cli",
+        "openai:responses",
         "https://api.openai.example",
     );
     let mut shared_key = sample_key(
@@ -2172,7 +2172,7 @@ async fn gateway_uses_runnable_cli_endpoint_after_chat_preference_when_api_forma
         "openai:chat",
         "sk-test-shared",
     );
-    shared_key.api_formats = Some(json!(["openai:chat", "openai:cli"]));
+    shared_key.api_formats = Some(json!(["openai:chat", "openai:responses"]));
     let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
         vec![provider],
         vec![unsupported_chat_endpoint, cli_endpoint],
@@ -2215,14 +2215,14 @@ async fn gateway_uses_runnable_cli_endpoint_after_chat_preference_when_api_forma
 }
 
 #[tokio::test]
-async fn gateway_handles_openai_cli_test_model_failover_locally() {
+async fn gateway_handles_openai_responses_test_model_failover_locally() {
     let execution_runtime = Router::new().route(
         "/v1/execute/sync",
         any(move |Json(plan): Json<ExecutionPlan>| async move {
             assert_eq!(plan.provider_id, "provider-openai");
             assert_eq!(plan.endpoint_id, "endpoint-openai-cli");
             assert_eq!(plan.key_id, "key-openai-cli");
-            assert_eq!(plan.provider_api_format, "openai:cli");
+            assert_eq!(plan.provider_api_format, "openai:responses");
             assert_eq!(plan.model_name.as_deref(), Some("gpt-5.4-mini"));
             Json(json!({
                 "request_id": plan.request_id,
@@ -2257,13 +2257,13 @@ async fn gateway_handles_openai_cli_test_model_failover_locally() {
         vec![sample_endpoint(
             "endpoint-openai-cli",
             "provider-openai",
-            "openai:cli",
+            "openai:responses",
             "https://api.openai.example",
         )],
         vec![sample_key(
             "key-openai-cli",
             "provider-openai",
-            "openai:cli",
+            "openai:responses",
             "sk-test-cli",
         )],
     ));
@@ -2288,7 +2288,7 @@ async fn gateway_handles_openai_cli_test_model_failover_locally() {
         .json(&json!({
             "provider_id": "provider-openai",
             "failover_models": ["gpt-5.4-mini"],
-            "api_format": "openai:cli"
+            "api_format": "openai:responses"
         }))
         .send()
         .await

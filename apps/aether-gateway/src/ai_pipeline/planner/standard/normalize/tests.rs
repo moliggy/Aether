@@ -82,7 +82,7 @@ fn builds_openai_chat_cross_format_request_body_from_openai_responses_source() {
     let provider_request_body = build_cross_format_openai_responses_request_body(
         &body_json,
         "gpt-5-upstream",
-        "openai:cli",
+        "openai:responses",
         "openai:chat",
         false,
         "openai",
@@ -118,7 +118,7 @@ fn local_openai_responses_wrapper_preserves_body_order_after_edits() {
         "gpt-5.4",
         true,
         "codex",
-        "openai:cli",
+        "openai:responses",
         None,
         Some("key-123"),
     )
@@ -143,7 +143,7 @@ fn local_openai_responses_wrapper_preserves_body_order_after_edits() {
 }
 
 #[test]
-fn local_openai_compact_wrapper_strips_store_for_same_format_requests() {
+fn local_openai_responses_compact_wrapper_strips_store_for_same_format_requests() {
     let body_json = json!({
         "model": "gpt-5.4",
         "input": [],
@@ -155,7 +155,7 @@ fn local_openai_compact_wrapper_strips_store_for_same_format_requests() {
         "gpt-5.4",
         false,
         "openai",
-        "openai:compact",
+        "openai:responses:compact",
         None,
         None,
     )
@@ -175,7 +175,7 @@ fn local_openai_responses_upstream_url_preserves_codex_base_path() {
 
     let upstream_url = build_local_openai_responses_upstream_url(
         &parts,
-        &sample_transport("https://tiger.bookapi.cc/codex", "openai:cli"),
+        &sample_transport("https://tiger.bookapi.cc/codex", "openai:responses"),
         false,
     )
     .expect("openai responses upstream url should build");
@@ -198,7 +198,7 @@ fn strips_metadata_for_codex_openai_responses_requests() {
         &body_json,
         "gpt-5-upstream",
         "claude:cli",
-        "openai:cli",
+        "openai:responses",
         true,
         "codex",
         None,
@@ -230,7 +230,7 @@ fn applies_codex_defaults_unless_body_rules_handle_the_field() {
         &body_json,
         "gpt-5-upstream",
         "claude:cli",
-        "openai:cli",
+        "openai:responses",
         true,
         "codex",
         Some(&body_rules),
@@ -257,7 +257,7 @@ fn injects_codex_prompt_cache_key_for_openai_responses_cross_format_requests() {
         &body_json,
         "gpt-5-upstream",
         "claude:cli",
-        "openai:cli",
+        "openai:responses",
         true,
         "codex",
         None,
@@ -285,7 +285,7 @@ fn injects_codex_prompt_cache_key_for_openai_chat_cross_format_requests() {
         &body_json,
         "gpt-5-upstream",
         "codex",
-        "openai:cli",
+        "openai:responses",
         false,
         None,
         Some("key-123"),

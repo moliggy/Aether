@@ -117,7 +117,7 @@ fn resolve_core_error_background_report_kind_maps_all_core_finalize_kinds() {
         ),
         (
             "openai_compact_sync_finalize",
-            Some("openai_responses_sync_error"),
+            Some("openai_responses_compact_sync_error"),
         ),
         ("claude_cli_sync_finalize", Some("claude_cli_sync_error")),
         ("gemini_cli_sync_finalize", Some("gemini_cli_sync_error")),
@@ -164,7 +164,7 @@ fn resolve_core_success_background_report_kind_maps_all_core_finalize_kinds() {
         ),
         (
             "openai_compact_sync_finalize",
-            Some("openai_responses_sync_success"),
+            Some("openai_responses_compact_sync_success"),
         ),
         ("claude_cli_sync_finalize", Some("claude_cli_sync_success")),
         ("gemini_cli_sync_finalize", Some("gemini_cli_sync_success")),

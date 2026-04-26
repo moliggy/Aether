@@ -2127,8 +2127,8 @@ fn ai_pipeline_finalize_standard_sync_products_are_owned_by_pipeline_crate() {
         "maybe_build_local_openai_chat_stream_sync_response(",
         "maybe_build_local_openai_chat_sync_response(",
         "maybe_build_local_openai_chat_cross_format_stream_sync_response(",
-        "maybe_build_local_openai_cli_stream_sync_response(",
-        "maybe_build_local_openai_cli_cross_format_stream_sync_response(",
+        "maybe_build_local_openai_responses_stream_sync_response(",
+        "maybe_build_local_openai_responses_cross_format_stream_sync_response(",
         "maybe_build_local_claude_cli_stream_sync_response(",
         "maybe_build_local_gemini_cli_stream_sync_response(",
         "maybe_build_local_claude_stream_sync_response(",
@@ -2136,7 +2136,7 @@ fn ai_pipeline_finalize_standard_sync_products_are_owned_by_pipeline_crate() {
         "maybe_build_local_gemini_stream_sync_response(",
         "maybe_build_local_gemini_sync_response(",
         "maybe_build_local_openai_chat_cross_format_sync_response(",
-        "maybe_build_local_openai_cli_cross_format_sync_response(",
+        "maybe_build_local_openai_responses_cross_format_sync_response(",
     ] {
         assert!(
             !gateway_internal_sync.contains(forbidden),

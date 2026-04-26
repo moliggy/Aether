@@ -110,7 +110,11 @@ fn maybe_bridge_openai_image_sync_json_to_stream(
 }
 
 fn normalize_api_format(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
+    match value.trim().to_ascii_lowercase().as_str() {
+        "openai:cli" => "openai:responses".to_string(),
+        "openai:compact" => "openai:responses:compact".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn is_standard_api_format(value: &str) -> bool {
@@ -118,8 +122,6 @@ fn is_standard_api_format(value: &str) -> bool {
         value,
         "openai:chat"
             | "openai:responses"
-            | "openai:cli"
-            | "openai:compact"
             | "openai:responses:compact"
             | "claude:chat"
             | "claude:cli"
@@ -206,9 +208,7 @@ fn convert_provider_sync_response_to_openai_responses(
     report_context: &Value,
 ) -> Option<Value> {
     match provider_api_format {
-        "openai:responses" | "openai:cli" | "openai:compact" | "openai:responses:compact" => {
-            Some(provider_body_json.clone())
-        }
+        "openai:responses" | "openai:responses:compact" => Some(provider_body_json.clone()),
         "openai:chat" => convert_openai_chat_response_to_openai_responses(
             provider_body_json,
             report_context,
@@ -257,7 +257,7 @@ fn emit_client_stream_from_canonical_frames(
             let mut emitter = OpenAIChatClientEmitter::default();
             emit_with_openai_chat_emitter(&mut emitter, canonical_frames)
         }
-        "openai:responses" | "openai:cli" | "openai:compact" | "openai:responses:compact" => {
+        "openai:responses" | "openai:responses:compact" => {
             let mut emitter = OpenAIResponsesClientEmitter::default();
             emit_with_openai_responses_emitter(&mut emitter, canonical_frames)
         }

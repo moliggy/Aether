@@ -6,12 +6,6 @@ pub mod matrix;
 pub mod normalize;
 pub mod openai_responses;
 
-#[allow(deprecated)]
-pub use codex::apply_openai_compact_special_body_edits;
-#[allow(deprecated)]
-pub use codex::{
-    apply_codex_openai_cli_special_body_edits, apply_codex_openai_cli_special_headers,
-};
 pub use codex::{
     apply_codex_openai_responses_special_body_edits, apply_codex_openai_responses_special_headers,
     apply_openai_responses_compact_special_body_edits, CODEX_OPENAI_IMAGE_DEFAULT_MODEL,

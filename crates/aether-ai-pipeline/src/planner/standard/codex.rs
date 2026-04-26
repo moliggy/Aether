@@ -37,7 +37,7 @@ fn is_codex_openai_responses_request(provider_type: &str, provider_api_format: &
         )
 }
 
-fn is_openai_compact_request(provider_api_format: &str) -> bool {
+fn is_openai_responses_compact_request(provider_api_format: &str) -> bool {
     matches!(
         provider_api_format.trim().to_ascii_lowercase().as_str(),
         "openai:responses:compact" | "openai:compact"
@@ -282,7 +282,7 @@ pub fn apply_openai_responses_compact_special_body_edits(
     provider_request_body: &mut Value,
     provider_api_format: &str,
 ) {
-    if !is_openai_compact_request(provider_api_format) {
+    if !is_openai_responses_compact_request(provider_api_format) {
         return;
     }
 
@@ -292,17 +292,6 @@ pub fn apply_openai_responses_compact_special_body_edits(
 
     // `/v1/responses/compact` does not accept `store`.
     body_object.remove("store");
-}
-
-#[deprecated(
-    since = "0.1.0",
-    note = "use apply_openai_responses_compact_special_body_edits"
-)]
-pub fn apply_openai_compact_special_body_edits(
-    provider_request_body: &mut Value,
-    provider_api_format: &str,
-) {
-    apply_openai_responses_compact_special_body_edits(provider_request_body, provider_api_format);
 }
 
 pub fn apply_codex_openai_responses_special_body_edits(
@@ -332,7 +321,7 @@ pub fn apply_codex_openai_responses_special_body_edits(
     if !body_rules_handle_path(body_rules, "metadata") {
         body_object.remove("metadata");
     }
-    if is_openai_compact_request(provider_api_format) {
+    if is_openai_responses_compact_request(provider_api_format) {
         body_object.remove("store");
     } else if !body_rules_handle_path(body_rules, "store") {
         body_object.insert("store".to_string(), json!(false));
@@ -359,26 +348,6 @@ pub fn apply_codex_openai_responses_special_body_edits(
         provider_request_body,
         provider_type,
         provider_api_format,
-        user_api_key_id,
-    );
-}
-
-#[deprecated(
-    since = "0.1.0",
-    note = "use apply_codex_openai_responses_special_body_edits"
-)]
-pub fn apply_codex_openai_cli_special_body_edits(
-    provider_request_body: &mut Value,
-    provider_type: &str,
-    provider_api_format: &str,
-    body_rules: Option<&Value>,
-    user_api_key_id: Option<&str>,
-) {
-    apply_codex_openai_responses_special_body_edits(
-        provider_request_body,
-        provider_type,
-        provider_api_format,
-        body_rules,
         user_api_key_id,
     );
 }
@@ -455,30 +424,6 @@ pub fn apply_codex_openai_responses_special_headers(
                 .insert("conversation_id".to_string(), short_session_id.to_string());
         }
     }
-}
-
-#[deprecated(
-    since = "0.1.0",
-    note = "use apply_codex_openai_responses_special_headers"
-)]
-pub fn apply_codex_openai_cli_special_headers(
-    provider_request_headers: &mut BTreeMap<String, String>,
-    provider_request_body: &Value,
-    original_headers: &http::HeaderMap,
-    provider_type: &str,
-    provider_api_format: &str,
-    request_id: Option<&str>,
-    decrypted_auth_config_raw: Option<&str>,
-) {
-    apply_codex_openai_responses_special_headers(
-        provider_request_headers,
-        provider_request_body,
-        original_headers,
-        provider_type,
-        provider_api_format,
-        request_id,
-        decrypted_auth_config_raw,
-    );
 }
 
 #[cfg(test)]

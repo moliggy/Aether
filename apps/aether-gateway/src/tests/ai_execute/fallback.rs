@@ -585,7 +585,7 @@ async fn gateway_locally_denies_claude_messages_stream_after_execution_runtime_m
 }
 
 #[tokio::test]
-async fn gateway_locally_denies_openai_compact_after_execution_runtime_miss_without_control_execute_opt_in(
+async fn gateway_locally_denies_openai_responses_compact_after_execution_runtime_miss_without_control_execute_opt_in(
 ) {
     assert_ai_route_locally_denied_after_execution_runtime_miss(
         "/v1/responses/compact",
@@ -599,7 +599,7 @@ async fn gateway_locally_denies_openai_compact_after_execution_runtime_miss_with
 }
 
 #[tokio::test]
-async fn gateway_locally_denies_openai_compact_stream_after_execution_runtime_miss_without_control_execute_opt_in(
+async fn gateway_locally_denies_openai_responses_compact_stream_after_execution_runtime_miss_without_control_execute_opt_in(
 ) {
     assert_ai_route_locally_denied_after_execution_runtime_miss(
         "/v1/responses/compact",

@@ -516,7 +516,7 @@ async fn data_state_reads_decrypted_provider_transport_snapshot() {
         .expect("endpoint transport should build");
     let key = sample_provider_catalog_key()
         .with_transport_fields(
-            Some(serde_json::json!(["openai:chat", "openai:cli"])),
+            Some(serde_json::json!(["openai:chat", "openai:responses"])),
             encrypted_api_key,
             Some(encrypted_auth_config),
             Some(serde_json::json!({"openai:chat": 0.8})),
@@ -547,7 +547,10 @@ async fn data_state_reads_decrypted_provider_transport_snapshot() {
     assert_eq!(snapshot.endpoint.base_url, "https://api.openai.com");
     assert_eq!(
         snapshot.key.api_formats,
-        Some(vec!["openai:chat".to_string(), "openai:cli".to_string()])
+        Some(vec![
+            "openai:chat".to_string(),
+            "openai:responses".to_string()
+        ])
     );
     assert_eq!(snapshot.key.decrypted_api_key, "sk-live-openai");
     assert_eq!(

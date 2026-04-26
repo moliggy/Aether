@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn fixed_oauth_key_with_legacy_explicit_formats_still_inherits_provider_formats() {
         let mut key = sample_key("oauth");
-        key.api_formats = Some(json!(["openai:compact"]));
+        key.api_formats = Some(json!(["openai:responses:compact"]));
         let endpoints = vec![
             sample_endpoint("openai:responses", true),
             sample_endpoint("openai:image", true),

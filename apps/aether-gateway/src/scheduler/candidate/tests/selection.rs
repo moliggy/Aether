@@ -1165,22 +1165,22 @@ async fn skips_codex_candidate_when_account_quota_is_exhausted_and_pool_flag_ena
     first.provider_name = "codex".to_string();
     first.provider_type = "codex".to_string();
     first.endpoint_id = "endpoint-codex".to_string();
-    first.endpoint_api_format = "openai:cli".to_string();
+    first.endpoint_api_format = "openai:responses".to_string();
     first.key_id = "key-codex".to_string();
     first.key_name = "codex-exhausted".to_string();
     first.key_auth_type = "oauth".to_string();
-    first.key_api_formats = Some(vec!["openai:cli".to_string()]);
-    first.key_global_priority_by_format = Some(serde_json::json!({"openai:cli": 1}));
+    first.key_api_formats = Some(vec!["openai:responses".to_string()]);
+    first.key_global_priority_by_format = Some(serde_json::json!({"openai:responses": 1}));
 
     let mut second = sample_row();
     second.provider_id = "provider-openai".to_string();
     second.provider_name = "openai".to_string();
     second.endpoint_id = "endpoint-openai".to_string();
-    second.endpoint_api_format = "openai:cli".to_string();
+    second.endpoint_api_format = "openai:responses".to_string();
     second.key_id = "key-openai".to_string();
     second.key_name = "fallback".to_string();
-    second.key_api_formats = Some(vec!["openai:cli".to_string()]);
-    second.key_global_priority_by_format = Some(serde_json::json!({"openai:cli": 2}));
+    second.key_api_formats = Some(vec!["openai:responses".to_string()]);
+    second.key_global_priority_by_format = Some(serde_json::json!({"openai:responses": 2}));
 
     let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
         first, second,
@@ -1225,7 +1225,7 @@ async fn skips_codex_candidate_when_account_quota_is_exhausted_and_pool_flag_ena
     let (selected, skipped) = collect_selectable_candidates_with_skip_reasons(
         state.data.as_ref(),
         &state,
-        "openai:cli",
+        "openai:responses",
         "gpt-4.1",
         false,
         None,
@@ -1248,22 +1248,22 @@ async fn skips_oauth_invalid_candidate_before_local_auth_resolution() {
     first.provider_name = "codex".to_string();
     first.provider_type = "codex".to_string();
     first.endpoint_id = "endpoint-codex".to_string();
-    first.endpoint_api_format = "openai:cli".to_string();
+    first.endpoint_api_format = "openai:responses".to_string();
     first.key_id = "key-codex".to_string();
     first.key_name = "codex-invalid".to_string();
     first.key_auth_type = "oauth".to_string();
-    first.key_api_formats = Some(vec!["openai:cli".to_string()]);
-    first.key_global_priority_by_format = Some(serde_json::json!({"openai:cli": 1}));
+    first.key_api_formats = Some(vec!["openai:responses".to_string()]);
+    first.key_global_priority_by_format = Some(serde_json::json!({"openai:responses": 1}));
 
     let mut second = sample_row();
     second.provider_id = "provider-openai".to_string();
     second.provider_name = "openai".to_string();
     second.endpoint_id = "endpoint-openai".to_string();
-    second.endpoint_api_format = "openai:cli".to_string();
+    second.endpoint_api_format = "openai:responses".to_string();
     second.key_id = "key-openai".to_string();
     second.key_name = "fallback".to_string();
-    second.key_api_formats = Some(vec!["openai:cli".to_string()]);
-    second.key_global_priority_by_format = Some(serde_json::json!({"openai:cli": 2}));
+    second.key_api_formats = Some(vec!["openai:responses".to_string()]);
+    second.key_global_priority_by_format = Some(serde_json::json!({"openai:responses": 2}));
 
     let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
         first, second,
@@ -1303,7 +1303,7 @@ async fn skips_oauth_invalid_candidate_before_local_auth_resolution() {
     let (selected, skipped) = collect_selectable_candidates_with_skip_reasons(
         state.data.as_ref(),
         &state,
-        "openai:cli",
+        "openai:responses",
         "gpt-4.1",
         false,
         None,
@@ -1326,11 +1326,11 @@ async fn keeps_request_failed_oauth_candidate_selectable() {
     row.provider_name = "codex".to_string();
     row.provider_type = "codex".to_string();
     row.endpoint_id = "endpoint-codex".to_string();
-    row.endpoint_api_format = "openai:cli".to_string();
+    row.endpoint_api_format = "openai:responses".to_string();
     row.key_id = "key-codex".to_string();
     row.key_name = "codex-check-failed".to_string();
     row.key_auth_type = "oauth".to_string();
-    row.key_api_formats = Some(vec!["openai:cli".to_string()]);
+    row.key_api_formats = Some(vec!["openai:responses".to_string()]);
 
     let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
         row,
@@ -1364,7 +1364,7 @@ async fn keeps_request_failed_oauth_candidate_selectable() {
     let (selected, skipped) = collect_selectable_candidates_with_skip_reasons(
         state.data.as_ref(),
         &state,
-        "openai:cli",
+        "openai:responses",
         "gpt-4.1",
         false,
         None,
@@ -1621,22 +1621,22 @@ async fn keeps_codex_candidate_selectable_when_exhausted_account_flag_is_disable
     first.provider_name = "codex".to_string();
     first.provider_type = "codex".to_string();
     first.endpoint_id = "endpoint-codex".to_string();
-    first.endpoint_api_format = "openai:cli".to_string();
+    first.endpoint_api_format = "openai:responses".to_string();
     first.key_id = "key-codex".to_string();
     first.key_name = "codex-exhausted".to_string();
     first.key_auth_type = "oauth".to_string();
-    first.key_api_formats = Some(vec!["openai:cli".to_string()]);
-    first.key_global_priority_by_format = Some(serde_json::json!({"openai:cli": 1}));
+    first.key_api_formats = Some(vec!["openai:responses".to_string()]);
+    first.key_global_priority_by_format = Some(serde_json::json!({"openai:responses": 1}));
 
     let mut second = sample_row();
     second.provider_id = "provider-openai".to_string();
     second.provider_name = "openai".to_string();
     second.endpoint_id = "endpoint-openai".to_string();
-    second.endpoint_api_format = "openai:cli".to_string();
+    second.endpoint_api_format = "openai:responses".to_string();
     second.key_id = "key-openai".to_string();
     second.key_name = "fallback".to_string();
-    second.key_api_formats = Some(vec!["openai:cli".to_string()]);
-    second.key_global_priority_by_format = Some(serde_json::json!({"openai:cli": 2}));
+    second.key_api_formats = Some(vec!["openai:responses".to_string()]);
+    second.key_global_priority_by_format = Some(serde_json::json!({"openai:responses": 2}));
 
     let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
         first, second,
@@ -1679,7 +1679,7 @@ async fn keeps_codex_candidate_selectable_when_exhausted_account_flag_is_disable
     let (selected, skipped) = collect_selectable_candidates_with_skip_reasons(
         state.data.as_ref(),
         &state,
-        "openai:cli",
+        "openai:responses",
         "gpt-4.1",
         false,
         None,

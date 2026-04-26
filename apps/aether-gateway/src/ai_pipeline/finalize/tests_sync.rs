@@ -1078,10 +1078,10 @@ fn converts_gemini_cli_inline_data_to_openai_responses_output_image() {
 }
 
 #[test]
-fn local_finalize_handles_openai_compact_cross_format_sync_response() {
+fn local_finalize_handles_openai_responses_compact_cross_format_sync_response() {
     let payload = GatewaySyncReportRequest {
         trace_id: "trace-compact-sync-123".to_string(),
-        report_kind: "openai_compact_sync_finalize".to_string(),
+        report_kind: "openai_responses_compact_sync_finalize".to_string(),
         report_context: Some(json!({
             "client_api_format": "openai:responses:compact",
             "provider_api_format": "gemini:cli",
@@ -1126,7 +1126,7 @@ fn local_finalize_handles_openai_compact_cross_format_sync_response() {
     let report = outcome
         .background_report
         .expect("compact cross-format should downgrade to success report");
-    assert_eq!(report.report_kind, "openai_responses_sync_success");
+    assert_eq!(report.report_kind, "openai_responses_compact_sync_success");
     assert_eq!(
         report.client_body_json.expect("client body should exist")["object"],
         "response"
@@ -1134,10 +1134,10 @@ fn local_finalize_handles_openai_compact_cross_format_sync_response() {
 }
 
 #[test]
-fn local_finalize_handles_openai_compact_cross_format_function_call_response() {
+fn local_finalize_handles_openai_responses_compact_cross_format_function_call_response() {
     let payload = GatewaySyncReportRequest {
         trace_id: "trace-compact-tool-123".to_string(),
-        report_kind: "openai_compact_sync_finalize".to_string(),
+        report_kind: "openai_responses_compact_sync_finalize".to_string(),
         report_context: Some(json!({
             "client_api_format": "openai:responses:compact",
             "provider_api_format": "gemini:cli",
@@ -1346,7 +1346,7 @@ fn local_finalize_handles_openai_responses_cross_format_stream_response_from_gem
 }
 
 #[test]
-fn local_finalize_handles_openai_compact_openai_family_stream_response_even_when_conversion_flagged(
+fn local_finalize_handles_openai_responses_compact_openai_family_stream_response_even_when_conversion_flagged(
 ) {
     let body = concat!(
         "event: response.completed\n",
@@ -1354,7 +1354,7 @@ fn local_finalize_handles_openai_compact_openai_family_stream_response_even_when
     );
     let payload = GatewaySyncReportRequest {
         trace_id: "trace-openai-compact-family-stream-123".to_string(),
-        report_kind: "openai_compact_sync_finalize".to_string(),
+        report_kind: "openai_responses_compact_sync_finalize".to_string(),
         report_context: Some(json!({
             "client_api_format": "openai:responses:compact",
             "provider_api_format": "openai:responses",
@@ -1382,7 +1382,7 @@ fn local_finalize_handles_openai_compact_openai_family_stream_response_even_when
     let report = outcome
         .background_report
         .expect("same-family stream finalize should downgrade to success report");
-    assert_eq!(report.report_kind, "openai_responses_sync_success");
+    assert_eq!(report.report_kind, "openai_responses_compact_sync_success");
     let provider_body = report.body_json.expect("provider body should exist");
     assert_eq!(provider_body["object"], "response");
     assert_eq!(provider_body["status"], "completed");

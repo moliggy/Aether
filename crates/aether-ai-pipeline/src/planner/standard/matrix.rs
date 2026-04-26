@@ -165,7 +165,7 @@ mod tests {
 
     const STANDARD_SURFACES: &[&str] = &[
         "openai:chat",
-        "openai:cli",
+        "openai:responses",
         "claude:chat",
         "claude:cli",
         "gemini:chat",
@@ -185,7 +185,7 @@ mod tests {
                 }),
                 "/v1/chat/completions",
             ),
-            "openai:cli" => (
+            "openai:responses" => (
                 json!({
                     "model": "source-model",
                     "instructions": "Be concise.",
@@ -227,7 +227,7 @@ mod tests {
 
     fn assert_stream_flag(provider_api_format: &str, upstream_is_stream: bool, converted: &Value) {
         match provider_api_format {
-            "openai:chat" | "openai:cli" | "claude:chat" | "claude:cli" => {
+            "openai:chat" | "openai:responses" | "claude:chat" | "claude:cli" => {
                 assert_eq!(
                     converted
                         .get("stream")
@@ -262,24 +262,24 @@ mod tests {
         ])
     }
 
-    fn legacy_openai_responses_alias_request_body(
+    fn legacy_openai_responses_request_body(
         request: &Value,
         provider_api_format: &str,
         upstream_is_stream: bool,
     ) -> Value {
         let chat_canonical = normalize_standard_request_to_openai_chat_request(
             request,
-            "openai:cli",
+            "openai:responses",
             "/v1/responses",
         )
-        .expect("legacy openai responses alias normalization should succeed");
+        .expect("legacy openai responses normalization should succeed");
         build_standard_request_body_from_canonical(
             &chat_canonical,
             "mapped-model",
             provider_api_format,
             upstream_is_stream,
         )
-        .expect("legacy openai responses alias target conversion should succeed")
+        .expect("legacy openai responses target conversion should succeed")
     }
 
     fn legacy_openai_chat_request_body(
@@ -430,7 +430,7 @@ mod tests {
             for upstream_is_stream in [false, true] {
                 let converted = build_standard_request_body(
                     &request,
-                    "openai:cli",
+                    "openai:responses",
                     "mapped-model",
                     "custom",
                     provider_api_format,
@@ -440,14 +440,14 @@ mod tests {
                     None,
                 )
                 .expect("typed canonical route should build");
-                let legacy = legacy_openai_responses_alias_request_body(
+                let legacy = legacy_openai_responses_request_body(
                     &request,
                     provider_api_format,
                     upstream_is_stream,
                 );
                 assert_eq!(
                     converted, legacy,
-                    "typed canonical openai:cli -> {provider_api_format} changed payload with upstream_is_stream={upstream_is_stream}"
+                    "typed canonical openai:responses -> {provider_api_format} changed payload with upstream_is_stream={upstream_is_stream}"
                 );
             }
         }
@@ -609,8 +609,8 @@ mod tests {
 
         for provider_api_format in [
             "openai:chat",
-            "openai:cli",
-            "openai:compact",
+            "openai:responses",
+            "openai:responses:compact",
             "gemini:chat",
             "gemini:cli",
         ] {
@@ -691,8 +691,8 @@ mod tests {
 
         for provider_api_format in [
             "openai:chat",
-            "openai:cli",
-            "openai:compact",
+            "openai:responses",
+            "openai:responses:compact",
             "claude:chat",
             "claude:cli",
         ] {
@@ -735,14 +735,14 @@ mod tests {
                 client_api_format,
                 "gpt-5.5",
                 "codex",
-                "openai:cli",
+                "openai:responses",
                 request_path,
                 true,
                 Some(&body_rules),
                 Some("key-1"),
             )
             .unwrap_or_else(|| {
-                panic!("{client_api_format} -> openai:cli should build with codex body rules")
+                panic!("{client_api_format} -> openai:responses should build with codex body rules")
             });
 
             assert_eq!(converted["model"], "gpt-5.5");
@@ -753,7 +753,7 @@ mod tests {
             assert!(converted.get("top_p").is_none());
             assert!(
                 converted.get("instructions").is_some(),
-                "{client_api_format} -> openai:cli should keep or inject instructions"
+                "{client_api_format} -> openai:responses should keep or inject instructions"
             );
         }
     }
@@ -932,7 +932,7 @@ mod tests {
 
         let converted = build_standard_request_body(
             &request,
-            "openai:cli",
+            "openai:responses",
             "gpt-5",
             "openai",
             "openai:chat",
