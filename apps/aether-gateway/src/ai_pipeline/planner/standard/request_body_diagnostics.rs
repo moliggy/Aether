@@ -71,11 +71,7 @@ fn diagnose_request_body_build_failure(
 }
 
 fn is_openai_responses_client_format(client_api_format: &str) -> bool {
-    let normalized = client_api_format.trim().to_ascii_lowercase();
-    matches!(
-        normalized.as_str(),
-        "openai:responses" | "openai:responses:compact" | "openai:cli" | "openai:compact"
-    )
+    crate::ai_pipeline::is_openai_responses_family_format(client_api_format)
 }
 
 fn diagnose_same_format_provider_request_body_failure(

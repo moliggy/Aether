@@ -90,10 +90,7 @@ pub(super) async fn maybe_handle(
     let endpoint = match normalized_provider_type.as_str() {
         "codex" => endpoints.into_iter().find(|endpoint| {
             endpoint.is_active
-                && matches!(
-                    endpoint.api_format.trim().to_ascii_lowercase().as_str(),
-                    "openai:responses" | "openai:cli"
-                )
+                && crate::ai_pipeline::is_openai_responses_format(&endpoint.api_format)
         }),
         "antigravity" => endpoints.into_iter().find(|endpoint| {
             endpoint.is_active

@@ -189,3 +189,8 @@ pub use crate::planner::standard::{
     CODEX_OPENAI_IMAGE_DEFAULT_VARIATION_MODEL, CODEX_OPENAI_IMAGE_DEFAULT_VARIATION_PROMPT,
     CODEX_OPENAI_IMAGE_INTERNAL_MODEL,
 };
+pub use aether_ai_formats::{
+    is_openai_responses_compact_format, is_openai_responses_family_format,
+    is_openai_responses_format, legacy_openai_format_alias_matches,
+    normalize_legacy_openai_format_alias, openai_format_storage_aliases,
+};

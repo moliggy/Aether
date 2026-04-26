@@ -12,10 +12,10 @@ pub(crate) fn models_api_format(request_context: &GatewayPublicRequestContext) -
         .and_then(|decision| decision.auth_endpoint_signature.as_deref())
         .map(str::trim)
         .filter(|signature| !signature.is_empty())?;
-    match signature.to_ascii_lowercase().as_str() {
+    match crate::ai_pipeline::normalize_legacy_openai_format_alias(signature).as_str() {
         "openai:chat" => Some("openai:chat"),
-        "openai:responses" | "openai:cli" => Some("openai:responses"),
-        "openai:responses:compact" | "openai:compact" => Some("openai:responses:compact"),
+        "openai:responses" => Some("openai:responses"),
+        "openai:responses:compact" => Some("openai:responses:compact"),
         "openai:image" => Some("openai:image"),
         "claude:chat" => Some("claude:chat"),
         "gemini:chat" => Some("gemini:chat"),
@@ -37,12 +37,10 @@ const MODELS_CROSS_FORMAT_QUERY_API_FORMATS: &[&str] = &[
 ];
 
 pub(super) fn models_query_api_formats(api_format: &str) -> &'static [&'static str] {
-    match api_format.trim().to_ascii_lowercase().as_str() {
+    match crate::ai_pipeline::normalize_legacy_openai_format_alias(api_format).as_str() {
         "openai:chat"
         | "openai:responses"
         | "openai:responses:compact"
-        | "openai:cli"
-        | "openai:compact"
         | "claude:chat"
         | "gemini:chat" => MODELS_CROSS_FORMAT_QUERY_API_FORMATS,
         "openai:image" => &["openai:image"],

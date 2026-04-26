@@ -60,17 +60,19 @@ pub fn build_transport_request_url(
         ));
     }
 
-    let url = match provider_api_format.as_str() {
+    let url = match aether_ai_formats::normalize_legacy_openai_format_alias(&provider_api_format)
+        .as_str()
+    {
         "openai:chat" => Some(build_openai_chat_url(
             &transport.endpoint.base_url,
             params.request_query,
         )),
-        "openai:responses" | "openai:cli" => Some(build_openai_responses_url(
+        "openai:responses" => Some(build_openai_responses_url(
             &transport.endpoint.base_url,
             params.request_query,
             false,
         )),
-        "openai:responses:compact" | "openai:compact" => Some(build_openai_responses_url(
+        "openai:responses:compact" => Some(build_openai_responses_url(
             &transport.endpoint.base_url,
             params.request_query,
             true,

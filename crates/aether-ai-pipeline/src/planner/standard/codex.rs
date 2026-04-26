@@ -27,21 +27,12 @@ const UUID_NAMESPACE_OID_BYTES: [u8; 16] = [
 
 fn is_codex_openai_responses_request(provider_type: &str, provider_api_format: &str) -> bool {
     provider_type.trim().eq_ignore_ascii_case("codex")
-        && matches!(
-            provider_api_format.trim().to_ascii_lowercase().as_str(),
-            "openai:responses"
-                | "openai:responses:compact"
-                | "openai:cli"
-                | "openai:compact"
-                | "openai:image"
-        )
+        && (aether_ai_formats::is_openai_responses_family_format(provider_api_format)
+            || is_openai_image_request(provider_api_format))
 }
 
 fn is_openai_responses_compact_request(provider_api_format: &str) -> bool {
-    matches!(
-        provider_api_format.trim().to_ascii_lowercase().as_str(),
-        "openai:responses:compact" | "openai:compact"
-    )
+    aether_ai_formats::is_openai_responses_compact_format(provider_api_format)
 }
 
 fn is_openai_image_request(provider_api_format: &str) -> bool {
@@ -413,10 +404,8 @@ pub fn apply_codex_openai_responses_special_headers(
         }
     }
 
-    if matches!(
-        provider_api_format.trim().to_ascii_lowercase().as_str(),
-        "openai:responses" | "openai:cli"
-    ) && !header_map_has_non_empty_value(original_headers, "conversation_id")
+    if aether_ai_formats::is_openai_responses_format(provider_api_format)
+        && !header_map_has_non_empty_value(original_headers, "conversation_id")
         && !btree_map_has_non_empty_value(provider_request_headers, "conversation_id")
     {
         if let Some(short_session_id) = short_session_id.as_deref() {

@@ -1,5 +1,9 @@
 #![allow(dead_code)]
 
+use aether_ai_formats::{
+    is_openai_responses_compact_format, legacy_openai_format_alias_matches,
+    normalize_legacy_openai_format_alias,
+};
 use aether_provider_transport::auth::{
     resolve_local_gemini_auth, resolve_local_openai_bearer_auth, resolve_local_standard_auth,
 };
@@ -52,27 +56,18 @@ pub fn request_candidate_api_format_preference(
     client_api_format: &str,
     provider_api_format: &str,
 ) -> Option<(u8, u8)> {
-    let client_api_format = client_api_format.trim().to_ascii_lowercase();
-    let provider_api_format = provider_api_format.trim().to_ascii_lowercase();
+    let client_api_format = normalize_legacy_openai_format_alias(client_api_format);
+    let provider_api_format = normalize_legacy_openai_format_alias(provider_api_format);
 
-    if matches!(
-        client_api_format.as_str(),
-        "openai:compact" | "openai:responses:compact"
-    ) {
-        return matches!(
-            provider_api_format.as_str(),
-            "openai:compact" | "openai:responses:compact"
-        )
-        .then_some((0, 0));
+    if client_api_format == "openai:responses:compact" {
+        return (provider_api_format == "openai:responses:compact").then_some((0, 0));
     }
 
     let (client_family, client_kind) =
         parse_non_compact_standard_api_format(client_api_format.as_str())?;
     let (provider_family, provider_kind) =
         parse_non_compact_standard_api_format(provider_api_format.as_str())?;
-    let preference_bucket = if canonical_standard_api_format(client_api_format.as_str())
-        == canonical_standard_api_format(provider_api_format.as_str())
-    {
+    let preference_bucket = if client_api_format == provider_api_format {
         0
     } else if client_kind == provider_kind {
         1
@@ -92,11 +87,8 @@ pub fn request_candidate_api_formats(
     client_api_format: &str,
     _require_streaming: bool,
 ) -> Vec<&'static str> {
-    let client_api_format = client_api_format.trim().to_ascii_lowercase();
-    if matches!(
-        client_api_format.as_str(),
-        "openai:compact" | "openai:responses:compact"
-    ) {
+    let client_api_format = normalize_legacy_openai_format_alias(client_api_format);
+    if client_api_format == "openai:responses:compact" {
         return vec!["openai:responses:compact"];
     }
     if parse_non_compact_standard_api_format(client_api_format.as_str()).is_none() {
@@ -115,13 +107,9 @@ pub fn request_conversion_kind(
     client_api_format: &str,
     provider_api_format: &str,
 ) -> Option<RequestConversionKind> {
-    let client_api_format = client_api_format.trim().to_ascii_lowercase();
-    let provider_api_format = provider_api_format.trim().to_ascii_lowercase();
+    let client_api_format = normalize_legacy_openai_format_alias(client_api_format);
+    let provider_api_format = normalize_legacy_openai_format_alias(provider_api_format);
     if client_api_format == provider_api_format {
-        return None;
-    }
-    if normalized_same_standard_api_format(client_api_format.as_str(), provider_api_format.as_str())
-    {
         return None;
     }
     if !is_standard_api_format(client_api_format.as_str())
@@ -129,19 +117,15 @@ pub fn request_conversion_kind(
     {
         return None;
     }
-    if matches!(
-        client_api_format.as_str(),
-        "openai:compact" | "openai:responses:compact"
-    ) || matches!(
-        provider_api_format.as_str(),
-        "openai:compact" | "openai:responses:compact"
-    ) {
+    if is_openai_responses_compact_format(client_api_format.as_str())
+        || is_openai_responses_compact_format(provider_api_format.as_str())
+    {
         return None;
     }
 
     match provider_api_format.as_str() {
         "openai:chat" => Some(RequestConversionKind::ToOpenAIChat),
-        "openai:responses" | "openai:cli" => Some(RequestConversionKind::ToOpenAiResponses),
+        "openai:responses" => Some(RequestConversionKind::ToOpenAiResponses),
         "claude:chat" | "claude:cli" => Some(RequestConversionKind::ToClaudeStandard),
         "gemini:chat" | "gemini:cli" => Some(RequestConversionKind::ToGeminiStandard),
         _ => None,
@@ -152,13 +136,9 @@ pub fn sync_chat_response_conversion_kind(
     provider_api_format: &str,
     client_api_format: &str,
 ) -> Option<SyncChatResponseConversionKind> {
-    let provider_api_format = provider_api_format.trim().to_ascii_lowercase();
-    let client_api_format = client_api_format.trim().to_ascii_lowercase();
+    let provider_api_format = normalize_legacy_openai_format_alias(provider_api_format);
+    let client_api_format = normalize_legacy_openai_format_alias(client_api_format);
     if provider_api_format == client_api_format {
-        return None;
-    }
-    if normalized_same_standard_api_format(provider_api_format.as_str(), client_api_format.as_str())
-    {
         return None;
     }
     if !is_standard_api_format(provider_api_format.as_str()) {
@@ -177,26 +157,19 @@ pub fn sync_cli_response_conversion_kind(
     provider_api_format: &str,
     client_api_format: &str,
 ) -> Option<SyncCliResponseConversionKind> {
-    let provider_api_format = provider_api_format.trim().to_ascii_lowercase();
-    let client_api_format = client_api_format.trim().to_ascii_lowercase();
+    let provider_api_format = normalize_legacy_openai_format_alias(provider_api_format);
+    let client_api_format = normalize_legacy_openai_format_alias(client_api_format);
     if provider_api_format == client_api_format {
-        return None;
-    }
-    if normalized_same_standard_api_format(provider_api_format.as_str(), client_api_format.as_str())
-    {
         return None;
     }
     if !is_standard_api_format(provider_api_format.as_str()) {
         return None;
     }
-    if !matches!(
-        client_api_format.as_str(),
-        "openai:compact" | "openai:responses:compact"
-    ) {
+    if !is_openai_responses_compact_format(client_api_format.as_str()) {
         request_conversion_kind(client_api_format.as_str(), provider_api_format.as_str())?;
     }
     match client_api_format.as_str() {
-        "openai:responses" | "openai:cli" | "openai:compact" | "openai:responses:compact" => {
+        "openai:responses" | "openai:responses:compact" => {
             Some(SyncCliResponseConversionKind::ToOpenAiResponses)
         }
         "claude:cli" => Some(SyncCliResponseConversionKind::ToClaudeCli),
@@ -209,8 +182,8 @@ pub fn request_conversion_requires_enable_flag(
     client_api_format: &str,
     provider_api_format: &str,
 ) -> bool {
-    let client_api_format = client_api_format.trim().to_ascii_lowercase();
-    let provider_api_format = provider_api_format.trim().to_ascii_lowercase();
+    let client_api_format = normalize_legacy_openai_format_alias(client_api_format);
+    let provider_api_format = normalize_legacy_openai_format_alias(provider_api_format);
     match (
         api_data_format_id(client_api_format.as_str()),
         api_data_format_id(provider_api_format.as_str()),
@@ -227,8 +200,8 @@ pub fn request_conversion_enabled_for_transport(
     client_api_format: &str,
     provider_api_format: &str,
 ) -> bool {
-    let client_api_format = client_api_format.trim().to_ascii_lowercase();
-    let provider_api_format = provider_api_format.trim().to_ascii_lowercase();
+    let client_api_format = normalize_legacy_openai_format_alias(client_api_format);
+    let provider_api_format = normalize_legacy_openai_format_alias(provider_api_format);
     if client_api_format == provider_api_format {
         return true;
     }
@@ -250,8 +223,8 @@ pub fn request_pair_allowed_for_transport(
     client_api_format: &str,
     provider_api_format: &str,
 ) -> bool {
-    let client_api_format = client_api_format.trim().to_ascii_lowercase();
-    let provider_api_format = provider_api_format.trim().to_ascii_lowercase();
+    let client_api_format = normalize_legacy_openai_format_alias(client_api_format);
+    let provider_api_format = normalize_legacy_openai_format_alias(provider_api_format);
     if client_api_format == provider_api_format {
         return true;
     }
@@ -304,15 +277,9 @@ pub fn request_conversion_transport_unsupported_reason(
         return local_kiro_request_transport_unsupported_reason_with_network(transport);
     }
 
-    match transport
-        .endpoint
-        .api_format
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
+    match normalize_legacy_openai_format_alias(&transport.endpoint.api_format).as_str() {
         "openai:chat" => local_openai_chat_transport_unsupported_reason(transport),
-        "openai:responses" | "openai:cli" | "openai:responses:compact" | "openai:compact" => {
+        "openai:responses" | "openai:responses:compact" => {
             local_standard_transport_unsupported_reason_with_network(
                 transport,
                 transport.endpoint.api_format.trim(),
@@ -341,18 +308,10 @@ pub fn request_conversion_direct_auth(
     transport: &GatewayProviderTransportSnapshot,
     _kind: RequestConversionKind,
 ) -> Option<(String, String)> {
-    match transport
-        .endpoint
-        .api_format
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "openai:chat"
-        | "openai:responses"
-        | "openai:cli"
-        | "openai:compact"
-        | "openai:responses:compact" => resolve_local_openai_bearer_auth(transport),
+    match normalize_legacy_openai_format_alias(&transport.endpoint.api_format).as_str() {
+        "openai:chat" | "openai:responses" | "openai:responses:compact" => {
+            resolve_local_openai_bearer_auth(transport)
+        }
         "gemini:chat" | "gemini:cli" => {
             if is_vertex_api_key_transport_context(transport) {
                 resolve_local_vertex_api_key_query_auth(transport)
@@ -368,11 +327,9 @@ pub fn request_conversion_direct_auth(
 
 fn is_standard_api_format(api_format: &str) -> bool {
     matches!(
-        api_format,
+        normalize_legacy_openai_format_alias(api_format).as_str(),
         "openai:chat"
             | "openai:responses"
-            | "openai:cli"
-            | "openai:compact"
             | "openai:responses:compact"
             | "claude:chat"
             | "claude:cli"
@@ -381,15 +338,16 @@ fn is_standard_api_format(api_format: &str) -> bool {
     )
 }
 
-fn parse_non_compact_standard_api_format(api_format: &str) -> Option<(&str, &str)> {
-    let (family, kind) = api_format.split_once(':')?;
-    if family == "openai" && kind == "responses" {
-        return Some((family, "cli"));
+fn parse_non_compact_standard_api_format(api_format: &str) -> Option<(&'static str, &'static str)> {
+    match normalize_legacy_openai_format_alias(api_format).as_str() {
+        "openai:chat" => Some(("openai", "chat")),
+        "openai:responses" => Some(("openai", "cli")),
+        "claude:chat" => Some(("claude", "chat")),
+        "claude:cli" => Some(("claude", "cli")),
+        "gemini:chat" => Some(("gemini", "chat")),
+        "gemini:cli" => Some(("gemini", "cli")),
+        _ => None,
     }
-    if !STANDARD_API_FAMILY_ORDER.contains(&family) || !matches!(kind, "chat" | "cli") {
-        return None;
-    }
-    Some((family, kind))
 }
 
 fn standard_api_family_priority(family: &str) -> u8 {
@@ -400,33 +358,17 @@ fn standard_api_family_priority(family: &str) -> u8 {
 }
 
 fn api_data_format_id(api_format: &str) -> Option<&'static str> {
-    match api_format {
+    match normalize_legacy_openai_format_alias(api_format).as_str() {
         "claude:chat" | "claude:cli" => Some("claude"),
         "gemini:chat" | "gemini:cli" => Some("gemini"),
         "openai:chat" => Some("openai_chat"),
-        "openai:responses" | "openai:cli" | "openai:compact" | "openai:responses:compact" => {
-            Some("openai_responses")
-        }
+        "openai:responses" | "openai:responses:compact" => Some("openai_responses"),
         _ => None,
     }
 }
 
 fn normalized_same_standard_api_format(left: &str, right: &str) -> bool {
-    matches!(
-        (left, right),
-        ("openai:responses", "openai:cli")
-            | ("openai:cli", "openai:responses")
-            | ("openai:responses:compact", "openai:compact")
-            | ("openai:compact", "openai:responses:compact")
-    )
-}
-
-fn canonical_standard_api_format(api_format: &str) -> &str {
-    match api_format {
-        "openai:cli" => "openai:responses",
-        "openai:compact" => "openai:responses:compact",
-        other => other,
-    }
+    legacy_openai_format_alias_matches(left, right)
 }
 
 fn endpoint_accepts_client_api_format(

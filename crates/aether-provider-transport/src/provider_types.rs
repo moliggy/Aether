@@ -181,15 +181,11 @@ pub fn fixed_provider_endpoint_template_by_api_format(
     provider_type: &str,
     api_format: &str,
 ) -> Option<&'static FixedProviderEndpointTemplate> {
-    let normalized = match api_format.trim().to_ascii_lowercase().as_str() {
-        "openai:cli" => "openai:responses",
-        "openai:compact" => "openai:responses:compact",
-        _ => api_format.trim(),
-    };
+    let normalized = aether_ai_formats::normalize_legacy_openai_format_alias(api_format);
     fixed_provider_template(provider_type)?
         .endpoints
         .iter()
-        .find(|item| item.api_format.eq_ignore_ascii_case(normalized))
+        .find(|item| item.api_format.eq_ignore_ascii_case(&normalized))
 }
 
 pub fn provider_type_supports_model_fetch(provider_type: &str) -> bool {

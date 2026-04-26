@@ -2686,3 +2686,41 @@ fn ai_pipeline_openai_responses_specs_are_owned_by_pipeline_crate() {
         );
     }
 }
+
+#[test]
+fn ai_pipeline_openai_cli_legacy_names_stay_out_of_primary_paths() {
+    for path in [
+        "crates/aether-ai-pipeline/src/contracts/plan_kinds.rs",
+        "crates/aether-ai-pipeline/src/planner/route.rs",
+        "crates/aether-ai-pipeline/src/planner/standard/openai_responses.rs",
+        "apps/aether-gateway/src/ai_pipeline/planner/decision/control_plan.rs",
+        "apps/aether-gateway/src/execution_runtime/fallback.rs",
+    ] {
+        let source = read_workspace_file(path);
+        for forbidden in [
+            "openai:cli",
+            "openai:compact",
+            "openai_cli_",
+            "openai_compact_",
+            "OPENAI_CLI",
+            "OPENAI_COMPACT",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} should not emit or branch on legacy OpenAI Responses aliases: {forbidden}"
+            );
+        }
+    }
+
+    let registry = read_workspace_file("crates/aether-ai-pipeline/src/conversion/registry.rs");
+    let implementation = registry
+        .split("#[cfg(test)]")
+        .next()
+        .expect("registry source should have an implementation section");
+    for forbidden in ["\"openai:cli\"", "\"openai:compact\""] {
+        assert!(
+            !implementation.contains(forbidden),
+            "conversion registry implementation should route legacy aliases through aether-ai-formats helpers: {forbidden}"
+        );
+    }
+}

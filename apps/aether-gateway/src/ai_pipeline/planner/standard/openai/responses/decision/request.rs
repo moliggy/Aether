@@ -162,10 +162,11 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
     let direct_auth = if kiro_auth.is_some() {
         None
     } else if same_format {
-        match provider_api_format {
+        match crate::ai_pipeline::normalize_legacy_openai_format_alias(provider_api_format).as_str()
+        {
             "gemini:cli" => resolve_local_gemini_auth(transport),
             "claude:cli" => resolve_local_standard_auth(transport),
-            "openai:responses" | "openai:responses:compact" | "openai:cli" | "openai:compact" => {
+            "openai:responses" | "openai:responses:compact" => {
                 resolve_local_openai_bearer_auth(transport)
             }
             _ => None,
@@ -535,15 +536,7 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
 }
 
 fn api_format_alias_matches(left: &str, right: &str) -> bool {
-    normalize_api_format_alias(left) == normalize_api_format_alias(right)
-}
-
-fn normalize_api_format_alias(value: &str) -> String {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "openai:cli" => "openai:responses".to_string(),
-        "openai:compact" => "openai:responses:compact".to_string(),
-        other => other.to_string(),
-    }
+    crate::ai_pipeline::legacy_openai_format_alias_matches(left, right)
 }
 
 #[allow(clippy::too_many_arguments)]

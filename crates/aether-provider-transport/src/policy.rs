@@ -200,13 +200,5 @@ fn local_same_format_transport_unsupported_reason(
 }
 
 fn same_api_format(left: &str, right: &str) -> bool {
-    normalize_api_format_alias(left) == normalize_api_format_alias(right)
-}
-
-fn normalize_api_format_alias(value: &str) -> String {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "openai:cli" => "openai:responses".to_string(),
-        "openai:compact" => "openai:responses:compact".to_string(),
-        other => other.to_string(),
-    }
+    aether_ai_formats::legacy_openai_format_alias_matches(left, right)
 }

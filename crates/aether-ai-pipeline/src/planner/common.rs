@@ -26,10 +26,7 @@ pub fn force_upstream_streaming_for_provider(
     provider_api_format: &str,
 ) -> bool {
     provider_type.trim().eq_ignore_ascii_case("codex")
-        && matches!(
-            provider_api_format.trim().to_ascii_lowercase().as_str(),
-            "openai:responses" | "openai:cli"
-        )
+        && aether_ai_formats::is_openai_responses_format(provider_api_format)
 }
 
 #[cfg(test)]

@@ -694,8 +694,19 @@ const STANDARD_ROUTING_API_FORMATS = [
   'gemini:cli'
 ]
 
-function apiDataFormatId(apiFormat: string): string | null {
+function normalizeLegacyOpenAIFormatAlias(apiFormat: string): string {
   switch (apiFormat.trim().toLowerCase()) {
+    case 'openai:cli':
+      return 'openai:responses'
+    case 'openai:compact':
+      return 'openai:responses:compact'
+    default:
+      return apiFormat.trim().toLowerCase()
+  }
+}
+
+function apiDataFormatId(apiFormat: string): string | null {
+  switch (normalizeLegacyOpenAIFormatAlias(apiFormat)) {
     case 'claude:chat':
     case 'claude:cli':
       return 'claude'
@@ -706,8 +717,6 @@ function apiDataFormatId(apiFormat: string): string | null {
       return 'openai_chat'
     case 'openai:responses':
     case 'openai:responses:compact':
-    case 'openai:cli':
-    case 'openai:compact':
       return 'openai_responses'
     default:
       return null
@@ -715,8 +724,8 @@ function apiDataFormatId(apiFormat: string): string | null {
 }
 
 function requestConversionKind(clientApiFormat: string, providerApiFormat: string): string | null {
-  const client = clientApiFormat.trim().toLowerCase()
-  const provider = providerApiFormat.trim().toLowerCase()
+  const client = normalizeLegacyOpenAIFormatAlias(clientApiFormat)
+  const provider = normalizeLegacyOpenAIFormatAlias(providerApiFormat)
   if (client === provider) return null
   if (!STANDARD_ROUTING_API_FORMATS.includes(client) || !STANDARD_ROUTING_API_FORMATS.includes(provider)) {
     return null
@@ -726,8 +735,6 @@ function requestConversionKind(clientApiFormat: string, providerApiFormat: strin
     case 'openai:chat':
       return 'to_openai_chat'
     case 'openai:responses':
-      return 'to_openai_responses'
-    case 'openai:cli':
       return 'to_openai_responses'
     case 'claude:chat':
     case 'claude:cli':

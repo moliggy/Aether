@@ -264,14 +264,8 @@ impl SqlxMinimalCandidateSelectionReadRepository {
     }
 }
 
-fn api_format_aliases(api_format: &str) -> Vec<&str> {
-    match api_format.trim().to_ascii_lowercase().as_str() {
-        "openai:responses" => vec!["openai:responses", "openai:cli"],
-        "openai:cli" => vec!["openai:responses", "openai:cli"],
-        "openai:responses:compact" => vec!["openai:responses:compact", "openai:compact"],
-        "openai:compact" => vec!["openai:responses:compact", "openai:compact"],
-        _ => vec![api_format],
-    }
+fn api_format_aliases(api_format: &str) -> Vec<String> {
+    aether_ai_formats::openai_format_storage_aliases(api_format)
 }
 
 fn dedupe_candidate_selection_rows(

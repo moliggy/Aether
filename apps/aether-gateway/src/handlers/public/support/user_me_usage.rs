@@ -209,17 +209,17 @@ fn users_me_usage_api_format_defaults_to_non_stream(item: &StoredRequestUsageAud
         .or(item.endpoint_api_format.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let Some(value) = api_format else {
+        return false;
+    };
     matches!(
-        api_format,
-        Some(value)
-            if value.eq_ignore_ascii_case("openai:chat")
-                || value.eq_ignore_ascii_case("openai:responses")
-                || value.eq_ignore_ascii_case("openai:responses:compact")
-                || value.eq_ignore_ascii_case("openai:cli")
-                || value.eq_ignore_ascii_case("openai:compact")
-                || value.eq_ignore_ascii_case("openai:image")
-                || value.eq_ignore_ascii_case("claude:chat")
-                || value.eq_ignore_ascii_case("claude:cli")
+        crate::ai_pipeline::normalize_legacy_openai_format_alias(value).as_str(),
+        "openai:chat"
+            | "openai:responses"
+            | "openai:responses:compact"
+            | "openai:image"
+            | "claude:chat"
+            | "claude:cli"
     )
 }
 

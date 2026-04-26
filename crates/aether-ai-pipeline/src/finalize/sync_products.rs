@@ -622,9 +622,9 @@ pub fn aggregate_standard_chat_stream_sync_response(
     body: &[u8],
     provider_api_format: &str,
 ) -> Option<Value> {
-    match provider_api_format.trim().to_ascii_lowercase().as_str() {
+    match aether_ai_formats::normalize_legacy_openai_format_alias(provider_api_format).as_str() {
         "openai:chat" => aggregate_openai_chat_stream_sync_response(body),
-        "openai:responses" | "openai:cli" | "openai:compact" | "openai:responses:compact" => {
+        "openai:responses" | "openai:responses:compact" => {
             aggregate_openai_responses_stream_sync_response(body)
         }
         "claude:chat" | "claude:cli" => aggregate_claude_stream_sync_response(body),
@@ -1255,11 +1255,7 @@ fn is_openai_responses_family_api_format(api_format: &str) -> bool {
 }
 
 fn normalize_openai_responses_family_api_format(api_format: &str) -> String {
-    match api_format.trim().to_ascii_lowercase().as_str() {
-        "openai:cli" => "openai:responses".to_string(),
-        "openai:compact" => "openai:responses:compact".to_string(),
-        other => other.to_string(),
-    }
+    aether_ai_formats::normalize_legacy_openai_format_alias(api_format)
 }
 
 fn parse_stream_json_events(body: &[u8]) -> Option<Vec<Value>> {

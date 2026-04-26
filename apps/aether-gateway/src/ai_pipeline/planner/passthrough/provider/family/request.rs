@@ -36,10 +36,14 @@ pub(crate) fn resolve_same_format_provider_transport_unsupported_reason_for_trac
     transport: &GatewayProviderTransportSnapshot,
     provider_api_format: &str,
 ) -> Option<&'static str> {
-    let provider_api_format = match provider_api_format.trim().to_ascii_lowercase().as_str() {
+    let provider_api_format = match crate::ai_pipeline::normalize_legacy_openai_format_alias(
+        provider_api_format,
+    )
+    .as_str()
+    {
         "openai:chat" => "openai:chat",
-        "openai:responses" | "openai:cli" => "openai:responses",
-        "openai:responses:compact" | "openai:compact" => "openai:responses:compact",
+        "openai:responses" => "openai:responses",
+        "openai:responses:compact" => "openai:responses:compact",
         "claude:chat" => "claude:chat",
         "claude:cli" => "claude:cli",
         "gemini:chat" => "gemini:chat",

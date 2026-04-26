@@ -253,11 +253,7 @@ pub fn extract_global_priority_for_format(
 }
 
 pub fn normalize_api_format(value: &str) -> String {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "openai:cli" => "openai:responses".to_string(),
-        "openai:compact" => "openai:responses:compact".to_string(),
-        other => other.to_string(),
-    }
+    aether_ai_formats::normalize_legacy_openai_format_alias(value)
 }
 
 fn row_has_candidate_model_name(

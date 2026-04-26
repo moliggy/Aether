@@ -458,15 +458,13 @@ fn aggregate_sync_sse_response_for_client(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    match api_format {
+    match api_format.map(crate::ai_pipeline::normalize_legacy_openai_format_alias) {
         Some(value) if value.eq_ignore_ascii_case("openai:chat") => {
             aggregate_openai_chat_stream_sync_response(body)
         }
         Some(value)
             if value.eq_ignore_ascii_case("openai:responses")
-                || value.eq_ignore_ascii_case("openai:responses:compact")
-                || value.eq_ignore_ascii_case("openai:cli")
-                || value.eq_ignore_ascii_case("openai:compact") =>
+                || value.eq_ignore_ascii_case("openai:responses:compact") =>
         {
             aggregate_openai_responses_stream_sync_response(body)
         }
@@ -531,18 +529,10 @@ fn resolve_affinity_forward_client_api_format(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    match api_format {
+    match api_format.map(crate::ai_pipeline::normalize_legacy_openai_format_alias) {
         Some(value) if value.eq_ignore_ascii_case("openai:chat") => Some("openai:chat"),
-        Some(value)
-            if value.eq_ignore_ascii_case("openai:responses")
-                || value.eq_ignore_ascii_case("openai:cli") =>
-        {
-            Some("openai:responses")
-        }
-        Some(value)
-            if value.eq_ignore_ascii_case("openai:responses:compact")
-                || value.eq_ignore_ascii_case("openai:compact") =>
-        {
+        Some(value) if value.eq_ignore_ascii_case("openai:responses") => Some("openai:responses"),
+        Some(value) if value.eq_ignore_ascii_case("openai:responses:compact") => {
             Some("openai:responses:compact")
         }
         Some(value) if value.eq_ignore_ascii_case("claude:chat") => Some("claude:chat"),

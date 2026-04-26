@@ -86,9 +86,50 @@ impl FromStr for FormatId {
     }
 }
 
+pub fn normalize_legacy_openai_format_alias(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "openai:cli" => "openai:responses".to_string(),
+        "openai:compact" => "openai:responses:compact".to_string(),
+        other => other.to_string(),
+    }
+}
+
+pub fn legacy_openai_format_alias_matches(left: &str, right: &str) -> bool {
+    normalize_legacy_openai_format_alias(left) == normalize_legacy_openai_format_alias(right)
+}
+
+pub fn openai_format_storage_aliases(value: &str) -> Vec<String> {
+    match normalize_legacy_openai_format_alias(value).as_str() {
+        "openai:responses" => vec!["openai:responses".to_string(), "openai:cli".to_string()],
+        "openai:responses:compact" => vec![
+            "openai:responses:compact".to_string(),
+            "openai:compact".to_string(),
+        ],
+        normalized => vec![normalized.to_string()],
+    }
+}
+
+pub fn is_openai_responses_format(value: &str) -> bool {
+    normalize_legacy_openai_format_alias(value) == "openai:responses"
+}
+
+pub fn is_openai_responses_compact_format(value: &str) -> bool {
+    normalize_legacy_openai_format_alias(value) == "openai:responses:compact"
+}
+
+pub fn is_openai_responses_family_format(value: &str) -> bool {
+    matches!(
+        normalize_legacy_openai_format_alias(value).as_str(),
+        "openai:responses" | "openai:responses:compact"
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::FormatId;
+    use super::{
+        legacy_openai_format_alias_matches, normalize_legacy_openai_format_alias,
+        openai_format_storage_aliases, FormatId,
+    };
 
     #[test]
     fn normalizes_legacy_aliases() {
@@ -107,6 +148,45 @@ mod tests {
         assert_eq!(
             FormatId::parse("gemini:chat"),
             Some(FormatId::GeminiGenerateContent)
+        );
+    }
+
+    #[test]
+    fn normalizes_openai_legacy_aliases_without_rewriting_other_families() {
+        assert_eq!(
+            normalize_legacy_openai_format_alias(" openai:cli "),
+            "openai:responses"
+        );
+        assert_eq!(
+            normalize_legacy_openai_format_alias("OPENAI:COMPACT"),
+            "openai:responses:compact"
+        );
+        assert_eq!(
+            normalize_legacy_openai_format_alias("claude:cli"),
+            "claude:cli"
+        );
+        assert!(legacy_openai_format_alias_matches(
+            "openai:cli",
+            "openai:responses"
+        ));
+    }
+
+    #[test]
+    fn storage_aliases_include_legacy_openai_rows_only() {
+        assert_eq!(
+            openai_format_storage_aliases("openai:responses"),
+            vec!["openai:responses".to_string(), "openai:cli".to_string()]
+        );
+        assert_eq!(
+            openai_format_storage_aliases("openai:compact"),
+            vec![
+                "openai:responses:compact".to_string(),
+                "openai:compact".to_string()
+            ]
+        );
+        assert_eq!(
+            openai_format_storage_aliases("claude:cli"),
+            vec!["claude:cli".to_string()]
         );
     }
 }

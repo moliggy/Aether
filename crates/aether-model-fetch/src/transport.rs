@@ -381,14 +381,12 @@ fn apply_fetch_header_rules(
 }
 
 fn standard_models_fetch_headers(api_format: &str) -> BTreeMap<String, String> {
-    let api_format = api_format.trim().to_ascii_lowercase();
+    let api_format = aether_ai_formats::normalize_legacy_openai_format_alias(api_format);
     match api_format.as_str() {
-        "openai:responses" | "openai:responses:compact" | "openai:cli" | "openai:compact" => {
-            BTreeMap::from([(
-                "user-agent".to_string(),
-                OPENAI_RESPONSES_USER_AGENT.to_string(),
-            )])
-        }
+        "openai:responses" | "openai:responses:compact" => BTreeMap::from([(
+            "user-agent".to_string(),
+            OPENAI_RESPONSES_USER_AGENT.to_string(),
+        )]),
         "claude:chat" => BTreeMap::from([(
             "anthropic-version".to_string(),
             CLAUDE_VERSION_HEADER.to_string(),

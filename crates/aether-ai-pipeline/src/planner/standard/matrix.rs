@@ -67,28 +67,24 @@ pub fn build_standard_request_body_from_canonical(
     provider_api_format: &str,
     upstream_is_stream: bool,
 ) -> Option<Value> {
-    match provider_api_format.trim().to_ascii_lowercase().as_str() {
+    match aether_ai_formats::normalize_legacy_openai_format_alias(provider_api_format).as_str() {
         "openai:chat" => build_local_openai_chat_request_body(
             canonical_request,
             mapped_model,
             upstream_is_stream,
         ),
-        "openai:responses" | "openai:cli" => {
-            convert_openai_chat_request_to_openai_responses_request(
-                canonical_request,
-                mapped_model,
-                upstream_is_stream,
-                false,
-            )
-        }
-        "openai:responses:compact" | "openai:compact" => {
-            convert_openai_chat_request_to_openai_responses_request(
-                canonical_request,
-                mapped_model,
-                false,
-                true,
-            )
-        }
+        "openai:responses" => convert_openai_chat_request_to_openai_responses_request(
+            canonical_request,
+            mapped_model,
+            upstream_is_stream,
+            false,
+        ),
+        "openai:responses:compact" => convert_openai_chat_request_to_openai_responses_request(
+            canonical_request,
+            mapped_model,
+            false,
+            true,
+        ),
         "claude:chat" | "claude:cli" => convert_openai_chat_request_to_claude_request(
             canonical_request,
             mapped_model,
@@ -121,9 +117,9 @@ fn normalize_standard_request_to_openai_chat_request_cow<'a>(
     client_api_format: &str,
     request_path: &str,
 ) -> Option<Cow<'a, Value>> {
-    match client_api_format.trim().to_ascii_lowercase().as_str() {
+    match aether_ai_formats::normalize_legacy_openai_format_alias(client_api_format).as_str() {
         "openai:chat" => Some(Cow::Borrowed(body_json)),
-        "openai:responses" | "openai:cli" | "openai:responses:compact" | "openai:compact" => {
+        "openai:responses" | "openai:responses:compact" => {
             normalize_openai_responses_request_to_openai_chat_request(body_json).map(Cow::Owned)
         }
         "claude:chat" | "claude:cli" => {

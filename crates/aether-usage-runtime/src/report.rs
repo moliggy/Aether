@@ -121,18 +121,18 @@ pub fn infer_internal_finalize_signature(payload: &GatewaySyncReportRequest) -> 
 }
 
 pub fn resolve_internal_finalize_route(signature: &str) -> Option<InternalFinalizeRoute> {
-    match signature {
+    match aether_ai_formats::normalize_legacy_openai_format_alias(signature).as_str() {
         "openai:chat" => Some(InternalFinalizeRoute {
             public_path: "/v1/chat/completions",
             route_family: "openai",
             route_kind: "chat",
         }),
-        "openai:responses" | "openai:cli" => Some(InternalFinalizeRoute {
+        "openai:responses" => Some(InternalFinalizeRoute {
             public_path: "/v1/responses",
             route_family: "openai",
             route_kind: "responses",
         }),
-        "openai:responses:compact" | "openai:compact" => Some(InternalFinalizeRoute {
+        "openai:responses:compact" => Some(InternalFinalizeRoute {
             public_path: "/v1/responses/compact",
             route_family: "openai",
             route_kind: "responses:compact",
