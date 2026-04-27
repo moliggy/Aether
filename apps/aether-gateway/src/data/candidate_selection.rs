@@ -1,9 +1,9 @@
 use aether_data::DataLayerError;
 use aether_data_contracts::repository::candidate_selection::StoredMinimalCandidateSelectionRow;
 use aether_scheduler_core::{
-    auth_constraints_allow_api_format, build_ranked_minimal_candidate_selection,
-    collect_global_model_names_for_required_capability, enumerate_minimal_candidate_selection,
-    normalize_api_format, resolve_requested_global_model_name, row_supports_requested_model,
+    auth_constraints_allow_api_format, collect_global_model_names_for_required_capability,
+    enumerate_minimal_candidate_selection, normalize_api_format,
+    resolve_requested_global_model_name, row_supports_requested_model,
     BuildMinimalCandidateSelectionInput, SchedulerAuthConstraints,
     SchedulerMinimalCandidateSelectionCandidate, SchedulerPriorityMode,
 };
@@ -49,129 +49,6 @@ pub(crate) async fn read_requested_model_rows(
     };
 
     Ok(Some((resolved_global_model_name, rows)))
-}
-
-pub(crate) async fn read_ranked_minimal_candidate_selection(
-    state: &(impl MinimalCandidateSelectionRowSource + Sync),
-    api_format: &str,
-    requested_model_name: &str,
-    require_streaming: bool,
-    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
-) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
-    read_ranked_minimal_candidate_selection_with_priority_mode(
-        state,
-        api_format,
-        requested_model_name,
-        require_streaming,
-        auth_snapshot,
-        SchedulerPriorityMode::Provider,
-    )
-    .await
-}
-
-pub(crate) async fn read_ranked_minimal_candidate_selection_with_priority_mode(
-    state: &(impl MinimalCandidateSelectionRowSource + Sync),
-    api_format: &str,
-    requested_model_name: &str,
-    require_streaming: bool,
-    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
-    priority_mode: SchedulerPriorityMode,
-) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
-    read_ranked_minimal_candidate_selection_with_priority_mode_and_affinity_key(
-        state,
-        api_format,
-        requested_model_name,
-        require_streaming,
-        auth_snapshot,
-        priority_mode,
-        auth_snapshot_affinity_key(auth_snapshot),
-    )
-    .await
-}
-
-pub(crate) async fn read_ranked_minimal_candidate_selection_with_priority_mode_and_required_capabilities(
-    state: &(impl MinimalCandidateSelectionRowSource + Sync),
-    api_format: &str,
-    requested_model_name: &str,
-    require_streaming: bool,
-    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
-    priority_mode: SchedulerPriorityMode,
-    required_capabilities: Option<&serde_json::Value>,
-) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
-    read_ranked_minimal_candidate_selection_with_priority_mode_and_affinity_key_and_required_capabilities(
-        state,
-        api_format,
-        requested_model_name,
-        require_streaming,
-        auth_snapshot,
-        priority_mode,
-        auth_snapshot_affinity_key(auth_snapshot),
-        required_capabilities,
-    )
-    .await
-}
-
-pub(crate) async fn read_ranked_minimal_candidate_selection_with_priority_mode_and_affinity_key(
-    state: &(impl MinimalCandidateSelectionRowSource + Sync),
-    api_format: &str,
-    requested_model_name: &str,
-    require_streaming: bool,
-    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
-    priority_mode: SchedulerPriorityMode,
-    affinity_key: Option<&str>,
-) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
-    read_ranked_minimal_candidate_selection_with_priority_mode_and_affinity_key_and_required_capabilities(
-        state,
-        api_format,
-        requested_model_name,
-        require_streaming,
-        auth_snapshot,
-        priority_mode,
-        affinity_key,
-        None,
-    )
-    .await
-}
-
-pub(crate) async fn read_ranked_minimal_candidate_selection_with_priority_mode_and_affinity_key_and_required_capabilities(
-    state: &(impl MinimalCandidateSelectionRowSource + Sync),
-    api_format: &str,
-    requested_model_name: &str,
-    require_streaming: bool,
-    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
-    priority_mode: SchedulerPriorityMode,
-    affinity_key: Option<&str>,
-    required_capabilities: Option<&serde_json::Value>,
-) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
-    let normalized_api_format = normalize_api_format(api_format);
-    if normalized_api_format.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if !auth_constraints_allow_api_format(
-        auth_snapshot.map(auth_snapshot_constraints).as_ref(),
-        &normalized_api_format,
-    ) {
-        return Ok(Vec::new());
-    }
-
-    let Some((resolved_global_model_name, rows)) =
-        read_requested_model_rows(state, &normalized_api_format, requested_model_name).await?
-    else {
-        return Ok(Vec::new());
-    };
-    let auth_constraints = auth_snapshot.map(auth_snapshot_constraints);
-    build_ranked_minimal_candidate_selection(BuildMinimalCandidateSelectionInput {
-        rows,
-        normalized_api_format: &normalized_api_format,
-        requested_model_name,
-        resolved_global_model_name: resolved_global_model_name.as_str(),
-        require_streaming,
-        required_capabilities,
-        auth_constraints: auth_constraints.as_ref(),
-        affinity_key,
-        priority_mode,
-    })
 }
 
 pub(crate) async fn enumerate_minimal_candidate_selection_with_required_capabilities(

@@ -9,12 +9,15 @@ use aether_data_contracts::repository::candidate_selection::StoredProviderModelM
 use aether_data_contracts::repository::candidates::{
     RequestCandidateStatus, StoredRequestCandidate,
 };
-use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
+use aether_scheduler_core::{
+    build_ranked_minimal_candidate_selection, BuildMinimalCandidateSelectionInput,
+    SchedulerMinimalCandidateSelectionCandidate, SchedulerPriorityMode,
+};
 
 use crate::cache::SchedulerAffinityTarget;
 use crate::data::auth::GatewayAuthApiKeySnapshot;
 use crate::data::candidate_selection::{
-    read_ranked_minimal_candidate_selection, MinimalCandidateSelectionRowSource,
+    read_requested_model_rows, MinimalCandidateSelectionRowSource,
 };
 use crate::data::GatewayDataState;
 use crate::{AppState, GatewayError};
@@ -86,14 +89,22 @@ async fn same_priority_candidates_are_distributed_by_affinity_key() {
     let state = GatewayDataState::with_candidate_selection_and_quota_for_tests(candidates, quotas);
     let auth_snapshot = sample_auth_snapshot("affinity-key-1");
 
-    let selection = read_ranked_minimal_candidate_selection(
-        &state,
-        "openai:chat",
-        "gpt-4.1",
-        false,
-        Some(&auth_snapshot),
-    )
-    .await
+    let (_resolved_global_model_name, rows) =
+        read_requested_model_rows(&state, "openai:chat", "gpt-4.1")
+            .await
+            .expect("selection rows should read")
+            .expect("selection rows should match requested model");
+    let selection = build_ranked_minimal_candidate_selection(BuildMinimalCandidateSelectionInput {
+        rows,
+        normalized_api_format: "openai:chat",
+        requested_model_name: "gpt-4.1",
+        resolved_global_model_name: "gpt-4.1",
+        require_streaming: false,
+        required_capabilities: None,
+        auth_constraints: None,
+        affinity_key: Some(auth_snapshot.api_key_id.as_str()),
+        priority_mode: SchedulerPriorityMode::Provider,
+    })
     .expect("selection should succeed");
 
     assert_eq!(selection.len(), 2);

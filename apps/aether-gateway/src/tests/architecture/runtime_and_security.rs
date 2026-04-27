@@ -558,9 +558,10 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
         "data/candidate_selection.rs should host requested-model row lookup"
     );
     assert!(
-        candidate_selection
-            .contains("pub(crate) async fn read_ranked_minimal_candidate_selection("),
-        "data/candidate_selection.rs should host ranked minimal candidate selection builder"
+        candidate_selection.contains(
+            "pub(crate) async fn enumerate_minimal_candidate_selection_with_required_capabilities(",
+        ),
+        "data/candidate_selection.rs should host minimal candidate enumeration builder"
     );
     assert!(
         candidate_selection
@@ -572,8 +573,12 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
         "data/candidate_selection.rs should depend on core requested-model resolver"
     );
     assert!(
-        candidate_selection.contains("build_ranked_minimal_candidate_selection"),
-        "data/candidate_selection.rs should depend on core ranked minimal candidate builder"
+        !candidate_selection.contains("read_ranked_minimal_candidate_selection"),
+        "data/candidate_selection.rs should not host ranked candidate selection compatibility readers"
+    );
+    assert!(
+        !candidate_selection.contains("build_ranked_minimal_candidate_selection"),
+        "data/candidate_selection.rs should not depend on core ranked minimal candidate builder"
     );
     assert!(
         candidate_selection.contains("collect_global_model_names_for_required_capability"),
