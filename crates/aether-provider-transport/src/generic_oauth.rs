@@ -126,14 +126,35 @@ impl GenericOAuthRefreshAdapter {
             .cloned()
     }
 
+    fn auth_config_updated_at(auth_config: &Value) -> Option<u64> {
+        auth_config
+            .as_object()
+            .and_then(|object| object.get("updated_at"))
+            .and_then(|value| parse_u64_value(Some(value)))
+    }
+
     fn base_auth_config(
         &self,
         transport: &GatewayProviderTransportSnapshot,
         entry: Option<&CachedOAuthEntry>,
     ) -> Option<Value> {
-        entry
-            .and_then(|cached| Self::auth_config_from_entry(transport, cached))
-            .or_else(|| Self::auth_config_from_transport(transport))
+        let cached = entry.and_then(|cached| Self::auth_config_from_entry(transport, cached));
+        let transport_auth = Self::auth_config_from_transport(transport);
+
+        match (cached, transport_auth) {
+            (Some(cached), Some(transport_auth)) => {
+                let cached_updated_at = Self::auth_config_updated_at(&cached);
+                let transport_updated_at = Self::auth_config_updated_at(&transport_auth);
+                if transport_updated_at > cached_updated_at {
+                    Some(transport_auth)
+                } else {
+                    Some(cached)
+                }
+            }
+            (Some(cached), None) => Some(cached),
+            (None, Some(transport_auth)) => Some(transport_auth),
+            (None, None) => None,
+        }
     }
 
     fn resolve_direct_header(
@@ -257,18 +278,28 @@ impl LocalOAuthRefreshAdapter for GenericOAuthRefreshAdapter {
         else {
             return Ok(None);
         };
-        let (base_auth_config_source, base_auth_config) = if let Some(value) =
-            entry.and_then(|cached| Self::auth_config_from_entry(transport, cached))
-        {
-            ("cached_entry", Some(value))
-        } else {
-            let value = Self::auth_config_from_transport(transport);
-            let source = if value.is_some() {
+        let cached_auth_config = entry.and_then(|cached| Self::auth_config_from_entry(transport, cached));
+        let transport_auth_config = Self::auth_config_from_transport(transport);
+        let base_auth_config = self.base_auth_config(transport, entry);
+        let base_auth_config_source = match (
+            base_auth_config.as_ref(),
+            cached_auth_config.as_ref(),
+            transport_auth_config.as_ref(),
+        ) {
+            (Some(selected), Some(cached), Some(transport_auth))
+                if selected == transport_auth && selected != cached =>
+            {
                 "transport_auth_config"
-            } else {
-                "none"
-            };
-            (source, value)
+            }
+            (Some(selected), Some(cached), Some(transport_auth))
+                if selected == cached && selected != transport_auth =>
+            {
+                "cached_entry"
+            }
+            (Some(_), Some(_), Some(_)) => "cached_entry",
+            (Some(_), Some(_), None) => "cached_entry",
+            (Some(_), None, Some(_)) => "transport_auth_config",
+            _ => "none",
         };
         let mut metadata = base_auth_config
             .and_then(|value| value.as_object().cloned())

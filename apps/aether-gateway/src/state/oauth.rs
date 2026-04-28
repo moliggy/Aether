@@ -491,7 +491,7 @@ impl AppState {
         );
     }
 
-    async fn read_provider_transport_snapshot_uncached(
+    pub(crate) async fn read_provider_transport_snapshot_uncached(
         &self,
         provider_id: &str,
         endpoint_id: &str,
@@ -892,6 +892,16 @@ impl AppState {
                         error = ?err,
                         "gateway local oauth refresh persistence failed"
                     );
+                    let _ = self
+                        .invalidate_local_oauth_refresh_entry(&current_transport.key.id)
+                        .await;
+                } else {
+                    self.oauth_refresh
+                        .store_cached_entry(
+                            current_transport.key.id.trim(),
+                            refreshed_entry.clone(),
+                        )
+                        .await;
                 }
             }
 
@@ -977,7 +987,17 @@ impl AppState {
                         error = ?err,
                         "gateway manual oauth refresh persistence failed"
                     );
+                    let _ = self
+                        .invalidate_local_oauth_refresh_entry(&current_transport.key.id)
+                        .await;
+                    return Err(provider_transport::LocalOAuthRefreshError::InvalidResponse {
+                        provider_type: "gateway",
+                        message: format!("local oauth refresh persistence failed: {err:?}"),
+                    });
                 }
+                self.oauth_refresh
+                    .store_cached_entry(current_transport.key.id.trim(), refreshed_entry.clone())
+                    .await;
                 return Ok(Some(refreshed_entry.clone()));
             }
 

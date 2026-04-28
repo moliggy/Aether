@@ -231,6 +231,10 @@ impl LocalOAuthRefreshCoordinator {
         self.cache.lock().await.insert(key_id.to_string(), entry);
     }
 
+    pub async fn store_cached_entry(&self, key_id: &str, entry: CachedOAuthEntry) {
+        self.insert_cached_entry(key_id, entry).await;
+    }
+
     pub async fn invalidate_cached_entry(&self, key_id: &str) -> bool {
         self.cache.lock().await.remove(key_id).is_some()
     }
@@ -374,8 +378,6 @@ impl LocalOAuthRefreshCoordinator {
         let Some(refreshed_entry) = refresh_result? else {
             return Ok(None);
         };
-        self.insert_cached_entry(key_id, refreshed_entry.clone())
-            .await;
         Ok(adapter
             .resolve_cached(transport, &refreshed_entry)
             .map(|auth| LocalOAuthResolution::resolved(auth, Some(refreshed_entry))))
@@ -567,6 +569,15 @@ mod tests {
             .resolve_with_result(&executor, &transport, None, None)
             .await
             .expect("first resolve should succeed");
+        coordinator
+            .insert_cached_entry(
+                transport.key.id.as_str(),
+                first
+                    .as_ref()
+                    .and_then(|result| result.refreshed_entry.clone())
+                    .expect("first resolve should provide cached entry"),
+            )
+            .await;
         let second = coordinator
             .resolve_with_result(&executor, &transport, None, None)
             .await
@@ -619,6 +630,15 @@ mod tests {
             .resolve_with_result(&executor, &transport, None, None)
             .await
             .expect("initial resolve should succeed");
+        coordinator
+            .insert_cached_entry(
+                transport.key.id.as_str(),
+                first
+                    .as_ref()
+                    .and_then(|result| result.refreshed_entry.clone())
+                    .expect("first resolve should provide cached entry"),
+            )
+            .await;
         let forced = coordinator
             .force_refresh_with_result(&executor, &transport, None, None)
             .await
@@ -627,6 +647,6 @@ mod tests {
         assert!(first.and_then(|result| result.refreshed_entry).is_some());
         assert!(forced.and_then(|result| result.refreshed_entry).is_some());
         assert_eq!(refresh_hits.load(Ordering::SeqCst), 2);
-        assert_eq!(refresh_with_entry_hits.load(Ordering::SeqCst), 0);
+        assert_eq!(refresh_with_entry_hits.load(Ordering::SeqCst), 1);
     }
 }
