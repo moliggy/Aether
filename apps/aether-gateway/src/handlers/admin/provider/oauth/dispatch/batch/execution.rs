@@ -1,3 +1,4 @@
+use super::super::token_import::build_codex_access_token_import_auth_config;
 use super::kiro_import::execute_admin_provider_oauth_kiro_batch_import;
 use super::parse::{
     apply_admin_provider_oauth_batch_import_hints, extract_admin_provider_oauth_batch_error_detail,
@@ -22,11 +23,18 @@ use crate::handlers::admin::provider::oauth::state::{
     admin_provider_oauth_template, exchange_admin_provider_oauth_refresh_token,
 };
 use crate::handlers::admin::provider::shared::support::ADMIN_PROVIDER_OAUTH_DATA_UNAVAILABLE_DETAIL;
-use crate::handlers::admin::request::AdminAppState;
+use crate::handlers::admin::request::{AdminAppState, AdminProviderOAuthTemplate};
 use crate::GatewayError;
 use aether_admin::provider::oauth::parse_admin_provider_oauth_kiro_batch_import_entries;
-use serde_json::json;
+use aether_contracts::ProxySnapshot;
+use serde_json::{json, Map, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+struct AdminProviderOAuthResolvedBatchImport {
+    access_token: String,
+    auth_config: Map<String, Value>,
+    expires_at: Option<u64>,
+}
 
 pub(super) fn estimate_admin_provider_oauth_batch_import_total(
     provider_type: &str,
@@ -68,6 +76,90 @@ pub(super) async fn execute_admin_provider_oauth_batch_import_for_provider_type(
         )
         .await
     }
+}
+
+async fn resolve_admin_provider_oauth_batch_import_tokens(
+    state: &AdminAppState<'_>,
+    template: AdminProviderOAuthTemplate,
+    provider_type: &str,
+    entry: &AdminProviderOAuthBatchImportEntry,
+    request_proxy: Option<ProxySnapshot>,
+) -> Result<AdminProviderOAuthResolvedBatchImport, String> {
+    let refresh_token = entry
+        .refresh_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let access_token = entry
+        .access_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if let Some(refresh_token) = refresh_token {
+        let token_payload = match exchange_admin_provider_oauth_refresh_token(
+            state,
+            template,
+            refresh_token,
+            request_proxy.clone(),
+        )
+        .await
+        {
+            Ok(payload) => payload,
+            Err(response) => {
+                let detail = extract_admin_provider_oauth_batch_error_detail(response).await;
+                if provider_type.eq_ignore_ascii_case("codex") {
+                    if let Some(access_token) = access_token {
+                        let (auth_config, expires_at) = build_codex_access_token_import_auth_config(
+                            access_token,
+                            Some(refresh_token),
+                            entry.expires_at,
+                            Some(detail.as_str()),
+                        );
+                        return Ok(AdminProviderOAuthResolvedBatchImport {
+                            access_token: access_token.to_string(),
+                            auth_config,
+                            expires_at,
+                        });
+                    }
+                }
+                return Err(format!("Token 验证失败: {detail}"));
+            }
+        };
+
+        let (mut auth_config, access_token, returned_refresh_token, expires_at) =
+            build_provider_oauth_auth_config_from_token_payload(provider_type, &token_payload);
+        let Some(access_token) = access_token else {
+            return Err("Token 刷新返回缺少 access_token".to_string());
+        };
+
+        let refresh_token = returned_refresh_token
+            .or_else(|| Some(refresh_token.to_string()))
+            .filter(|value| !value.trim().is_empty());
+        if let Some(refresh_token) = refresh_token.as_ref() {
+            auth_config.insert("refresh_token".to_string(), json!(refresh_token));
+        }
+        return Ok(AdminProviderOAuthResolvedBatchImport {
+            access_token,
+            auth_config,
+            expires_at,
+        });
+    }
+
+    if let Some(access_token) = access_token {
+        if !provider_type.eq_ignore_ascii_case("codex") {
+            return Err("Access Token 导入仅支持 Codex Provider".to_string());
+        }
+        let (auth_config, expires_at) =
+            build_codex_access_token_import_auth_config(access_token, None, entry.expires_at, None);
+        return Ok(AdminProviderOAuthResolvedBatchImport {
+            access_token: access_token.to_string(),
+            auth_config,
+            expires_at,
+        });
+    }
+
+    Err("Refresh Token 或 Access Token 不能为空".to_string())
 }
 
 pub(super) async fn execute_admin_provider_oauth_batch_import(
@@ -145,24 +237,22 @@ pub(super) async fn execute_admin_provider_oauth_batch_import(
     let mut failed = 0usize;
 
     for (index, entry) in entries.iter().enumerate() {
-        let token_payload = match exchange_admin_provider_oauth_refresh_token(
+        let resolved_import = match resolve_admin_provider_oauth_batch_import_tokens(
             state,
             template,
-            entry.refresh_token.as_str(),
+            provider_type,
+            entry,
             request_proxy.clone(),
         )
         .await
         {
-            Ok(payload) => payload,
-            Err(response) => {
+            Ok(value) => value,
+            Err(error) => {
                 failed += 1;
                 results.push(json!({
                     "index": index,
                     "status": "error",
-                    "error": format!(
-                        "Token 验证失败: {}",
-                        extract_admin_provider_oauth_batch_error_detail(response).await
-                    ),
+                    "error": error,
                     "replaced": false,
                 }));
                 maybe_report_admin_provider_oauth_batch_import_progress(
@@ -176,34 +266,11 @@ pub(super) async fn execute_admin_provider_oauth_batch_import(
                 continue;
             }
         };
-
-        let (mut auth_config, access_token, returned_refresh_token, expires_at) =
-            build_provider_oauth_auth_config_from_token_payload(provider_type, &token_payload);
-        let Some(access_token) = access_token else {
-            failed += 1;
-            results.push(json!({
-                "index": index,
-                "status": "error",
-                "error": "Token 刷新返回缺少 access_token",
-                "replaced": false,
-            }));
-            maybe_report_admin_provider_oauth_batch_import_progress(
-                &mut progress,
-                entries.len(),
-                success,
-                failed,
-                &results,
-            )
-            .await;
-            continue;
-        };
-
-        let refresh_token = returned_refresh_token
-            .or_else(|| Some(entry.refresh_token.clone()))
-            .filter(|value| !value.trim().is_empty());
-        if let Some(refresh_token) = refresh_token.as_ref() {
-            auth_config.insert("refresh_token".to_string(), json!(refresh_token));
-        }
+        let AdminProviderOAuthResolvedBatchImport {
+            access_token,
+            mut auth_config,
+            expires_at,
+        } = resolved_import;
         apply_admin_provider_oauth_batch_import_hints(provider_type, entry, &mut auth_config);
 
         let duplicate =

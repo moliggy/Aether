@@ -118,6 +118,29 @@ fn sample_kiro_device_access_token_without_email() -> String {
     format!("{header}.{payload}.sig")
 }
 
+fn sample_codex_access_token_with_profile_email(email: &str, account_id: &str) -> String {
+    use base64::Engine as _;
+
+    let header =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"none","typ":"JWT"}"#);
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+        json!({
+            "iss": "https://auth.openai.com",
+            "aud": ["https://api.openai.com/v1"],
+            "exp": 2_000_000_000u64,
+            "https://api.openai.com/profile": {
+                "email": email,
+                "email_verified": true,
+            },
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": account_id,
+            },
+        })
+        .to_string(),
+    );
+    format!("{header}.{payload}.sig")
+}
+
 #[tokio::test]
 async fn gateway_handles_admin_provider_oauth_supported_types_locally_with_trusted_admin_principal()
 {
@@ -1841,7 +1864,7 @@ async fn gateway_completes_admin_provider_oauth_key_locally_with_trusted_admin_p
                     "access_token": "new-codex-access-token",
                     "refresh_token": "new-codex-refresh-token",
                     "token_type": "Bearer",
-                    "expires_in": 3600,
+                    "expiresAt": 4_102_444_800u64,
                     "email": "alice@example.com",
                     "account_id": "acct-codex-123",
                     "plan_type": "plus",
@@ -1911,6 +1934,7 @@ async fn gateway_completes_admin_provider_oauth_key_locally_with_trusted_admin_p
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(payload["provider_type"], "codex");
     assert_eq!(payload["has_refresh_token"], true);
+    assert_eq!(payload["expires_at"], 4_102_444_800u64);
     assert_eq!(payload["email"], "alice@example.com");
     assert_eq!(payload["account_state_recheck_attempted"], false);
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
@@ -1934,6 +1958,7 @@ async fn gateway_completes_admin_provider_oauth_key_locally_with_trusted_admin_p
         .await
         .expect("keys should load");
     let persisted = reloaded.first().expect("persisted key should exist");
+    assert_eq!(persisted.expires_at_unix_secs, Some(4_102_444_800));
     let decrypted_api_key = decrypt_python_fernet_ciphertext(
         DEVELOPMENT_ENCRYPTION_KEY,
         persisted
@@ -1955,6 +1980,7 @@ async fn gateway_completes_admin_provider_oauth_key_locally_with_trusted_admin_p
         serde_json::from_str(&decrypted_auth_config).expect("auth config json should parse");
     assert_eq!(auth_config["provider_type"], "codex");
     assert_eq!(auth_config["refresh_token"], "new-codex-refresh-token");
+    assert_eq!(auth_config["expires_at"], 4_102_444_800u64);
     assert_eq!(auth_config["email"], "alice@example.com");
     assert_eq!(auth_config["account_id"], "acct-codex-123");
     assert_eq!(auth_config["plan_type"], "plus");
@@ -2009,7 +2035,7 @@ async fn gateway_completes_admin_provider_oauth_provider_locally_with_trusted_ad
                     "access_token": "provider-codex-access-token",
                     "refresh_token": "provider-codex-refresh-token",
                     "token_type": "Bearer",
-                    "expires_in": 3600,
+                    "expires_at": 4_102_444_800u64,
                     "email": "alice@example.com",
                     "account_id": "acct-codex-123",
                     "plan_type": "plus",
@@ -2097,6 +2123,7 @@ async fn gateway_completes_admin_provider_oauth_provider_locally_with_trusted_ad
     assert_eq!(payload["key_id"], "key-codex-inactive-duplicate");
     assert_eq!(payload["provider_type"], "codex");
     assert_eq!(payload["has_refresh_token"], true);
+    assert_eq!(payload["expires_at"], 4_102_444_800u64);
     assert_eq!(payload["email"], "alice@example.com");
     assert_eq!(payload["replaced"], true);
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
@@ -2120,6 +2147,7 @@ async fn gateway_completes_admin_provider_oauth_provider_locally_with_trusted_ad
         .expect("keys should load");
     let persisted = reloaded.first().expect("persisted key should exist");
     assert!(persisted.is_active);
+    assert_eq!(persisted.expires_at_unix_secs, Some(4_102_444_800));
     assert_eq!(
         persisted.proxy,
         Some(json!({"node_id": "proxy-node-codex-oauth", "enabled": true}))
@@ -2145,6 +2173,7 @@ async fn gateway_completes_admin_provider_oauth_provider_locally_with_trusted_ad
         serde_json::from_str(&decrypted_auth_config).expect("auth config json should parse");
     assert_eq!(auth_config["provider_type"], "codex");
     assert_eq!(auth_config["refresh_token"], "provider-codex-refresh-token");
+    assert_eq!(auth_config["expires_at"], 4_102_444_800u64);
     assert_eq!(auth_config["email"], "alice@example.com");
     assert_eq!(auth_config["account_id"], "acct-codex-123");
     assert_eq!(auth_config["plan_type"], "plus");
@@ -2328,6 +2357,186 @@ async fn gateway_imports_admin_provider_oauth_refresh_token_locally_with_trusted
     gateway_handle.abort();
     token_handle.abort();
     upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_imports_codex_access_token_without_refresh_token_as_temporary_account() {
+    let token_hits = Arc::new(Mutex::new(0usize));
+    let token_hits_clone = Arc::clone(&token_hits);
+    let token_server = Router::new().route(
+        "/oauth/token",
+        post(move || {
+            let token_hits_inner = Arc::clone(&token_hits_clone);
+            async move {
+                *token_hits_inner.lock().expect("mutex should lock") += 1;
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": "unexpected refresh exchange"})),
+                )
+            }
+        }),
+    );
+
+    let mut provider = sample_provider("provider-codex", "codex", 10);
+    provider.provider_type = "codex".to_string();
+    let endpoint = sample_endpoint(
+        "endpoint-codex-chat",
+        "provider-codex",
+        "openai:chat",
+        "https://chatgpt.com/backend-api/codex",
+    );
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        vec![endpoint],
+        vec![],
+    ));
+
+    let (token_url, token_handle) = start_server(token_server).await;
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(
+                    provider_catalog_repository.clone(),
+                )
+                .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
+            )
+            .with_provider_oauth_token_url_for_tests("codex", format!("{token_url}/oauth/token")),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+    let access_token =
+        sample_codex_access_token_with_profile_email("profile@example.com", "acct-profile-123");
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{gateway_url}/api/admin/provider-oauth/providers/provider-codex/import-refresh-token"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "access_token": access_token,
+            "name": "temporary-codex-access-token",
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(status, StatusCode::OK, "payload={payload}");
+    assert_eq!(payload["provider_type"], "codex");
+    assert_eq!(payload["has_refresh_token"], false);
+    assert_eq!(payload["temporary"], true);
+    assert_eq!(payload["email"], "profile@example.com");
+    assert_eq!(*token_hits.lock().expect("mutex should lock"), 0);
+
+    let reloaded = provider_catalog_repository
+        .list_keys_by_provider_ids(&["provider-codex".to_string()])
+        .await
+        .expect("keys should load");
+    let persisted = reloaded.first().expect("persisted key should exist");
+    assert_eq!(persisted.expires_at_unix_secs, Some(2_000_000_000));
+    let decrypted_api_key = decrypt_python_fernet_ciphertext(
+        DEVELOPMENT_ENCRYPTION_KEY,
+        persisted
+            .encrypted_api_key
+            .as_deref()
+            .expect("api key should be present"),
+    )
+    .expect("api key should decrypt");
+    assert_eq!(decrypted_api_key, access_token);
+    let decrypted_auth_config = decrypt_python_fernet_ciphertext(
+        DEVELOPMENT_ENCRYPTION_KEY,
+        persisted
+            .encrypted_auth_config
+            .as_deref()
+            .expect("auth config should be stored"),
+    )
+    .expect("auth config should decrypt");
+    let auth_config: serde_json::Value =
+        serde_json::from_str(&decrypted_auth_config).expect("auth config json should parse");
+    assert_eq!(auth_config["provider_type"], "codex");
+    assert_eq!(auth_config["access_token_import_temporary"], true);
+    assert_eq!(auth_config["email"], "profile@example.com");
+    assert_eq!(auth_config["account_id"], "acct-profile-123");
+    assert!(auth_config.get("refresh_token").is_none());
+
+    gateway_handle.abort();
+    token_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_imports_codex_access_token_with_payload_expires_at_when_token_has_no_exp() {
+    let mut provider = sample_provider("provider-codex", "codex", 10);
+    provider.provider_type = "codex".to_string();
+    let endpoint = sample_endpoint(
+        "endpoint-codex-responses",
+        "provider-codex",
+        "openai:responses",
+        "https://chatgpt.com/backend-api/codex",
+    );
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        vec![endpoint],
+        vec![],
+    ));
+
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(
+                    provider_catalog_repository.clone(),
+                )
+                .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
+            ),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{gateway_url}/api/admin/provider-oauth/providers/provider-codex/import-refresh-token"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "access_token": "opaque-codex-access-token",
+            "expiresAt": 2_100_000_000u64,
+            "name": "temporary-codex-opaque-access-token",
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(status, StatusCode::OK, "payload={payload}");
+    assert_eq!(payload["expires_at"], 2_100_000_000u64);
+
+    let reloaded = provider_catalog_repository
+        .list_keys_by_provider_ids(&["provider-codex".to_string()])
+        .await
+        .expect("keys should load");
+    let persisted = reloaded.first().expect("persisted key should exist");
+    assert_eq!(persisted.expires_at_unix_secs, Some(2_100_000_000));
+    let decrypted_auth_config = decrypt_python_fernet_ciphertext(
+        DEVELOPMENT_ENCRYPTION_KEY,
+        persisted
+            .encrypted_auth_config
+            .as_deref()
+            .expect("auth config should be stored"),
+    )
+    .expect("auth config should decrypt");
+    let auth_config: serde_json::Value =
+        serde_json::from_str(&decrypted_auth_config).expect("auth config json should parse");
+    assert_eq!(auth_config["expires_at"], 2_100_000_000u64);
+    assert_eq!(auth_config["access_token_import_temporary"], true);
+
+    gateway_handle.abort();
 }
 
 #[tokio::test]

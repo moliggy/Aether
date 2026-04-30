@@ -78,21 +78,34 @@ async fn gateway_refreshes_admin_provider_quota_locally_for_codex_with_trusted_a
                     request_id: plan.request_id,
                     candidate_id: None,
                     status_code: 200,
-                    headers: BTreeMap::new(),
+                    headers: BTreeMap::from([
+                        (
+                            "x-codex-primary-reset-after-seconds".to_string(),
+                            "18000".to_string(),
+                        ),
+                        (
+                            "x-codex-primary-reset-at".to_string(),
+                            "1900000000".to_string(),
+                        ),
+                        (
+                            "x-codex-secondary-reset-after-seconds".to_string(),
+                            "604800".to_string(),
+                        ),
+                        (
+                            "x-codex-secondary-reset-at".to_string(),
+                            "1900500000".to_string(),
+                        ),
+                    ]),
                     body: Some(aether_contracts::ResponseBody {
                         json_body: Some(json!({
                             "plan_type": "plus",
                             "rate_limit": {
                                 "primary_window": {
                                     "used_percent": 12.5,
-                                    "reset_after_seconds": 18000,
-                                    "reset_at": 1_900_000_000u64,
                                     "window_minutes": 300
                                 },
                                 "secondary_window": {
                                     "used_percent": 55.0,
-                                    "reset_after_seconds": 604800,
-                                    "reset_at": 1_900_500_000u64,
                                     "window_minutes": 10080
                                 }
                             },
@@ -171,6 +184,10 @@ async fn gateway_refreshes_admin_provider_quota_locally_for_codex_with_trusted_a
     );
     assert_eq!(payload["results"][0]["quota_snapshot"]["plan_type"], "plus");
     assert_eq!(
+        payload["results"][0]["quota_snapshot"]["reset_at"],
+        1_900_000_000u64
+    );
+    assert_eq!(
         payload["results"][0]["quota_snapshot"]["credits"]["balance"],
         json!(42.0)
     );
@@ -228,8 +245,24 @@ async fn gateway_refreshes_admin_provider_quota_locally_for_codex_with_trusted_a
             .upstream_metadata
             .as_ref()
             .and_then(|value| value.get("codex"))
+            .and_then(|value| value.get("primary_reset_at")),
+        Some(&json!(1_900_500_000u64))
+    );
+    assert_eq!(
+        reloaded[0]
+            .upstream_metadata
+            .as_ref()
+            .and_then(|value| value.get("codex"))
             .and_then(|value| value.get("secondary_used_percent")),
         Some(&json!(12.5))
+    );
+    assert_eq!(
+        reloaded[0]
+            .upstream_metadata
+            .as_ref()
+            .and_then(|value| value.get("codex"))
+            .and_then(|value| value.get("secondary_reset_at")),
+        Some(&json!(1_900_000_000u64))
     );
 
     gateway_handle.abort();

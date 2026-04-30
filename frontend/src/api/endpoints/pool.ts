@@ -119,6 +119,7 @@ export interface PoolKeyDetail {
   oauth_account_user_id?: string | null
   oauth_account_name?: string | null
   oauth_organizations?: OAuthOrganizationInfo[] | null
+  oauth_temporary?: boolean | null
   account_status_code?: string | null  // 兼容字段；优先使用 status_snapshot.account
   account_status_label?: string | null  // 兼容字段；优先使用 status_snapshot.account
   account_status_reason?: string | null  // 兼容字段；优先使用 status_snapshot.account
@@ -155,6 +156,7 @@ export interface PoolKeyDetail {
   sticky_sessions: number
   lru_score: number | null
   created_at: string | null
+  imported_at?: string | null
   last_used_at: string | null
   scheduling_status?: 'available' | 'degraded' | 'blocked'
   scheduling_reason?:
@@ -196,6 +198,8 @@ export interface PoolKeysQuery {
   status?: 'all' | 'active' | 'cooldown' | 'inactive'
   quick_selectors?: string[]
   search_scope?: 'name' | 'full'
+  sort_by?: 'imported_at' | 'last_used_at'
+  sort_order?: 'asc' | 'desc'
 }
 
 export interface PoolKeySelectionRequest {

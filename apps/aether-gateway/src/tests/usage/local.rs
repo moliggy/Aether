@@ -1618,7 +1618,7 @@ async fn gateway_records_failed_usage_when_all_local_claude_cli_candidates_are_s
     assert_eq!(body_json["error"]["type"], "http_error");
     assert_eq!(
         body_json["error"]["message"],
-        "找到 1 个支持模型 gpt-5.4 的候选提供商，但本次同步请求全部不可用：格式转换未启用 2 次"
+        "没有可用提供商支持模型 gpt-5.4 的同步请求"
     );
 
     let stored_usage = wait_for_usage_status(

@@ -492,6 +492,14 @@ fn enrich_generic_identity(
                         .or_insert(value);
                 }
             }
+            if let Some(profile) = claims
+                .get("https://api.openai.com/profile")
+                .and_then(Value::as_object)
+            {
+                if let Some(value) = profile.get("email").cloned() {
+                    auth_config.entry("email".to_string()).or_insert(value);
+                }
+            }
         }
     }
 }

@@ -477,6 +477,15 @@ fn quota_windows_min_reset_seconds(windows: &[Value]) -> Option<u64> {
         .min()
 }
 
+fn quota_windows_min_reset_at(windows: &[Value]) -> Option<u64> {
+    windows
+        .iter()
+        .filter_map(Value::as_object)
+        .filter_map(|window| window.get("reset_at"))
+        .filter_map(|value| provider_quota_timestamp_unix_secs(Some(value)))
+        .min()
+}
+
 fn quota_windows_all_exhausted(windows: &[Value]) -> bool {
     let mut total = 0usize;
     let mut exhausted = 0usize;
@@ -515,7 +524,7 @@ fn codex_quota_window_snapshot(
     let used_percent = metadata
         .get(&used_percent_key)
         .and_then(admin_provider_quota_pure::coerce_json_f64);
-    let reset_at = metadata
+    let explicit_reset_at = metadata
         .get(&reset_at_key)
         .and_then(admin_provider_quota_pure::coerce_json_u64);
     let reset_seconds = metadata
@@ -528,9 +537,14 @@ fn codex_quota_window_snapshot(
         })
         .or_else(|| {
             observed_at_unix_secs
-                .zip(reset_at)
+                .zip(explicit_reset_at)
                 .map(|(observed_at, reset_at)| reset_at.saturating_sub(observed_at))
         });
+    let reset_at = explicit_reset_at.or_else(|| {
+        observed_at_unix_secs
+            .zip(reset_seconds)
+            .map(|(observed_at, reset_seconds)| observed_at.saturating_add(reset_seconds))
+    });
     let window_minutes = metadata
         .get(&window_minutes_key)
         .and_then(admin_provider_quota_pure::coerce_json_u64);
@@ -611,6 +625,7 @@ fn build_codex_quota_status_snapshot(
         .filter_map(|window| window.get("reset_seconds"))
         .filter_map(admin_provider_quota_pure::coerce_json_u64)
         .min();
+    let reset_at = quota_windows_min_reset_at(&windows);
     let exhausted_by_credits =
         credits_unlimited != Some(true) && credits_has_credits == Some(false);
     let exhausted_by_window = usage_ratio.is_some_and(|value| value >= 1.0 - 1e-6);
@@ -647,6 +662,7 @@ fn build_codex_quota_status_snapshot(
         "exhausted": exhausted,
         "usage_ratio": usage_ratio,
         "updated_at": observed_at_unix_secs,
+        "reset_at": reset_at,
         "reset_seconds": reset_seconds,
         "plan_type": plan_type,
         "credits": if credits.is_empty() {
@@ -767,6 +783,7 @@ fn build_kiro_quota_status_snapshot(
         "exhausted": exhausted,
         "usage_ratio": usage_ratio,
         "updated_at": observed_at_unix_secs,
+        "reset_at": next_reset_at,
         "reset_seconds": reset_seconds,
         "plan_type": plan_type,
         "windows": windows,
@@ -810,6 +827,7 @@ fn build_antigravity_quota_status_snapshot(
 
     let usage_ratio = quota_windows_usage_ratio(&windows);
     let reset_seconds = quota_windows_min_reset_seconds(&windows);
+    let reset_at = quota_windows_min_reset_at(&windows);
     let exhausted = !is_forbidden && quota_windows_all_exhausted(&windows);
     let reason = if is_forbidden {
         forbidden_reason
@@ -845,6 +863,7 @@ fn build_antigravity_quota_status_snapshot(
         "exhausted": exhausted,
         "usage_ratio": usage_ratio,
         "updated_at": observed_at_unix_secs,
+        "reset_at": reset_at,
         "reset_seconds": reset_seconds,
         "plan_type": serde_json::Value::Null,
         "windows": windows,
@@ -906,6 +925,11 @@ fn build_gemini_cli_quota_status_snapshot(
     } else {
         None
     };
+    let reset_at = if cooling {
+        quota_windows_min_reset_at(&windows)
+    } else {
+        None
+    };
 
     Some(json!({
         "version": 2,
@@ -929,6 +953,7 @@ fn build_gemini_cli_quota_status_snapshot(
         "exhausted": exhausted,
         "usage_ratio": usage_ratio,
         "updated_at": observed_at_unix_secs,
+        "reset_at": reset_at,
         "reset_seconds": reset_seconds,
         "plan_type": serde_json::Value::Null,
         "windows": windows,
@@ -1235,6 +1260,12 @@ pub(crate) fn build_admin_provider_key_response(
     } else {
         Vec::new()
     };
+    let oauth_temporary = auth_semantics.can_show_oauth_metadata()
+        && auth_config
+            .as_ref()
+            .and_then(|config| config.get("access_token_import_temporary"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
     let oauth_plan_type = derive_catalog_oauth_plan_type(key, provider_type, auth_config.as_ref());
     let (
         health_score,
@@ -1386,6 +1417,7 @@ pub(crate) fn build_admin_provider_key_response(
         "oauth_organizations".to_string(),
         serde_json::Value::Array(oauth_organizations),
     );
+    payload.insert("oauth_temporary".to_string(), json!(oauth_temporary));
     payload.insert(
         "oauth_invalid_at".to_string(),
         json!(auth_semantics
@@ -1609,6 +1641,7 @@ mod tests {
         assert_eq!(quota.get("provider_type"), Some(&json!("codex")));
         assert_eq!(quota.get("plan_type"), Some(&json!("plus")));
         assert_eq!(quota.get("updated_at"), Some(&json!(1_775_553_285u64)));
+        assert_eq!(quota.get("reset_at"), Some(&json!(1_900_000_000u64)));
         assert_eq!(
             quota
                 .get("credits")
@@ -1620,6 +1653,35 @@ mod tests {
             quota.get("windows").and_then(Value::as_array).map(Vec::len),
             Some(2usize)
         );
+    }
+
+    #[test]
+    fn provider_key_status_snapshot_payload_derives_codex_reset_at_from_countdown() {
+        let mut key = sample_catalog_key();
+        key.upstream_metadata = Some(json!({
+            "codex": {
+                "updated_at": 1_775_553_285u64,
+                "primary_used_percent": 55.0,
+                "primary_reset_after_seconds": 3_600u64
+            }
+        }));
+
+        let payload = provider_key_status_snapshot_payload(&key, "codex");
+        let quota = payload
+            .get("quota")
+            .and_then(Value::as_object)
+            .expect("quota snapshot should be object");
+        let window = quota
+            .get("windows")
+            .and_then(Value::as_array)
+            .and_then(|windows| windows.first())
+            .and_then(Value::as_object)
+            .expect("quota window should exist");
+
+        assert_eq!(quota.get("reset_at"), Some(&json!(1_775_556_885u64)));
+        assert_eq!(quota.get("reset_seconds"), Some(&json!(3_600u64)));
+        assert_eq!(window.get("reset_at"), Some(&json!(1_775_556_885u64)));
+        assert_eq!(window.get("reset_seconds"), Some(&json!(3_600u64)));
     }
 
     #[test]

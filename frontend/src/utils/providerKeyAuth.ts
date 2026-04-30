@@ -3,6 +3,7 @@ export interface ProviderKeyAuthCarrier {
   credential_kind?: string | null
   runtime_auth_kind?: string | null
   oauth_managed?: boolean | null
+  oauth_temporary?: boolean | null
   can_refresh_oauth?: boolean | null
   can_export_oauth?: boolean | null
   can_edit_oauth?: boolean | null
@@ -68,9 +69,16 @@ export function isServiceAccountCredential(input: ProviderKeyAuthCarrier): boole
 }
 
 export function canRefreshOAuthCredential(input: ProviderKeyAuthCarrier): boolean {
+  if (input.oauth_temporary === true) {
+    return false
+  }
   if (typeof input.can_refresh_oauth === 'boolean') {
     return input.can_refresh_oauth
   }
+  return isOAuthManagedCredential(input)
+}
+
+export function shouldShowOAuthRefreshControl(input: ProviderKeyAuthCarrier): boolean {
   return isOAuthManagedCredential(input)
 }
 
