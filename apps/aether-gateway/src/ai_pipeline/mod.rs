@@ -49,6 +49,7 @@ pub(crate) use self::planner::{
 pub(crate) use self::pure::*;
 pub(crate) use crate::control::GatewayControlDecision;
 pub(crate) use crate::execution_runtime::{ConversionMode, ExecutionStrategy};
+pub(crate) use crate::headers::RequestOrigin;
 
 pub(crate) fn build_provider_transport_request_url(
     transport: &GatewayProviderTransportSnapshot,
@@ -85,6 +86,14 @@ pub(crate) fn collect_control_headers(
     headers: &http::HeaderMap,
 ) -> std::collections::BTreeMap<String, String> {
     crate::headers::collect_control_headers(headers)
+}
+
+pub(crate) fn request_origin_from_headers(headers: &http::HeaderMap) -> RequestOrigin {
+    crate::headers::request_origin_from_headers(headers)
+}
+
+pub(crate) fn request_origin_from_parts(parts: &http::request::Parts) -> RequestOrigin {
+    crate::headers::request_origin_from_parts(parts)
 }
 
 pub(crate) fn build_report_context_original_request_echo(

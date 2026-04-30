@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 
 use crate::ai_pipeline::contracts::ExecutionRuntimeAuthContext;
 use crate::ai_pipeline::planner::candidate_metadata::append_ranking_metadata_to_object;
-use crate::headers::RequestOrigin;
+use crate::ai_pipeline::{request_origin_from_headers, RequestOrigin};
 use crate::orchestration::ExecutionAttemptIdentity;
 
 pub(crate) struct LocalExecutionReportContextParts<'a> {
@@ -138,7 +138,7 @@ pub(crate) fn build_local_execution_report_context(
         user_agent,
     } = parts
         .request_origin
-        .unwrap_or_else(|| crate::headers::request_origin_from_headers(parts.original_headers));
+        .unwrap_or_else(|| request_origin_from_headers(parts.original_headers));
     if let Some(client_ip) = client_ip {
         object.insert("client_ip".to_string(), Value::String(client_ip));
     }
@@ -260,7 +260,7 @@ mod tests {
         LocalExecutionReportContextParts,
     };
     use crate::ai_pipeline::contracts::ExecutionRuntimeAuthContext;
-    use crate::headers::RequestOrigin;
+    use crate::ai_pipeline::RequestOrigin;
     use crate::orchestration::ExecutionAttemptIdentity;
 
     #[test]
