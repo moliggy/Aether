@@ -937,7 +937,7 @@ fn build_web_search_sse_body(
     input_tokens: u64,
 ) -> Result<Vec<u8>, serde_json::Error> {
     let events = build_web_search_events(model, query, tool_use_id, search_results, input_tokens);
-    crate::ai_pipeline_api::encode_kiro_sse_events(events)
+    crate::ai_serving::api::encode_kiro_sse_events(events)
 }
 
 fn build_web_search_events(

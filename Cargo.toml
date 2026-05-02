@@ -3,7 +3,8 @@ members = [
     "apps/aether-proxy",
     "crates/aether-ai-formats",
     "crates/aether-admin",
-    "crates/aether-ai-pipeline",
+    "crates/aether-ai-serving",
+    "crates/aether-ai-surfaces",
     "crates/aether-data-contracts",
     "crates/aether-cache",
     "crates/aether-billing",
@@ -32,7 +33,8 @@ repository = "https://github.com/fawney19/Aether.git"
 [workspace.dependencies]
 aether-admin = { path = "crates/aether-admin" }
 aether-ai-formats = { path = "crates/aether-ai-formats" }
-aether-ai-pipeline = { path = "crates/aether-ai-pipeline" }
+aether-ai-serving = { path = "crates/aether-ai-serving" }
+aether-ai-surfaces = { path = "crates/aether-ai-surfaces" }
 aether-data-contracts = { path = "crates/aether-data-contracts" }
 aether-cache = { path = "crates/aether-cache" }
 aether-billing = { path = "crates/aether-billing" }

@@ -12,7 +12,7 @@ pub(crate) fn models_api_format(request_context: &GatewayPublicRequestContext) -
         .and_then(|decision| decision.auth_endpoint_signature.as_deref())
         .map(str::trim)
         .filter(|signature| !signature.is_empty())?;
-    match crate::ai_pipeline::normalize_api_format_alias(signature).as_str() {
+    match crate::ai_serving::normalize_api_format_alias(signature).as_str() {
         "openai:chat" => Some("openai:chat"),
         "openai:responses" => Some("openai:responses"),
         "openai:responses:compact" => Some("openai:responses:compact"),
@@ -33,7 +33,7 @@ const MODELS_CROSS_FORMAT_QUERY_API_FORMATS: &[&str] = &[
 ];
 
 pub(super) fn models_query_api_formats(api_format: &str) -> &'static [&'static str] {
-    match crate::ai_pipeline::normalize_api_format_alias(api_format).as_str() {
+    match crate::ai_serving::normalize_api_format_alias(api_format).as_str() {
         "openai:chat"
         | "openai:responses"
         | "openai:responses:compact"

@@ -88,7 +88,7 @@ async fn request_model_resolves_to_allowed_model(
     let Some(client_api_format) = decision
         .auth_endpoint_signature
         .as_deref()
-        .map(crate::ai_pipeline::normalize_api_format_alias)
+        .map(crate::ai_serving::normalize_api_format_alias)
         .filter(|value| !value.trim().is_empty())
     else {
         return Ok(false);
@@ -128,14 +128,14 @@ async fn request_model_resolves_to_allowed_model(
 fn candidate_api_formats_for_model_resolution(client_api_format: &str) -> Vec<String> {
     let mut api_formats = Vec::new();
     push_unique_api_format(&mut api_formats, client_api_format);
-    for api_format in crate::ai_pipeline::request_candidate_api_formats(client_api_format, false) {
+    for api_format in crate::ai_serving::request_candidate_api_formats(client_api_format, false) {
         push_unique_api_format(&mut api_formats, api_format);
     }
     api_formats
 }
 
 fn push_unique_api_format(api_formats: &mut Vec<String>, api_format: &str) {
-    let api_format = crate::ai_pipeline::normalize_api_format_alias(api_format);
+    let api_format = crate::ai_serving::normalize_api_format_alias(api_format);
     if api_format.is_empty() || api_formats.iter().any(|value| value == &api_format) {
         return;
     }

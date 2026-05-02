@@ -1,13 +1,8 @@
-//! Pairwise response adapters kept for compatibility and focused tests.
+//! Pairwise response conversion helpers.
 //!
-//! New response routing should use the registry so every conversion passes
-//! through the typed canonical IR.
-
-//! Legacy response conversion function names.
-//!
-//! This module is intentionally a compatibility facade. Real wire-format
-//! parsing and emitting lives under `formats::<format>::response`, and all
-//! conversion goes through the registry's canonical IR path.
+//! These helpers keep the call sites readable while delegating wire-format
+//! parsing and emitting to `formats::<format>::response` through the registry's
+//! canonical IR path.
 
 use serde_json::{json, Value};
 
@@ -260,7 +255,7 @@ mod tests {
     };
 
     #[test]
-    fn legacy_response_facade_routes_through_registry() {
+    fn pairwise_response_helper_routes_through_registry() {
         let body = json!({
             "id": "chatcmpl-test",
             "object": "chat.completion",
@@ -281,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_response_facade_uses_report_context_model_fallback() {
+    fn pairwise_response_helper_uses_report_context_model_fallback() {
         let body = json!({
             "id": "msg-test",
             "type": "message",

@@ -33,7 +33,7 @@ pub(crate) fn provider_catalog_key_supports_format(
     }
     formats
         .iter()
-        .any(|candidate| crate::ai_pipeline::api_format_alias_matches(candidate, api_format))
+        .any(|candidate| crate::ai_serving::api_format_alias_matches(candidate, api_format))
 }
 
 pub(crate) fn decrypt_catalog_secret_with_fallbacks(

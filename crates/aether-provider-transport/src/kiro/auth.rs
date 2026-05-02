@@ -18,6 +18,22 @@ pub struct KiroRequestAuth {
     pub machine_id: String,
 }
 
+pub fn is_kiro_provider_transport(transport: &GatewayProviderTransportSnapshot) -> bool {
+    transport
+        .provider
+        .provider_type
+        .trim()
+        .eq_ignore_ascii_case(PROVIDER_TYPE)
+}
+
+pub fn is_kiro_claude_messages_transport(
+    transport: &GatewayProviderTransportSnapshot,
+    provider_api_format: &str,
+) -> bool {
+    is_kiro_provider_transport(transport)
+        && aether_ai_formats::api_format_alias_matches(provider_api_format, "claude:messages")
+}
+
 pub fn build_kiro_request_auth_from_config(
     auth_config: KiroAuthConfig,
     fallback_secret: Option<&str>,
@@ -47,12 +63,7 @@ pub fn build_kiro_request_auth_from_config(
 pub fn resolve_local_kiro_bearer_auth(
     transport: &GatewayProviderTransportSnapshot,
 ) -> Option<KiroBearerAuth> {
-    if !transport
-        .provider
-        .provider_type
-        .trim()
-        .eq_ignore_ascii_case(PROVIDER_TYPE)
-    {
+    if !is_kiro_provider_transport(transport) {
         return None;
     }
     if transport.key.decrypted_auth_config.is_some() {
@@ -82,12 +93,7 @@ pub fn supports_local_kiro_auth_prerequisites(
 pub fn resolve_local_kiro_request_auth(
     transport: &GatewayProviderTransportSnapshot,
 ) -> Option<KiroRequestAuth> {
-    if !transport
-        .provider
-        .provider_type
-        .trim()
-        .eq_ignore_ascii_case(PROVIDER_TYPE)
-    {
+    if !is_kiro_provider_transport(transport) {
         return None;
     }
     if !kiro_auth_type_supported(transport.key.auth_type.as_str()) {
@@ -127,11 +133,7 @@ pub fn supports_local_kiro_request_auth_resolution(
     resolve_local_kiro_request_auth(transport).is_some()
         || KiroAuthConfig::from_raw_json(transport.key.decrypted_auth_config.as_deref())
             .is_some_and(|auth_config| {
-                transport
-                    .provider
-                    .provider_type
-                    .trim()
-                    .eq_ignore_ascii_case(PROVIDER_TYPE)
+                is_kiro_provider_transport(transport)
                     && kiro_auth_type_supported(transport.key.auth_type.as_str())
                     && auth_config.can_refresh_access_token()
             })

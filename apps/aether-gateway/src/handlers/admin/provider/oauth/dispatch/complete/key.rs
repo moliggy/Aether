@@ -228,7 +228,7 @@ pub(super) async fn handle_admin_provider_oauth_complete_key(
             .await?;
         if let Some(endpoint) = endpoints.into_iter().find(|endpoint| {
             endpoint.is_active
-                && crate::ai_pipeline::is_openai_responses_format(&endpoint.api_format)
+                && crate::ai_serving::is_openai_responses_format(&endpoint.api_format)
         }) {
             let refreshed_key = state
                 .read_provider_catalog_keys_by_ids(std::slice::from_ref(&key_id))

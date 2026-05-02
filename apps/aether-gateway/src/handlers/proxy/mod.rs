@@ -5,7 +5,7 @@ use self::local::{
 };
 use super::internal::resolve_local_proxy_execution_path;
 pub(crate) use super::public::matches_model_mapping_for_models;
-use crate::ai_pipeline_api::{
+use crate::ai_serving::api::{
     aggregate_claude_stream_sync_response, aggregate_gemini_stream_sync_response,
     aggregate_openai_chat_stream_sync_response, aggregate_openai_responses_stream_sync_response,
     maybe_bridge_standard_sync_json_to_stream,
@@ -466,7 +466,7 @@ fn aggregate_sync_sse_response_for_client(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    match api_format.map(crate::ai_pipeline::normalize_api_format_alias) {
+    match api_format.map(crate::ai_serving::normalize_api_format_alias) {
         Some(value) if value.eq_ignore_ascii_case("openai:chat") => {
             aggregate_openai_chat_stream_sync_response(body)
         }
@@ -531,7 +531,7 @@ fn resolve_affinity_forward_client_api_format(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    match api_format.map(crate::ai_pipeline::normalize_api_format_alias) {
+    match api_format.map(crate::ai_serving::normalize_api_format_alias) {
         Some(value) if value.eq_ignore_ascii_case("openai:chat") => Some("openai:chat"),
         Some(value) if value.eq_ignore_ascii_case("openai:responses") => Some("openai:responses"),
         Some(value) if value.eq_ignore_ascii_case("openai:responses:compact") => {

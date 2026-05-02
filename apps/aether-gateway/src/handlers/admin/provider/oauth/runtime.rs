@@ -19,7 +19,7 @@ pub(crate) fn provider_oauth_runtime_endpoint_for_provider(
             .iter()
             .find(|endpoint| {
                 endpoint.is_active
-                    && crate::ai_pipeline::is_openai_responses_format(&endpoint.api_format)
+                    && crate::ai_serving::is_openai_responses_format(&endpoint.api_format)
             })
             .cloned(),
         "antigravity" => endpoints

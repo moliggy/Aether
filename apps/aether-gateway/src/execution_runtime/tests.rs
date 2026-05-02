@@ -3,12 +3,12 @@ use axum::http::Request;
 use base64::Engine as _;
 use serde_json::json;
 
-use crate::ai_pipeline_api::{
+use crate::ai_serving::api::{
     build_gemini_stream_plan_from_decision, build_gemini_sync_plan_from_decision,
     build_openai_responses_stream_plan_from_decision,
     build_openai_responses_sync_plan_from_decision, build_passthrough_sync_plan_from_decision,
     build_standard_stream_plan_from_decision, build_standard_sync_plan_from_decision,
-    GatewayControlSyncDecisionResponse,
+    AiExecutionDecision,
 };
 use crate::execution_runtime::submission::{
     build_best_effort_local_core_error_body, has_nested_error,
@@ -34,10 +34,8 @@ fn test_parts() -> http::request::Parts {
     parts
 }
 
-fn missing_exact_provider_request_payload(
-    decision_kind: &str,
-) -> GatewayControlSyncDecisionResponse {
-    GatewayControlSyncDecisionResponse {
+fn missing_exact_provider_request_payload(decision_kind: &str) -> AiExecutionDecision {
+    AiExecutionDecision {
         action: "execution_runtime".to_string(),
         decision_kind: Some(decision_kind.to_string()),
         execution_strategy: Some("local_same_format".to_string()),

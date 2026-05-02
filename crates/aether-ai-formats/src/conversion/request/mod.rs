@@ -1,13 +1,8 @@
-//! Pairwise request adapters kept for compatibility and focused tests.
+//! Pairwise request conversion helpers.
 //!
-//! New request routing should use the registry so every conversion passes
-//! through the typed canonical IR.
-
-//! Legacy request conversion function names.
-//!
-//! This module is intentionally a compatibility facade. Real wire-format
-//! parsing and emitting lives under `formats::<format>::request`, and all
-//! conversion goes through the registry's canonical IR path.
+//! These helpers keep the call sites readable while delegating wire-format
+//! parsing and emitting to `formats::<format>::request` through the registry's
+//! canonical IR path.
 
 use serde_json::Value;
 
@@ -171,7 +166,7 @@ mod tests {
     };
 
     #[test]
-    fn legacy_request_facade_routes_through_registry() {
+    fn pairwise_request_helper_routes_through_registry() {
         let body = json!({
             "model": "gpt-source",
             "messages": [{"role": "user", "content": "hello"}],
@@ -191,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_request_facade_keeps_claude_alias_shape() {
+    fn pairwise_request_helper_keeps_claude_shape() {
         let body = json!({
             "model": "gpt-source",
             "messages": [{"role": "user", "content": "hello"}],
@@ -206,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_normalizer_uses_format_adapter() {
+    fn request_normalizer_uses_format_adapter() {
         let body = json!({
             "model": "claude-sonnet",
             "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],

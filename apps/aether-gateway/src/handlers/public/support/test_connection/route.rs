@@ -92,12 +92,12 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
         let format_value = if endpoint.api_format.trim().is_empty() {
             "claude:messages".to_string()
         } else {
-            crate::ai_pipeline::normalize_api_format_alias(&endpoint.api_format)
+            crate::ai_serving::normalize_api_format_alias(&endpoint.api_format)
         };
         (endpoint, format_value)
     };
 
-    let format_value = crate::ai_pipeline::normalize_api_format_alias(&format_value);
+    let format_value = crate::ai_serving::normalize_api_format_alias(&format_value);
     if !matches!(
         format_value.as_str(),
         "openai:chat" | "claude:messages" | "gemini:generate_content"

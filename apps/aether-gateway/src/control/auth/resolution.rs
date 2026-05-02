@@ -663,7 +663,7 @@ fn contains_api_format_or_alias(items: &[String], target: &str) -> bool {
 }
 
 fn normalize_api_format_alias(value: &str) -> String {
-    crate::ai_pipeline::normalize_api_format_alias(value)
+    crate::ai_serving::normalize_api_format_alias(value)
 }
 
 fn api_format_matches(left: &str, right: &str) -> bool {
@@ -795,7 +795,7 @@ fn endpoint_matches_requested_provider(
         return true;
     }
     let endpoint_api_format = normalize_api_format_alias(&endpoint.api_format);
-    if crate::ai_pipeline::request_conversion_kind(requested_api_format, &endpoint_api_format)
+    if crate::ai_serving::request_conversion_kind(requested_api_format, &endpoint_api_format)
         .is_some()
     {
         return true;

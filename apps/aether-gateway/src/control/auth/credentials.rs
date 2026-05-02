@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use url::form_urlencoded;
 
 use crate::{
-    ai_pipeline::extract_gemini_model_from_path,
+    ai_serving::extract_gemini_model_from_path,
     headers::{header_value_str, is_json_request},
 };
 

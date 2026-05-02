@@ -35,6 +35,14 @@ pub enum AntigravityRequestSideUnsupportedReason {
     UnsupportedEnvelope(AntigravityRequestEnvelopeUnsupportedReason),
 }
 
+pub fn is_antigravity_provider_transport(transport: &GatewayProviderTransportSnapshot) -> bool {
+    transport
+        .provider
+        .provider_type
+        .trim()
+        .eq_ignore_ascii_case(ANTIGRAVITY_PROVIDER_TYPE)
+}
+
 pub fn classify_local_antigravity_request_support(
     transport: &GatewayProviderTransportSnapshot,
     request_body: &Value,
@@ -45,12 +53,7 @@ pub fn classify_local_antigravity_request_support(
             AntigravityRequestSideUnsupportedReason::InactiveTransport,
         );
     }
-    if !transport
-        .provider
-        .provider_type
-        .trim()
-        .eq_ignore_ascii_case(ANTIGRAVITY_PROVIDER_TYPE)
-    {
+    if !is_antigravity_provider_transport(transport) {
         return AntigravityRequestSideSupport::Unsupported(
             AntigravityRequestSideUnsupportedReason::WrongProviderType,
         );

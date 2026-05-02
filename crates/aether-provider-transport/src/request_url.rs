@@ -4,7 +4,10 @@ use std::sync::OnceLock;
 use regex::Regex;
 use url::form_urlencoded;
 
-use crate::antigravity::{build_antigravity_v1internal_url, AntigravityRequestUrlAction};
+use crate::antigravity::{
+    build_antigravity_v1internal_url, is_antigravity_provider_transport,
+    AntigravityRequestUrlAction,
+};
 use crate::claude_code::build_claude_code_messages_url;
 use crate::snapshot::GatewayProviderTransportSnapshot;
 use crate::url::{
@@ -95,6 +98,105 @@ pub fn build_transport_request_url(
     ))
 }
 
+pub fn build_local_openai_chat_upstream_url(
+    transport: &GatewayProviderTransportSnapshot,
+    request_query: Option<&str>,
+) -> Option<String> {
+    build_transport_request_url(
+        transport,
+        TransportRequestUrlParams {
+            provider_api_format: "openai:chat",
+            mapped_model: None,
+            upstream_is_stream: false,
+            request_query,
+            kiro_api_region: None,
+        },
+    )
+}
+
+pub fn build_cross_format_openai_chat_upstream_url(
+    transport: &GatewayProviderTransportSnapshot,
+    mapped_model: &str,
+    provider_api_format: &str,
+    upstream_is_stream: bool,
+    request_query: Option<&str>,
+) -> Option<String> {
+    aether_ai_formats::request_conversion_kind("openai:chat", provider_api_format)?;
+    build_transport_request_url(
+        transport,
+        TransportRequestUrlParams {
+            provider_api_format,
+            mapped_model: Some(mapped_model),
+            upstream_is_stream,
+            request_query,
+            kiro_api_region: None,
+        },
+    )
+}
+
+pub fn build_local_openai_responses_upstream_url(
+    transport: &GatewayProviderTransportSnapshot,
+    compact: bool,
+    request_query: Option<&str>,
+) -> Option<String> {
+    let provider_api_format = if compact {
+        "openai:responses:compact"
+    } else {
+        "openai:responses"
+    };
+    build_transport_request_url(
+        transport,
+        TransportRequestUrlParams {
+            provider_api_format,
+            mapped_model: None,
+            upstream_is_stream: false,
+            request_query,
+            kiro_api_region: None,
+        },
+    )
+}
+
+pub fn build_cross_format_openai_responses_upstream_url(
+    transport: &GatewayProviderTransportSnapshot,
+    mapped_model: &str,
+    client_api_format: &str,
+    provider_api_format: &str,
+    upstream_is_stream: bool,
+    request_query: Option<&str>,
+) -> Option<String> {
+    aether_ai_formats::request_conversion_kind(client_api_format, provider_api_format)?;
+    build_transport_request_url(
+        transport,
+        TransportRequestUrlParams {
+            provider_api_format,
+            mapped_model: Some(mapped_model),
+            upstream_is_stream,
+            request_query,
+            kiro_api_region: None,
+        },
+    )
+}
+
+pub fn build_kiro_cross_format_upstream_url(
+    transport: &GatewayProviderTransportSnapshot,
+    mapped_model: &str,
+    provider_api_format: &str,
+    upstream_is_stream: bool,
+    request_query: Option<&str>,
+    api_region: &str,
+) -> Option<String> {
+    build_transport_request_url(
+        transport,
+        TransportRequestUrlParams {
+            provider_api_format,
+            mapped_model: Some(mapped_model),
+            upstream_is_stream,
+            request_query,
+            kiro_api_region: Some(api_region),
+        },
+    )
+}
+
 fn build_transport_hook_url(
     transport: &GatewayProviderTransportSnapshot,
     params: TransportRequestUrlParams<'_>,
@@ -135,12 +237,7 @@ fn build_transport_hook_url(
         }
     }
 
-    if transport
-        .provider
-        .provider_type
-        .trim()
-        .eq_ignore_ascii_case("antigravity")
-    {
+    if is_antigravity_provider_transport(transport) {
         let query = params.request_query.map(|raw| {
             form_urlencoded::parse(raw.as_bytes())
                 .into_owned()
@@ -255,7 +352,10 @@ fn custom_path_template_regex() -> &'static Regex {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_transport_request_url, TransportRequestUrlParams};
+    use super::{
+        build_kiro_cross_format_upstream_url, build_transport_request_url,
+        TransportRequestUrlParams,
+    };
     use crate::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
@@ -421,5 +521,30 @@ mod tests {
         .expect("fallback custom path url");
 
         assert_eq!(url, "https://api.example.com/v1/messages/{model}");
+    }
+
+    #[test]
+    fn kiro_cross_format_helper_uses_region_specific_generate_assistant_url() {
+        let transport = sample_transport(
+            "kiro",
+            "claude:messages",
+            "https://codewhisperer.{region}.amazonaws.com/",
+            None,
+        );
+
+        let url = build_kiro_cross_format_upstream_url(
+            &transport,
+            "claude-sonnet-4",
+            "claude:messages",
+            true,
+            Some("conversationId=abc"),
+            "us-west-2",
+        )
+        .expect("kiro url");
+
+        assert!(url.starts_with(
+            "https://codewhisperer.us-west-2.amazonaws.com/generateAssistantResponse"
+        ));
+        assert!(url.contains("conversationId=abc"));
     }
 }

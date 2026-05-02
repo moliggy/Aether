@@ -1,6 +1,6 @@
 #[cfg(test)]
-use crate::ai_pipeline_api::core_success_background_report_kind;
-use crate::ai_pipeline_api::{
+use crate::ai_serving::api::core_success_background_report_kind;
+use crate::ai_serving::api::{
     build_core_error_body_for_client_format, core_error_background_report_kind,
     core_error_default_client_api_format, is_core_error_finalize_kind,
     maybe_compile_sync_finalize_response,

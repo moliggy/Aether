@@ -1,9 +1,8 @@
-//! Legacy pairwise conversion exports.
+//! Pairwise format conversion entry points.
 //!
-//! Primary routing lives under `crate::formats::<wire_format>` and must pass
-//! through canonical IR. This module remains so older pipeline/gateway call
-//! sites and focused golden tests can keep their existing function names while
-//! the cleanup proceeds.
+//! The public helpers in this module route through the registry, so request and
+//! response conversion still pass through the typed canonical IR before a target
+//! wire format is emitted.
 
 pub mod request;
 pub mod response;

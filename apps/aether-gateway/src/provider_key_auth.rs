@@ -1,7 +1,9 @@
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
 };
-use aether_provider_transport::provider_types::provider_type_is_fixed;
+use aether_provider_transport::provider_types::{
+    fixed_provider_key_inherits_api_formats, provider_type_is_fixed,
+};
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,7 +178,7 @@ pub(crate) fn provider_key_configured_api_formats(key: &StoredProviderCatalogKey
                 .filter_map(serde_json::Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .map(crate::ai_pipeline::normalize_api_format_alias)
+                .map(crate::ai_serving::normalize_api_format_alias)
                 .filter(|value| seen.insert(value.clone()))
                 .collect::<Vec<_>>()
         })
@@ -189,7 +191,7 @@ pub(crate) fn provider_active_api_formats(
     let mut formats = Vec::new();
     let mut seen = BTreeSet::new();
     for endpoint in endpoints.iter().filter(|endpoint| endpoint.is_active) {
-        let api_format = crate::ai_pipeline::normalize_api_format_alias(&endpoint.api_format);
+        let api_format = crate::ai_serving::normalize_api_format_alias(&endpoint.api_format);
         if api_format.is_empty() || !seen.insert(api_format.clone()) {
             continue;
         }
@@ -202,7 +204,11 @@ pub(crate) fn provider_key_inherits_provider_api_formats(
     key: &StoredProviderCatalogKey,
     provider_type: &str,
 ) -> bool {
-    provider_type_is_fixed(provider_type) && provider_key_is_oauth_managed(key, provider_type)
+    fixed_provider_key_inherits_api_formats(
+        provider_type,
+        &key.auth_type,
+        key.encrypted_auth_config.as_deref(),
+    )
 }
 
 pub(crate) fn provider_key_effective_api_formats(
@@ -363,6 +369,23 @@ mod tests {
         assert_eq!(
             provider_key_effective_api_formats(&key, "codex", &endpoints),
             vec!["openai:responses".to_string(), "openai:image".to_string()]
+        );
+    }
+
+    #[test]
+    fn configured_kiro_bearer_key_inherits_provider_formats() {
+        let mut key = sample_key("bearer");
+        key.encrypted_auth_config = Some("encrypted-auth-config".to_string());
+        key.api_formats = Some(json!(["openai:responses:compact"]));
+        let endpoints = vec![
+            sample_endpoint("claude:messages", true),
+            sample_endpoint("openai:chat", true),
+        ];
+
+        assert!(provider_key_inherits_provider_api_formats(&key, "kiro"));
+        assert_eq!(
+            provider_key_effective_api_formats(&key, "kiro", &endpoints),
+            vec!["claude:messages".to_string(), "openai:chat".to_string()]
         );
     }
 

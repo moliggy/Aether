@@ -8,7 +8,8 @@ description = "Rust ingress gateway for Aether phase 3a transparent proxy"
 
 [dependencies]
 aether-admin.workspace = true
-aether-ai-pipeline.workspace = true
+aether-ai-serving.workspace = true
+aether-ai-surfaces.workspace = true
 aether-billing.workspace = true
 aether-cache.workspace = true
 aether-contracts.workspace = true

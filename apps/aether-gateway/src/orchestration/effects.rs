@@ -18,7 +18,7 @@ use super::{
     project_local_adaptive_success, project_local_failure_health, project_local_success_health,
     LocalFailoverClassification,
 };
-use crate::ai_pipeline::extract_pool_sticky_session_token;
+use crate::ai_serving::extract_pool_sticky_session_token;
 use crate::clock::current_unix_secs;
 use crate::handlers::shared::provider_pool::admin_provider_pool_config_from_config_value;
 use crate::handlers::shared::provider_pool::{
@@ -613,16 +613,12 @@ fn local_candidate_failure_should_invalidate_affinity(
 
     match classification {
         LocalFailoverClassification::RetrySuccessPattern
-        | LocalFailoverClassification::RetrySemanticCompatibilityError
-        | LocalFailoverClassification::RetrySemanticRateLimit
-        | LocalFailoverClassification::RetrySemanticThinkingError
         | LocalFailoverClassification::RetryStatusCode
         | LocalFailoverClassification::RetryUpstreamFailure => true,
         LocalFailoverClassification::UseDefault | LocalFailoverClassification::StopStatusCode => {
             status_code >= 500
         }
-        LocalFailoverClassification::StopErrorPattern
-        | LocalFailoverClassification::StopSemanticClientError => false,
+        LocalFailoverClassification::StopErrorPattern => false,
     }
 }
 
@@ -1037,7 +1033,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn semantic_client_error_keeps_scheduler_affinity_cache() {
+    async fn configured_stop_pattern_keeps_scheduler_affinity_cache() {
         let state = AppState::new().expect("gateway state should build");
         let plan = sample_plan();
         let report_context = json!({
@@ -1068,7 +1064,7 @@ mod tests {
             },
             LocalExecutionEffect::AttemptFailure(LocalAttemptFailureEffect {
                 status_code: 400,
-                classification: LocalFailoverClassification::StopSemanticClientError,
+                classification: LocalFailoverClassification::StopErrorPattern,
             }),
         )
         .await;
@@ -1175,13 +1171,13 @@ mod tests {
     }
 
     #[test]
-    fn semantic_client_error_does_not_penalize_pool_feedback() {
+    fn configured_stop_pattern_does_not_penalize_pool_feedback() {
         assert!(!local_candidate_failure_should_record_pool_error(
-            LocalFailoverClassification::StopSemanticClientError,
+            LocalFailoverClassification::StopErrorPattern,
             400,
         ));
         assert!(local_candidate_failure_should_record_pool_error(
-            LocalFailoverClassification::RetrySemanticRateLimit,
+            LocalFailoverClassification::RetryUpstreamFailure,
             429,
         ));
     }
@@ -1360,7 +1356,7 @@ mod tests {
             },
             LocalExecutionEffect::AdaptiveRateLimit(LocalAdaptiveRateLimitEffect {
                 status_code: 429,
-                classification: LocalFailoverClassification::RetrySemanticRateLimit,
+                classification: LocalFailoverClassification::RetryUpstreamFailure,
                 headers: Some(&BTreeMap::from([(
                     "x-ratelimit-limit-requests".to_string(),
                     "42".to_string(),
@@ -1429,7 +1425,7 @@ mod tests {
             },
             LocalExecutionEffect::AdaptiveRateLimit(LocalAdaptiveRateLimitEffect {
                 status_code: 429,
-                classification: LocalFailoverClassification::RetrySemanticRateLimit,
+                classification: LocalFailoverClassification::RetryUpstreamFailure,
                 headers: Some(&BTreeMap::from([(
                     "x-ratelimit-limit-requests".to_string(),
                     "42".to_string(),
@@ -1451,7 +1447,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn adaptive_rate_limit_effect_persists_zero_rpm_count_for_unknown_429() {
+    async fn adaptive_rate_limit_effect_records_429_as_rpm_observation() {
         let mut key = sample_health_key();
         key.rpm_limit = None;
         key.learned_rpm_limit = Some(20);
@@ -1479,9 +1475,9 @@ mod tests {
             .into_iter()
             .next()
             .expect("stored key should exist");
-        assert_eq!(stored_key.rpm_429_count, Some(0));
-        assert_eq!(stored_key.learned_rpm_limit, Some(19));
-        assert_eq!(stored_key.last_429_type.as_deref(), Some("unknown"));
+        assert_eq!(stored_key.rpm_429_count, Some(1));
+        assert_eq!(stored_key.learned_rpm_limit, Some(20));
+        assert_eq!(stored_key.last_429_type.as_deref(), Some("rpm"));
     }
 
     #[tokio::test]

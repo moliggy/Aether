@@ -213,7 +213,7 @@ fn users_me_usage_api_format_defaults_to_non_stream(item: &StoredRequestUsageAud
         return false;
     };
     matches!(
-        crate::ai_pipeline::normalize_api_format_alias(value).as_str(),
+        crate::ai_serving::normalize_api_format_alias(value).as_str(),
         "openai:chat"
             | "openai:responses"
             | "openai:responses:compact"

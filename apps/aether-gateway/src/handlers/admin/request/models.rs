@@ -38,7 +38,7 @@ fn normalize_provider_model_mappings_api_formats(
         let normalized = array
             .iter()
             .filter_map(serde_json::Value::as_str)
-            .map(crate::ai_pipeline::normalize_api_format_alias)
+            .map(crate::ai_serving::normalize_api_format_alias)
             .filter(|format| seen.insert(format.clone()))
             .map(serde_json::Value::String)
             .collect::<Vec<_>>();

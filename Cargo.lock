@@ -52,13 +52,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-ai-pipeline"
+name = "aether-ai-serving"
+version = "0.1.0"
+dependencies = [
+ "aether-ai-formats",
+ "aether-ai-surfaces",
+ "aether-contracts",
+ "aether-scheduler-core",
+ "async-trait",
+ "http",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "aether-ai-surfaces"
 version = "0.1.0"
 dependencies = [
  "aether-ai-formats",
  "aether-contracts",
- "aether-provider-transport",
- "aether-usage-runtime",
  "base64 0.22.1",
  "http",
  "serde",
@@ -150,7 +164,8 @@ name = "aether-gateway"
 version = "0.1.0"
 dependencies = [
  "aether-admin",
- "aether-ai-pipeline",
+ "aether-ai-serving",
+ "aether-ai-surfaces",
  "aether-billing",
  "aether-cache",
  "aether-contracts",

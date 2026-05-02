@@ -10,7 +10,7 @@ use super::response::{
     ADMIN_PROVIDER_QUERY_PROVIDER_ID_REQUIRED_DETAIL,
     ADMIN_PROVIDER_QUERY_PROVIDER_NOT_FOUND_DETAIL,
 };
-use crate::ai_pipeline::{maybe_build_sync_finalize_outcome, GatewayControlDecision};
+use crate::ai_serving::{maybe_build_sync_finalize_outcome, GatewayControlDecision};
 use crate::execution_runtime;
 use crate::handlers::admin::request::{AdminAppState, AdminGatewayProviderTransportSnapshot};
 use crate::model_fetch::ModelFetchRuntimeState;
@@ -289,7 +289,7 @@ fn provider_query_key_supports_endpoint(
 }
 
 fn provider_query_normalize_api_format_alias(value: &str) -> String {
-    crate::ai_pipeline::normalize_api_format_alias(value)
+    crate::ai_serving::normalize_api_format_alias(value)
 }
 
 fn provider_query_transport_supports_standard_test_execution(
@@ -297,7 +297,7 @@ fn provider_query_transport_supports_standard_test_execution(
     transport: &AdminGatewayProviderTransportSnapshot,
     api_format: &str,
 ) -> bool {
-    match crate::ai_pipeline::normalize_api_format_alias(api_format).as_str() {
+    match crate::ai_serving::normalize_api_format_alias(api_format).as_str() {
         "openai:chat" => {
             crate::provider_transport::policy::supports_local_openai_chat_transport(transport)
         }
@@ -860,7 +860,7 @@ async fn provider_query_execute_kiro_test_candidate(
         provider_query_extract_error_message(&result)
     } else if response_body.is_none()
         && provider_query_decode_execution_body(&result)
-            .is_some_and(|body| crate::ai_pipeline::stream_body_contains_error_event(&body))
+            .is_some_and(|body| crate::ai_serving::stream_body_contains_error_event(&body))
     {
         Some("Kiro upstream returned embedded stream error".to_string())
     } else {
@@ -930,11 +930,11 @@ async fn provider_query_execute_standard_test_candidate(
 
     let provider_api_format = candidate.endpoint.api_format.as_str();
     let normalized_provider_api_format =
-        crate::ai_pipeline::normalize_api_format_alias(provider_api_format);
+        crate::ai_serving::normalize_api_format_alias(provider_api_format);
     let provider_request_body = match normalized_provider_api_format.as_str() {
         "openai:chat" => {
             let Some(mut provider_request_body) =
-                crate::ai_pipeline::build_local_openai_chat_request_body(
+                crate::ai_serving::build_local_openai_chat_request_body(
                     &request_body,
                     &candidate.effective_model,
                     false,
@@ -959,7 +959,7 @@ async fn provider_query_execute_standard_test_candidate(
         }
         "claude:messages" | "gemini:generate_content" => {
             let Some(mut provider_request_body) =
-                crate::ai_pipeline::build_cross_format_openai_chat_request_body(
+                crate::ai_serving::build_cross_format_openai_chat_request_body(
                     &request_body,
                     &candidate.effective_model,
                     normalized_provider_api_format.as_str(),
@@ -985,7 +985,7 @@ async fn provider_query_execute_standard_test_candidate(
         }
         "openai:responses" => {
             let Some(mut provider_request_body) =
-                crate::ai_pipeline::build_cross_format_openai_chat_request_body(
+                crate::ai_serving::build_cross_format_openai_chat_request_body(
                     &request_body,
                     &candidate.effective_model,
                     normalized_provider_api_format.as_str(),
@@ -1007,14 +1007,14 @@ async fn provider_query_execute_standard_test_candidate(
                     format!("Provider request body rules rejected {provider_api_format}"),
                 ));
             }
-            crate::ai_pipeline::apply_codex_openai_responses_special_body_edits(
+            crate::ai_serving::apply_codex_openai_responses_special_body_edits(
                 &mut provider_request_body,
                 transport.provider.provider_type.as_str(),
                 provider_api_format,
                 transport.endpoint.body_rules.as_ref(),
                 Some(candidate.key.id.as_str()),
             );
-            crate::ai_pipeline::apply_openai_responses_compact_special_body_edits(
+            crate::ai_serving::apply_openai_responses_compact_special_body_edits(
                 &mut provider_request_body,
                 provider_api_format,
             );
@@ -1036,13 +1036,13 @@ async fn provider_query_execute_standard_test_candidate(
         None
     };
     let oauth_auth =
-        match crate::ai_pipeline::normalize_api_format_alias(provider_api_format).as_str() {
+        match crate::ai_serving::normalize_api_format_alias(provider_api_format).as_str() {
             "openai:chat" | "openai:responses" | "claude:messages" | "gemini:generate_content" => {
                 state.resolve_local_oauth_header_auth(&transport).await?
             }
             _ => None,
         };
-    let auth = match crate::ai_pipeline::normalize_api_format_alias(provider_api_format).as_str() {
+    let auth = match crate::ai_serving::normalize_api_format_alias(provider_api_format).as_str() {
         "openai:chat" | "openai:responses" => {
             crate::provider_transport::auth::resolve_local_openai_bearer_auth(&transport)
                 .or(oauth_auth)
@@ -1156,8 +1156,8 @@ async fn provider_query_execute_standard_test_candidate(
             response_body: None,
         });
     }
-    if crate::ai_pipeline::is_openai_responses_format(provider_api_format) {
-        crate::ai_pipeline::apply_codex_openai_responses_special_headers(
+    if crate::ai_serving::is_openai_responses_format(provider_api_format) {
+        crate::ai_serving::apply_codex_openai_responses_special_headers(
             &mut request_headers,
             &provider_request_body,
             &parts.headers,
@@ -1264,7 +1264,7 @@ fn provider_query_prefers_chat_standard_test_api_format(api_format: &str) -> boo
 
 fn provider_query_supports_cli_standard_test_api_format(api_format: &str) -> bool {
     matches!(
-        crate::ai_pipeline::normalize_api_format_alias(api_format).as_str(),
+        crate::ai_serving::normalize_api_format_alias(api_format).as_str(),
         "openai:responses" | "claude:messages" | "gemini:generate_content"
     )
 }
