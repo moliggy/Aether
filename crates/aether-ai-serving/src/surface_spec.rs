@@ -1,4 +1,4 @@
-use aether_ai_surfaces::api::{
+use aether_ai_formats::api::{
     LocalGeminiFilesSpec, LocalOpenAiImageSpec, LocalOpenAiResponsesSpec,
     LocalSameFormatProviderFamily, LocalSameFormatProviderSpec, LocalStandardSourceFamily,
     LocalStandardSpec, LocalVideoCreateFamily, LocalVideoCreateSpec,
@@ -156,7 +156,7 @@ pub fn extract_ai_requested_model_from_request_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aether_ai_surfaces::api::{LocalStandardSourceMode, OPENAI_CHAT_SYNC_SUCCESS_REPORT_KIND};
+    use aether_ai_formats::api::{LocalStandardSourceMode, OPENAI_CHAT_SYNC_SUCCESS_REPORT_KIND};
 
     #[test]
     fn standard_spec_metadata_maps_model_family_and_report_kind() {

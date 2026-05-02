@@ -30,7 +30,7 @@ fn ai_serving_target_structure_removes_legacy_pipeline_boundary() {
     for root in [
         "apps/aether-gateway/src",
         "crates/aether-ai-serving/src",
-        "crates/aether-ai-surfaces/src",
+        "crates/aether-ai-formats/src",
     ] {
         for file in collect_workspace_rust_files(root) {
             let relative = file
@@ -526,7 +526,7 @@ fn ai_serving_internal_dtos_use_ai_execution_names() {
         "apps/aether-gateway/src/executor",
         "apps/aether-gateway/src/execution_runtime",
         "crates/aether-ai-serving/src",
-        "crates/aether-ai-surfaces/src",
+        "crates/aether-ai-formats/src",
     ] {
         for file in collect_workspace_rust_files(root) {
             let relative = file
@@ -559,11 +559,8 @@ fn ai_serving_internal_dtos_use_ai_execution_names() {
 }
 
 #[test]
-fn ai_surface_and_format_crates_stay_free_of_gateway_runtime_deps() {
-    for manifest_path in [
-        "crates/aether-ai-surfaces/Cargo.toml",
-        "crates/aether-ai-formats/Cargo.toml",
-    ] {
+fn ai_format_crate_stays_free_of_gateway_runtime_deps() {
+    for manifest_path in ["crates/aether-ai-formats/Cargo.toml"] {
         let manifest = read_workspace_file(manifest_path);
         for forbidden in [
             "axum",
@@ -581,10 +578,7 @@ fn ai_surface_and_format_crates_stay_free_of_gateway_runtime_deps() {
     }
 
     let mut violations = Vec::new();
-    for root in [
-        "crates/aether-ai-surfaces/src",
-        "crates/aether-ai-formats/src",
-    ] {
+    for root in ["crates/aether-ai-formats/src"] {
         for file in collect_workspace_rust_files(root) {
             let source = std::fs::read_to_string(&file).expect("source file should be readable");
             let hits = [
@@ -607,7 +601,7 @@ fn ai_surface_and_format_crates_stay_free_of_gateway_runtime_deps() {
     }
     assert!(
         violations.is_empty(),
-        "surface and format crates should stay pure of gateway runtime dependencies:\n{}",
+        "format crate should stay pure of gateway runtime dependencies:\n{}",
         violations.join("\n")
     );
 }
@@ -617,7 +611,6 @@ fn aether_runtime_stays_free_of_ai_serving_policy() {
     let runtime_manifest = read_workspace_file("crates/aether-runtime/Cargo.toml");
     for forbidden in [
         "aether-ai-serving",
-        "aether-ai-surfaces",
         "aether-ai-formats",
         "aether-provider-transport",
         "aether-gateway",
@@ -633,7 +626,6 @@ fn aether_runtime_stays_free_of_ai_serving_policy() {
         let source = std::fs::read_to_string(&file).expect("source file should be readable");
         let hits = [
             "aether_ai_serving",
-            "aether_ai_surfaces",
             "aether_ai_formats",
             "aether_provider_transport",
             "AiExecution",
@@ -687,14 +679,14 @@ fn ai_serving_crate_api_is_confined_to_root_seams() {
         }
 
         let source = std::fs::read_to_string(&file).expect("source file should be readable");
-        if source.contains("aether_ai_surfaces::api") {
+        if source.contains("aether_ai_formats::api") {
             violations.push(relative);
         }
     }
 
     assert!(
         violations.is_empty(),
-        "gateway code should only depend on aether_ai_surfaces::api through ai_serving/pure/mod.rs or ai_serving/api.rs:\n{}",
+        "gateway code should only depend on aether_ai_formats::api through ai_serving/pure/mod.rs or ai_serving/api.rs:\n{}",
         violations.join("\n")
     );
 
@@ -718,14 +710,14 @@ fn ai_serving_crate_api_is_confined_to_root_seams() {
         }
 
         let source = std::fs::read_to_string(&file).expect("source file should be readable");
-        if source.contains("aether_ai_surfaces::") {
+        if source.contains("aether_ai_formats::") {
             crate_violations.push(relative);
         }
     }
 
     assert!(
         crate_violations.is_empty(),
-        "gateway code should only depend directly on aether_ai_surfaces through ai_serving root seams:\n{}",
+        "gateway code should only depend directly on aether_ai_formats through ai_serving root seams:\n{}",
         crate_violations.join("\n")
     );
 }
@@ -766,7 +758,7 @@ fn ai_serving_routes_control_and_execution_deps_through_facades() {
 
     assert!(
         !workspace_file_exists("apps/aether-gateway/src/ai_serving/contracts"),
-        "gateway ai_serving should not keep a contracts directory; contracts belong to aether-ai-surfaces and serving DTOs belong to aether-ai-serving"
+        "gateway ai_serving should not keep a contracts directory; contracts belong to aether-ai-formats and serving DTOs belong to aether-ai-serving"
     );
 
     let ai_serving_mod = read_workspace_file("apps/aether-gateway/src/ai_serving/mod.rs");
@@ -775,7 +767,7 @@ fn ai_serving_routes_control_and_execution_deps_through_facades() {
         "ai_serving/mod.rs should not own GatewayControlAuthContext after execution auth DTO extraction"
     );
     for pattern in [
-        "struct GatewayControlPlanRequest",
+        "struct AiControlPlanRequest",
         "struct AiExecutionPlanPayload",
         "struct AiExecutionDecision",
     ] {
@@ -795,8 +787,8 @@ fn ai_serving_routes_control_and_execution_deps_through_facades() {
         "ai_serving/mod.rs should delegate exact-request detection through aether-ai-serving"
     );
     assert!(
-        !ai_serving_mod.contains("GatewayControlPlanRequest {"),
-        "ai_serving/mod.rs should not locally construct GatewayControlPlanRequest after helper extraction"
+        !ai_serving_mod.contains("AiControlPlanRequest {"),
+        "ai_serving/mod.rs should not locally construct AiControlPlanRequest after helper extraction"
     );
     assert!(
         !ai_serving_mod.contains("pub(crate) async fn build_gateway_plan_request("),
@@ -881,17 +873,17 @@ fn ai_serving_routes_control_and_execution_deps_through_facades() {
     assert!(
         gateway_finalize_common
             .contains("prepare_local_success_response_parts as prepare_local_success_response_parts_impl"),
-        "finalize/common.rs should delegate success response-part normalization to the surface crate"
+        "finalize/common.rs should delegate success response-part normalization to the format crate"
     );
     assert!(
         gateway_finalize_common
             .contains("build_local_success_background_report as build_local_success_background_report_impl"),
-        "finalize/common.rs should delegate pure success background-report construction to the surface crate"
+        "finalize/common.rs should delegate pure success background-report construction to the format crate"
     );
     assert!(
         gateway_finalize_common
             .contains("build_local_success_conversion_background_report as build_local_success_conversion_background_report_impl"),
-        "finalize/common.rs should delegate pure conversion success background-report construction to the surface crate"
+        "finalize/common.rs should delegate pure conversion success background-report construction to the format crate"
     );
     assert!(
         gateway_finalize_common.contains("surface_report_parts_from_gateway(")
@@ -930,7 +922,7 @@ fn ai_serving_routes_control_and_execution_deps_through_facades() {
     );
 
     assert!(
-        !ai_serving_mod.contains("pub(crate) use aether_ai_surfaces::api::*;"),
+        !ai_serving_mod.contains("pub(crate) use aether_ai_formats::api::*;"),
         "ai_serving/mod.rs should not keep wildcard surface-crate exports after root-seam freeze"
     );
     for export in [
@@ -968,7 +960,7 @@ fn ai_serving_routes_control_and_execution_deps_through_facades() {
 
     let pure_mod = read_workspace_file("apps/aether-gateway/src/ai_serving/pure/mod.rs");
     for pattern in [
-        "pub(crate) use aether_ai_surfaces::api::{",
+        "pub(crate) use aether_ai_formats::api::{",
         "ExecutionRuntimeAuthContext",
         "ProviderAdaptationDescriptor",
         "RequestConversionKind",
@@ -1017,8 +1009,8 @@ fn ai_serving_routes_provider_transport_deps_through_facade() {
         "ai_serving/runtime should stay removed after facade cleanup"
     );
     assert!(
-        !workspace_file_exists("crates/aether-ai-surfaces/src/transport.rs"),
-        "aether-ai-surfaces should not expose a provider transport bridge"
+        !workspace_file_exists("crates/aether-ai-formats/src/transport.rs"),
+        "aether-ai-formats should not expose a provider transport bridge"
     );
 
     let provider_transport_facade =
@@ -1039,7 +1031,7 @@ fn ai_serving_routes_provider_transport_deps_through_facade() {
         "crate::provider_transport::url",
         "crate::provider_transport::policy",
         "crate::provider_transport::snapshot",
-        "aether_ai_surfaces::transport",
+        "aether_ai_formats::transport",
     ] {
         assert!(
             !provider_transport_facade.contains(forbidden),
@@ -2161,7 +2153,7 @@ fn ai_serving_image_routes_split_surface_normalization_and_transport_policy() {
     }
 
     let surface_image =
-        read_workspace_file("crates/aether-ai-surfaces/src/planner/specialized/image.rs");
+        read_workspace_file("crates/aether-ai-formats/src/request/specialized/image.rs");
     for pattern in [
         "pub enum OpenAiImageOperation",
         "pub fn is_openai_image_stream_request(",
@@ -2172,7 +2164,7 @@ fn ai_serving_image_routes_split_surface_normalization_and_transport_policy() {
     ] {
         assert!(
             surface_image.contains(pattern),
-            "aether-ai-surfaces specialized/image.rs should own OpenAI image surface logic {pattern}"
+            "aether-ai-formats specialized/image.rs should own OpenAI image format surface logic {pattern}"
         );
     }
 
@@ -3214,7 +3206,7 @@ fn ai_serving_leaf_planner_owners_route_contract_specs_through_gateway_seams() {
     ] {
         let source = read_workspace_file(path);
         assert!(
-            !source.contains("aether_ai_surfaces::contracts::ExecutionRuntimeAuthContext"),
+            !source.contains("aether_ai_formats::contracts::ExecutionRuntimeAuthContext"),
             "{path} should consume ExecutionRuntimeAuthContext through gateway ai_serving seams"
         );
         assert!(
@@ -3228,7 +3220,7 @@ fn ai_serving_leaf_planner_owners_route_contract_specs_through_gateway_seams() {
     );
     assert!(
         !specialized_files_decision
-            .contains("aether_ai_surfaces::planner::specialized::files::LocalGeminiFilesSpec"),
+            .contains("aether_ai_formats::request::specialized::files::LocalGeminiFilesSpec"),
         "planner/specialized/files/decision.rs should consume LocalGeminiFilesSpec through the local specialized seam"
     );
     assert!(
@@ -3246,16 +3238,16 @@ fn ai_serving_leaf_planner_owners_route_contract_specs_through_gateway_seams() {
 }
 
 #[test]
-fn ai_serving_m5_moves_contracts_and_route_logic_into_surface_crate() {
+fn ai_serving_m5_moves_contracts_and_route_logic_into_format_crate() {
     for path in [
-        "crates/aether-ai-surfaces/src/contracts/actions.rs",
-        "crates/aether-ai-surfaces/src/contracts/plan_kinds.rs",
-        "crates/aether-ai-surfaces/src/contracts/report_kinds.rs",
-        "crates/aether-ai-surfaces/src/planner/route.rs",
+        "crates/aether-ai-formats/src/contracts/actions.rs",
+        "crates/aether-ai-formats/src/contracts/plan_kinds.rs",
+        "crates/aether-ai-formats/src/contracts/report_kinds.rs",
+        "crates/aether-ai-formats/src/request/route.rs",
     ] {
         assert!(
             workspace_file_exists(path),
-            "{path} should exist after initial surface crate extraction"
+            "{path} should exist after initial format crate extraction"
         );
     }
 
@@ -3288,7 +3280,7 @@ fn ai_serving_m5_moves_contracts_and_route_logic_into_surface_crate() {
     );
     assert!(
         gateway_route_runtime.contains("is_matching_stream_http_request"),
-        "planner/route.rs should delegate full HTTP stream matching to aether-ai-surfaces"
+        "planner/route.rs should delegate full HTTP stream matching to aether-ai-formats"
     );
     for legacy_literal in [
         "\"openai_chat_stream\"",
@@ -3312,14 +3304,14 @@ fn ai_serving_m5_moves_contracts_and_route_logic_into_surface_crate() {
         );
     }
 
-    let surface_route = read_workspace_file("crates/aether-ai-surfaces/src/planner/route.rs");
+    let surface_route = read_workspace_file("crates/aether-ai-formats/src/request/route.rs");
     for pattern in [
         "pub fn is_matching_stream_http_request(",
         "is_openai_image_stream_request(parts, body_json, body_base64)",
     ] {
         assert!(
             surface_route.contains(pattern),
-            "aether-ai-surfaces planner/route.rs should own HTTP stream matching surface logic {pattern}"
+            "aether-ai-formats planner/route.rs should own HTTP stream matching format surface logic {pattern}"
         );
     }
 
@@ -3329,8 +3321,8 @@ fn ai_serving_m5_moves_contracts_and_route_logic_into_surface_crate() {
         "pub(crate) fn resolve_execution_runtime_stream_plan_kind(",
         "pub(crate) fn resolve_execution_runtime_sync_plan_kind(",
         "pub(crate) fn is_matching_stream_request(",
-        "pub(crate) fn supports_sync_scheduler_decision_kind(",
-        "pub(crate) fn supports_stream_scheduler_decision_kind(",
+        "pub(crate) fn supports_sync_execution_decision_kind(",
+        "pub(crate) fn supports_stream_execution_decision_kind(",
     ] {
         assert!(
             gateway_api.contains(pattern),
@@ -3363,14 +3355,14 @@ fn ai_serving_m5_moves_contracts_and_route_logic_into_surface_crate() {
 }
 
 #[test]
-fn ai_serving_m5_moves_kiro_stream_helpers_into_surface_crate() {
+fn ai_serving_m5_moves_kiro_stream_helpers_into_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/adaptation/kiro_stream.rs"),
-        "crates/aether-ai-surfaces/src/adaptation/kiro_stream.rs should exist after kiro helper extraction"
+        workspace_file_exists("crates/aether-ai-formats/src/provider_compat/kiro_stream.rs"),
+        "crates/aether-ai-formats/src/provider_compat/kiro_stream.rs should exist after kiro helper extraction"
     );
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/adaptation/kiro_stream/state.rs"),
-        "crates/aether-ai-surfaces/src/adaptation/kiro_stream/state.rs should own the Kiro stream state machine"
+        workspace_file_exists("crates/aether-ai-formats/src/provider_compat/kiro_stream/state.rs"),
+        "crates/aether-ai-formats/src/provider_compat/kiro_stream/state.rs should own the Kiro stream state machine"
     );
 
     for path in [
@@ -3384,10 +3376,10 @@ fn ai_serving_m5_moves_kiro_stream_helpers_into_surface_crate() {
         );
     }
 
-    let surface_api = read_workspace_file("crates/aether-ai-surfaces/src/api.rs");
+    let surface_api = read_workspace_file("crates/aether-ai-formats/src/api.rs");
     assert!(
         surface_api.contains("KiroToClaudeCliStreamState"),
-        "aether-ai-surfaces api should export KiroToClaudeCliStreamState"
+        "aether-ai-formats api should export KiroToClaudeCliStreamState"
     );
 
     for file in collect_workspace_rust_files("apps/aether-gateway/src/ai_serving") {
@@ -3419,9 +3411,9 @@ fn ai_serving_m5_moves_kiro_stream_helpers_into_surface_crate() {
 }
 
 #[test]
-fn ai_serving_private_envelope_stream_normalizer_is_owned_by_surface_crate() {
+fn ai_serving_private_envelope_stream_normalizer_is_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/adaptation/private_envelope.rs"),
+        workspace_file_exists("crates/aether-ai-formats/src/provider_compat/private_envelope.rs"),
         "surface private envelope adapter should exist"
     );
     assert!(
@@ -3438,7 +3430,7 @@ fn ai_serving_private_envelope_stream_normalizer_is_owned_by_surface_crate() {
     );
 
     let surface_private_envelope =
-        read_workspace_file("crates/aether-ai-surfaces/src/adaptation/private_envelope.rs");
+        read_workspace_file("crates/aether-ai-formats/src/provider_compat/private_envelope.rs");
     for expected in [
         "pub struct ProviderPrivateStreamNormalizer",
         "pub fn maybe_build_provider_private_stream_normalizer",
@@ -3551,7 +3543,7 @@ fn ai_serving_planner_route_remains_control_only() {
 }
 
 #[test]
-fn ai_serving_error_body_is_owned_by_surface_finalize_crate() {
+fn ai_serving_error_body_is_owned_by_format_finalize_module() {
     assert!(
         !workspace_file_exists("apps/aether-gateway/src/ai_serving/conversion"),
         "gateway ai_serving should not keep a conversion directory; format conversion belongs to aether-ai-formats and transport checks belong to provider transport"
@@ -3561,12 +3553,12 @@ fn ai_serving_error_body_is_owned_by_surface_finalize_crate() {
         "ai_serving/conversion/error.rs should stay removed"
     );
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/finalize/error_body.rs"),
-        "surface error response-body helpers should live under finalize/error_body.rs"
+        workspace_file_exists("crates/aether-ai-formats/src/response/error_body.rs"),
+        "format error response-body helpers should live under finalize/error_body.rs"
     );
     assert!(
-        !workspace_file_exists("crates/aether-ai-surfaces/src/conversion/error.rs"),
-        "aether-ai-surfaces should not keep error response-body helpers under conversion"
+        !workspace_file_exists("crates/aether-ai-formats/src/protocol/conversion/error.rs"),
+        "aether-ai-formats should not keep error response-body helpers under conversion"
     );
 
     let gateway_ai_serving_mod = read_workspace_file("apps/aether-gateway/src/ai_serving/mod.rs");
@@ -3590,12 +3582,8 @@ fn ai_serving_error_body_is_owned_by_surface_finalize_crate() {
 #[test]
 fn ai_serving_conversion_request_is_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-formats/src/conversion/request/mod.rs"),
+        workspace_file_exists("crates/aether-ai-formats/src/protocol/conversion/request/mod.rs"),
         "request conversion should live in aether-ai-formats"
-    );
-    assert!(
-        !workspace_file_exists("crates/aether-ai-surfaces/src/conversion/request/mod.rs"),
-        "aether-ai-surfaces should not keep request conversion wrappers"
     );
     assert!(
         !workspace_file_exists(
@@ -3619,22 +3607,18 @@ fn ai_serving_conversion_request_is_owned_by_format_crate() {
         "gateway ai_serving/mod.rs should not keep request re-export shell after root-seam consolidation"
     );
 
-    let surface_api = read_workspace_file("crates/aether-ai-surfaces/src/api.rs");
+    let surface_api = read_workspace_file("crates/aether-ai-formats/src/api.rs");
     assert!(
-        surface_api.contains("pub use aether_ai_formats::conversion::request::{"),
-        "surface API facade should re-export request conversion directly from aether-ai-formats"
+        surface_api.contains("pub use aether_ai_formats::protocol::conversion::request::{"),
+        "format API facade should re-export request conversion directly from aether-ai-formats"
     );
 }
 
 #[test]
 fn ai_serving_conversion_response_is_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-formats/src/conversion/response/mod.rs"),
+        workspace_file_exists("crates/aether-ai-formats/src/protocol/conversion/response/mod.rs"),
         "response conversion should live in aether-ai-formats"
-    );
-    assert!(
-        !workspace_file_exists("crates/aether-ai-surfaces/src/conversion/response/mod.rs"),
-        "aether-ai-surfaces should not keep response conversion wrappers"
     );
     assert!(
         !workspace_file_exists(
@@ -3658,48 +3642,42 @@ fn ai_serving_conversion_response_is_owned_by_format_crate() {
         "gateway ai_serving/mod.rs should not keep response re-export shell after root-seam consolidation"
     );
 
-    let surface_api = read_workspace_file("crates/aether-ai-surfaces/src/api.rs");
+    let surface_api = read_workspace_file("crates/aether-ai-formats/src/api.rs");
     assert!(
-        surface_api.contains("pub use aether_ai_formats::conversion::response::{"),
-        "surface API facade should re-export response conversion directly from aether-ai-formats"
+        surface_api.contains("pub use aether_ai_formats::protocol::conversion::response::{"),
+        "format API facade should re-export response conversion directly from aether-ai-formats"
     );
 }
 
 #[test]
-fn ai_surfaces_no_longer_owns_conversion_directory() {
+fn ai_format_crate_owns_conversion_and_surface_facade() {
     assert!(
-        !workspace_file_exists("crates/aether-ai-surfaces/src/conversion"),
-        "aether-ai-surfaces should not keep a conversion directory; format conversion belongs to aether-ai-formats"
+        workspace_file_exists("crates/aether-ai-formats/src/protocol/conversion"),
+        "aether-ai-formats should own the conversion directory"
     );
 
-    let surface_lib = read_workspace_file("crates/aether-ai-surfaces/src/lib.rs");
+    let surface_lib = read_workspace_file("crates/aether-ai-formats/src/lib.rs");
     assert!(
-        !surface_lib.contains("pub mod conversion;"),
-        "aether-ai-surfaces lib.rs should not expose a conversion module"
+        surface_lib.contains("pub mod protocol;"),
+        "aether-ai-formats lib.rs should expose the protocol module"
     );
 
-    let surface_api = read_workspace_file("crates/aether-ai-surfaces/src/api.rs");
+    let surface_api = read_workspace_file("crates/aether-ai-formats/src/api.rs");
     for pattern in [
         "pub use aether_ai_formats::{",
-        "pub use aether_ai_formats::conversion::request::{",
-        "pub use aether_ai_formats::conversion::response::{",
-        "pub use crate::finalize::error_body::{",
+        "pub use aether_ai_formats::protocol::conversion::request::{",
+        "pub use aether_ai_formats::protocol::conversion::response::{",
+        "pub use crate::response::error_body::{",
     ] {
         assert!(
             surface_api.contains(pattern),
-            "surface API facade should expose pure dependencies through {pattern}"
-        );
-    }
-    for forbidden in ["pub use crate::conversion::", "crate::conversion::"] {
-        assert!(
-            !surface_api.contains(forbidden),
-            "surface API facade should not route through the removed conversion module {forbidden}"
+            "format API facade should expose pure dependencies through {pattern}"
         );
     }
 }
 
 #[test]
-fn ai_serving_finalize_standard_sync_response_converters_are_owned_by_surface_crate() {
+fn ai_serving_finalize_standard_sync_response_converters_are_owned_by_format_crate() {
     for path in [
         "apps/aether-gateway/src/ai_serving/finalize/standard/openai/sync/chat.rs",
         "apps/aether-gateway/src/ai_serving/finalize/standard/openai/sync/cli.rs",
@@ -3766,18 +3744,18 @@ fn ai_serving_finalize_standard_sync_response_converters_are_owned_by_surface_cr
 }
 
 #[test]
-fn ai_serving_finalize_stream_engine_is_owned_by_surface_crate() {
+fn ai_serving_finalize_stream_engine_is_owned_by_format_crate() {
     for path in [
-        "crates/aether-ai-surfaces/src/finalize/sse.rs",
-        "crates/aether-ai-surfaces/src/finalize/standard/stream_core/common.rs",
-        "crates/aether-ai-surfaces/src/finalize/standard/stream_core/format_matrix.rs",
-        "crates/aether-ai-surfaces/src/finalize/standard/openai/stream.rs",
-        "crates/aether-ai-surfaces/src/finalize/standard/claude/stream.rs",
-        "crates/aether-ai-surfaces/src/finalize/standard/gemini/stream.rs",
+        "crates/aether-ai-formats/src/response/sse.rs",
+        "crates/aether-ai-formats/src/response/standard/stream_core/common.rs",
+        "crates/aether-ai-formats/src/response/standard/stream_core/format_matrix.rs",
+        "crates/aether-ai-formats/src/response/standard/openai/stream.rs",
+        "crates/aether-ai-formats/src/response/standard/claude/stream.rs",
+        "crates/aether-ai-formats/src/response/standard/gemini/stream.rs",
     ] {
         assert!(
             workspace_file_exists(path),
-            "{path} should exist in aether-ai-surfaces finalize engine"
+            "{path} should exist in aether-ai-formats finalize engine"
         );
     }
 
@@ -3809,7 +3787,7 @@ fn ai_serving_finalize_stream_engine_is_owned_by_surface_crate() {
     }
 
     let surface_format_matrix = read_workspace_file(
-        "crates/aether-ai-surfaces/src/finalize/standard/stream_core/format_matrix.rs",
+        "crates/aether-ai-formats/src/response/standard/stream_core/format_matrix.rs",
     );
     for pattern in [
         "pub struct StreamingStandardFormatMatrix",
@@ -3831,18 +3809,18 @@ fn ai_serving_finalize_stream_engine_is_owned_by_surface_crate() {
 }
 
 #[test]
-fn ai_serving_finalize_standard_sync_products_are_owned_by_surface_crate() {
+fn ai_serving_finalize_standard_sync_products_are_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/finalize/sync_products.rs"),
-        "finalize sync_products should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/response/sync_products.rs"),
+        "finalize sync_products should live in aether-ai-formats"
     );
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/finalize/sync_to_stream.rs"),
-        "finalize sync-to-stream bridge should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/response/sync_to_stream.rs"),
+        "finalize sync-to-stream bridge should live in aether-ai-formats"
     );
 
     let surface_sync_products =
-        read_workspace_file("crates/aether-ai-surfaces/src/finalize/sync_products.rs");
+        read_workspace_file("crates/aether-ai-formats/src/response/sync_products.rs");
     for expected in [
         "pub fn maybe_build_standard_cross_format_sync_product_from_normalized_payload(",
         "pub fn maybe_build_standard_same_format_sync_body_from_normalized_payload(",
@@ -3935,11 +3913,11 @@ fn ai_serving_finalize_standard_sync_products_are_owned_by_surface_crate() {
         gateway_internal_sync.contains(
             "maybe_build_standard_sync_finalize_product_from_normalized_payload"
         ),
-        "gateway internal/sync_finalize.rs should delegate normalized standard sync finalize dispatch to aether-ai-surfaces"
+        "gateway internal/sync_finalize.rs should delegate normalized standard sync finalize dispatch to aether-ai-formats"
     );
     assert!(
         gateway_internal_sync.contains("maybe_build_openai_image_sync_finalize_product"),
-        "gateway internal/sync_finalize.rs should delegate OpenAI image sync finalize parsing to aether-ai-surfaces"
+        "gateway internal/sync_finalize.rs should delegate OpenAI image sync finalize parsing to aether-ai-formats"
     );
     for forbidden in [
         "CODEX_OPENAI_IMAGE_DEFAULT_OUTPUT_FORMAT",
@@ -3969,7 +3947,7 @@ fn ai_serving_finalize_standard_sync_products_are_owned_by_surface_crate() {
     }
 
     let surface_openai_image_stream =
-        read_workspace_file("crates/aether-ai-surfaces/src/finalize/openai_image_stream.rs");
+        read_workspace_file("crates/aether-ai-formats/src/response/openai_image_stream.rs");
     for expected in [
         "pub fn maybe_build_openai_image_sync_finalize_product(",
         "pub struct OpenAiImageSyncFinalizeProduct",
@@ -3984,7 +3962,7 @@ fn ai_serving_finalize_standard_sync_products_are_owned_by_surface_crate() {
     }
 
     let surface_sync_to_stream =
-        read_workspace_file("crates/aether-ai-surfaces/src/finalize/sync_to_stream.rs");
+        read_workspace_file("crates/aether-ai-formats/src/response/sync_to_stream.rs");
     for expected in [
         "pub fn maybe_bridge_standard_sync_json_to_stream(",
         "pub struct SyncToStreamBridgeOutcome",
@@ -4019,14 +3997,14 @@ fn ai_serving_finalize_standard_sync_products_are_owned_by_surface_crate() {
 }
 
 #[test]
-fn ai_serving_finalize_stream_rewrite_matrix_is_owned_by_surface_crate() {
+fn ai_serving_finalize_stream_rewrite_matrix_is_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/finalize/stream_rewrite.rs"),
-        "finalize stream rewrite matrix should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/response/stream_rewrite.rs"),
+        "finalize stream rewrite matrix should live in aether-ai-formats"
     );
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/finalize/openai_image_stream.rs"),
-        "OpenAI image stream rewrite state should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/response/openai_image_stream.rs"),
+        "OpenAI image stream rewrite state should live in aether-ai-formats"
     );
 
     let gateway_stream_rewrite = read_workspace_file(
@@ -4034,7 +4012,7 @@ fn ai_serving_finalize_stream_rewrite_matrix_is_owned_by_surface_crate() {
     );
     assert!(
         gateway_stream_rewrite.contains("maybe_build_ai_surface_stream_rewriter"),
-        "gateway internal stream_rewrite should delegate stream rewrite state machine to aether-ai-surfaces"
+        "gateway internal stream_rewrite should delegate stream rewrite state machine to aether-ai-formats"
     );
 
     for forbidden in [
@@ -4072,10 +4050,10 @@ fn ai_serving_finalize_stream_rewrite_matrix_is_owned_by_surface_crate() {
 }
 
 #[test]
-fn ai_serving_planner_common_parser_is_owned_by_surface_crate() {
+fn ai_serving_planner_common_parser_is_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/common.rs"),
-        "planner/common pure parser should exist in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/common.rs"),
+        "planner/common pure parser should exist in aether-ai-formats"
     );
 
     let gateway_common =
@@ -4215,10 +4193,10 @@ fn ai_serving_root_owns_shared_gemini_request_path_parser() {
 }
 
 #[test]
-fn ai_serving_planner_standard_normalize_is_owned_by_surface_crate() {
+fn ai_serving_planner_standard_normalize_is_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/standard/normalize.rs"),
-        "planner/standard/normalize should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/standard/normalize.rs"),
+        "planner/standard/normalize should live in aether-ai-formats"
     );
 
     let gateway_normalize =
@@ -4232,7 +4210,7 @@ fn ai_serving_planner_standard_normalize_is_owned_by_surface_crate() {
     assert!(
         gateway_normalize_chat.contains("crate::ai_serving::")
             && gateway_normalize_cli.contains("crate::ai_serving::"),
-        "gateway normalize chat/cli owners should delegate to surface standard normalize helpers through the ai_serving root seam"
+        "gateway normalize chat/cli owners should delegate to format standard normalize helpers through the ai_serving root seam"
     );
 
     for forbidden in [
@@ -4278,10 +4256,10 @@ fn ai_serving_planner_standard_normalize_is_owned_by_surface_crate() {
 }
 
 #[test]
-fn ai_serving_openai_helpers_are_owned_by_surface_crate() {
+fn ai_serving_openai_helpers_are_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/openai.rs"),
-        "planner/openai helper owner should exist in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/openai.rs"),
+        "planner/openai helper owner should exist in aether-ai-formats"
     );
 
     let gateway_openai_mod =
@@ -4313,17 +4291,17 @@ fn ai_serving_openai_helpers_are_owned_by_surface_crate() {
 #[test]
 fn ai_serving_standard_matrix_delegates_format_conversion_to_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/matrix.rs"),
-        "planner/matrix facade should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/matrix.rs"),
+        "planner/matrix facade should live in aether-ai-formats"
     );
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/standard/matrix.rs"),
-        "surface standard request-body planner should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/standard/matrix.rs"),
+        "format standard request-body planner should live in aether-ai-formats"
     );
     for path in [
-        "crates/aether-ai-formats/src/canonical.rs",
-        "crates/aether-ai-formats/src/matrix.rs",
-        "crates/aether-ai-formats/src/registry.rs",
+        "crates/aether-ai-formats/src/protocol/canonical.rs",
+        "crates/aether-ai-formats/src/protocol/matrix.rs",
+        "crates/aether-ai-formats/src/protocol/registry.rs",
     ] {
         assert!(
             workspace_file_exists(path),
@@ -4331,11 +4309,13 @@ fn ai_serving_standard_matrix_delegates_format_conversion_to_format_crate() {
         );
     }
     let surface_matrix =
-        read_workspace_file("crates/aether-ai-surfaces/src/planner/standard/matrix.rs");
+        read_workspace_file("crates/aether-ai-formats/src/request/standard/matrix.rs");
     assert!(
-        surface_matrix.contains("aether_ai_formats::registry::{convert_request, FormatContext}")
-            && surface_matrix.contains("aether_ai_formats::conversion::request::{"),
-        "surface standard matrix should delegate format conversion to aether-ai-formats"
+        surface_matrix.contains("use aether_ai_formats::protocol::registry::{")
+            && surface_matrix.contains("convert_request")
+            && surface_matrix.contains("FormatContext")
+            && surface_matrix.contains("aether_ai_formats::protocol::conversion::request::{"),
+        "format standard matrix should delegate format conversion to aether-ai-formats"
     );
     for forbidden in [
         "pub fn convert_request(",
@@ -4344,14 +4324,9 @@ fn ai_serving_standard_matrix_delegates_format_conversion_to_format_crate() {
     ] {
         assert!(
             !surface_matrix.contains(forbidden),
-            "surface standard matrix should not own format conversion primitive {forbidden}"
+            "format standard matrix should not own format conversion primitive {forbidden}"
         );
     }
-    assert!(
-        !workspace_file_exists("crates/aether-ai-surfaces/src/conversion"),
-        "aether-ai-surfaces should not keep a conversion directory"
-    );
-
     assert!(
         !workspace_file_exists("apps/aether-gateway/src/ai_serving/planner/standard/matrix.rs"),
         "planner/standard/matrix.rs should stay removed after wrapper cleanup"
@@ -4384,26 +4359,26 @@ fn ai_serving_standard_matrix_delegates_format_conversion_to_format_crate() {
 }
 
 #[test]
-fn ai_serving_standard_family_specs_are_owned_by_surface_crate() {
+fn ai_serving_standard_family_specs_are_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/standard/family.rs"),
-        "planner/standard/family pure spec owner should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/standard/family.rs"),
+        "planner/standard/family pure spec owner should live in aether-ai-formats"
     );
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/standard/claude/chat.rs"),
-        "planner/standard/claude/chat pure spec resolver should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/standard/claude/chat.rs"),
+        "planner/standard/claude/chat pure spec resolver should live in aether-ai-formats"
     );
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/standard/claude/cli.rs"),
-        "planner/standard/claude/cli pure spec resolver should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/standard/claude/cli.rs"),
+        "planner/standard/claude/cli pure spec resolver should live in aether-ai-formats"
     );
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/standard/gemini/chat.rs"),
-        "planner/standard/gemini/chat pure spec resolver should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/standard/gemini/chat.rs"),
+        "planner/standard/gemini/chat pure spec resolver should live in aether-ai-formats"
     );
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/standard/gemini/cli.rs"),
-        "planner/standard/gemini/cli pure spec resolver should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/standard/gemini/cli.rs"),
+        "planner/standard/gemini/cli pure spec resolver should live in aether-ai-formats"
     );
 
     assert!(
@@ -4438,7 +4413,7 @@ fn ai_serving_standard_family_specs_are_owned_by_surface_crate() {
     ] {
         assert!(
             !workspace_file_exists(path),
-            "{path} should be removed after moving pure spec resolvers into the surface crate"
+            "{path} should be removed after moving pure spec resolvers into the format crate"
         );
     }
 
@@ -4467,10 +4442,10 @@ fn ai_serving_standard_family_specs_are_owned_by_surface_crate() {
 }
 
 #[test]
-fn ai_serving_same_format_provider_specs_are_owned_by_surface_crate() {
+fn ai_serving_same_format_provider_specs_are_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/passthrough/provider.rs"),
-        "planner/passthrough/provider pure spec owner should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/passthrough/provider.rs"),
+        "planner/passthrough/provider pure spec owner should live in aether-ai-formats"
     );
 
     assert!(
@@ -4518,10 +4493,10 @@ fn ai_serving_same_format_provider_specs_are_owned_by_surface_crate() {
 }
 
 #[test]
-fn ai_serving_passthrough_provider_specs_are_owned_by_surface_crate() {
+fn ai_serving_passthrough_provider_specs_are_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/passthrough/provider.rs"),
-        "planner/passthrough/provider pure spec owner should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/passthrough/provider.rs"),
+        "planner/passthrough/provider pure spec owner should live in aether-ai-formats"
     );
 
     let family_types = read_workspace_file(
@@ -4563,10 +4538,10 @@ fn ai_serving_passthrough_provider_specs_are_owned_by_surface_crate() {
 }
 
 #[test]
-fn ai_serving_specialized_files_specs_are_owned_by_surface_crate() {
+fn ai_serving_specialized_files_specs_are_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/specialized/files.rs"),
-        "planner/specialized/files pure spec owner should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/specialized/files.rs"),
+        "planner/specialized/files pure spec owner should live in aether-ai-formats"
     );
 
     let files =
@@ -4593,10 +4568,10 @@ fn ai_serving_specialized_files_specs_are_owned_by_surface_crate() {
 }
 
 #[test]
-fn ai_serving_specialized_video_specs_are_owned_by_surface_crate() {
+fn ai_serving_specialized_video_specs_are_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/specialized/video.rs"),
-        "planner/specialized/video pure spec owner should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/specialized/video.rs"),
+        "planner/specialized/video pure spec owner should live in aether-ai-formats"
     );
 
     let video =
@@ -4621,10 +4596,10 @@ fn ai_serving_specialized_video_specs_are_owned_by_surface_crate() {
 }
 
 #[test]
-fn ai_serving_openai_responses_specs_are_owned_by_surface_crate() {
+fn ai_serving_openai_responses_specs_are_owned_by_format_crate() {
     assert!(
-        workspace_file_exists("crates/aether-ai-surfaces/src/planner/standard/openai_responses.rs"),
-        "planner/standard/openai_responses pure spec owner should live in aether-ai-surfaces"
+        workspace_file_exists("crates/aether-ai-formats/src/request/standard/openai_responses.rs"),
+        "planner/standard/openai_responses pure spec owner should live in aether-ai-formats"
     );
 
     let decision = read_workspace_file(
@@ -4663,9 +4638,9 @@ fn ai_serving_openai_responses_specs_are_owned_by_surface_crate() {
 #[test]
 fn ai_serving_legacy_api_format_names_stay_out_of_primary_paths() {
     for path in [
-        "crates/aether-ai-surfaces/src/contracts/plan_kinds.rs",
-        "crates/aether-ai-surfaces/src/planner/route.rs",
-        "crates/aether-ai-surfaces/src/planner/standard/openai_responses.rs",
+        "crates/aether-ai-formats/src/contracts/plan_kinds.rs",
+        "crates/aether-ai-formats/src/request/route.rs",
+        "crates/aether-ai-formats/src/request/standard/openai_responses.rs",
         "apps/aether-gateway/src/ai_serving/planner/decision/control_plan.rs",
         "apps/aether-gateway/src/execution_runtime/fallback.rs",
     ] {
@@ -4689,7 +4664,7 @@ fn ai_serving_legacy_api_format_names_stay_out_of_primary_paths() {
         }
     }
 
-    let registry = read_workspace_file("crates/aether-ai-formats/src/registry.rs");
+    let registry = read_workspace_file("crates/aether-ai-formats/src/protocol/registry.rs");
     let implementation = registry
         .split("#[cfg(test)]")
         .next()
@@ -4722,9 +4697,9 @@ fn retired_api_format_occurrences_are_whitelisted() {
 
     let allowed_paths = [
         "apps/aether-gateway/src/handlers/admin/provider/write/normalize.rs",
-        "crates/aether-ai-formats/src/formats.rs",
-        "crates/aether-ai-formats/src/matrix.rs",
-        "crates/aether-ai-formats/src/registry.rs",
+        "crates/aether-ai-formats/src/protocol/formats.rs",
+        "crates/aether-ai-formats/src/protocol/matrix.rs",
+        "crates/aether-ai-formats/src/protocol/registry.rs",
         "crates/aether-data/src/migrate.rs",
         "crates/aether-usage-runtime/src/report.rs",
         "frontend/src/api/endpoints/types/__tests__/api-format.spec.ts",

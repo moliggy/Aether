@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use aether_ai_surfaces::api::ExecutionRuntimeAuthContext;
+use aether_ai_formats::api::ExecutionRuntimeAuthContext;
 use aether_scheduler_core::SchedulerRankingOutcome;
 use serde_json::{Map, Value};
 

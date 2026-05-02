@@ -1,7 +1,7 @@
-use aether_ai_formats::matrix::{
+use aether_ai_formats::normalize_api_format_alias;
+use aether_ai_formats::protocol::matrix::{
     request_conversion_kind, request_conversion_requires_enable_flag, RequestConversionKind,
 };
-use aether_ai_formats::normalize_api_format_alias;
 
 use crate::auth::{
     resolve_local_gemini_auth, resolve_local_openai_bearer_auth, resolve_local_standard_auth,
@@ -336,7 +336,7 @@ mod tests {
         request_conversion_transport_supported, request_pair_allowed_for_transport,
         CandidateTransportPolicyFacts,
     };
-    use aether_ai_formats::matrix::RequestConversionKind;
+    use aether_ai_formats::protocol::matrix::RequestConversionKind;
     use serde_json::json;
 
     use crate::snapshot::{

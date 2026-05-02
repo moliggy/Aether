@@ -63,7 +63,7 @@ mod video_tasks;
 mod wallet_runtime;
 
 pub(crate) use self::ai_serving::api::{
-    GatewayControlPlanRequest, EXECUTION_RUNTIME_STREAM_DECISION_ACTION,
+    AiControlPlanRequest, EXECUTION_RUNTIME_STREAM_DECISION_ACTION,
     EXECUTION_RUNTIME_SYNC_DECISION_ACTION, GEMINI_FILES_DOWNLOAD_PLAN_KIND,
     OPENAI_VIDEO_CONTENT_PLAN_KIND,
 };

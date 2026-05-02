@@ -3,8 +3,8 @@ use crate::ai_serving::{
     is_matching_stream_http_request as is_matching_stream_http_request_impl,
     resolve_execution_runtime_stream_plan_kind as resolve_execution_runtime_stream_plan_kind_impl,
     resolve_execution_runtime_sync_plan_kind as resolve_execution_runtime_sync_plan_kind_impl,
-    supports_stream_scheduler_decision_kind as supports_stream_scheduler_decision_kind_impl,
-    supports_sync_scheduler_decision_kind as supports_sync_scheduler_decision_kind_impl,
+    supports_stream_execution_decision_kind as supports_stream_execution_decision_kind_impl,
+    supports_sync_execution_decision_kind as supports_sync_execution_decision_kind_impl,
 };
 
 pub(crate) fn resolve_execution_runtime_stream_plan_kind(
@@ -42,12 +42,12 @@ pub(crate) fn is_matching_stream_request(
     is_matching_stream_http_request_impl(plan_kind, parts, body_json, body_base64)
 }
 
-pub(crate) fn supports_sync_scheduler_decision_kind(plan_kind: &str) -> bool {
-    supports_sync_scheduler_decision_kind_impl(plan_kind)
+pub(crate) fn supports_sync_execution_decision_kind(plan_kind: &str) -> bool {
+    supports_sync_execution_decision_kind_impl(plan_kind)
 }
 
-pub(crate) fn supports_stream_scheduler_decision_kind(plan_kind: &str) -> bool {
-    supports_stream_scheduler_decision_kind_impl(plan_kind)
+pub(crate) fn supports_stream_execution_decision_kind(plan_kind: &str) -> bool {
+    supports_stream_execution_decision_kind_impl(plan_kind)
 }
 
 #[cfg(test)]
@@ -57,8 +57,8 @@ mod tests {
 
     use super::{
         is_matching_stream_request, resolve_execution_runtime_stream_plan_kind,
-        resolve_execution_runtime_sync_plan_kind, supports_stream_scheduler_decision_kind,
-        supports_sync_scheduler_decision_kind,
+        resolve_execution_runtime_sync_plan_kind, supports_stream_execution_decision_kind,
+        supports_sync_execution_decision_kind,
     };
     use crate::ai_serving::GatewayControlDecision;
 
@@ -78,7 +78,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_openai_chat_plan_kinds_via_surface_crate() {
+    fn resolves_openai_chat_plan_kinds_via_format_crate() {
         let request = Request::builder()
             .method(Method::POST)
             .uri("/v1/chat/completions")
@@ -118,8 +118,8 @@ mod tests {
             &serde_json::json!({"stream": true}),
             None,
         ));
-        assert!(supports_sync_scheduler_decision_kind("openai_chat_sync"));
-        assert!(supports_stream_scheduler_decision_kind(
+        assert!(supports_sync_execution_decision_kind("openai_chat_sync"));
+        assert!(supports_stream_execution_decision_kind(
             "openai_chat_stream"
         ));
     }

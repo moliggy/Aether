@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use aether_ai_surfaces::api::{
+use aether_ai_formats::api::{
     ExecutionRuntimeAuthContext, EXECUTION_RUNTIME_STREAM_DECISION_ACTION,
     EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
 };

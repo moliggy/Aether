@@ -688,26 +688,30 @@ fn crate_root_exposes_real_admin_and_ai_serving_facades() {
 }
 
 #[test]
-fn gateway_ai_serving_api_module_delegates_pure_ownership_to_surface_crate() {
+fn gateway_ai_serving_api_module_delegates_pure_ownership_to_format_crate() {
     let gateway_api = read_workspace_file("apps/aether-gateway/src/ai_serving/api.rs");
     assert!(
-        gateway_api.contains("pub(crate) use aether_ai_surfaces::api::{"),
-        "ai_serving/api.rs should re-export pure ownership through aether_ai_surfaces::api"
+        gateway_api.contains("pub(crate) use aether_ai_formats::api::{"),
+        "ai_serving/api.rs should re-export pure ownership through aether_ai_formats::api"
     );
 
-    let surface_crate_api = read_workspace_file("crates/aether-ai-surfaces/src/api.rs");
+    let format_crate_api = read_workspace_file("crates/aether-ai-formats/src/api.rs");
     for pattern in [
         "pub use crate::contracts::{",
+        "pub use crate::provider_compat::kiro_stream::{",
+        "pub use crate::provider_compat::private_envelope::{",
+        "pub use crate::provider_compat::surfaces::{",
+        "pub use crate::request::common::{",
+        "pub use crate::request::route::{",
+        "pub use crate::response::common::{",
+        "pub use crate::response::error_body::{",
         "pub use aether_ai_formats::{",
-        "pub use aether_ai_formats::conversion::request::{",
-        "pub use aether_ai_formats::conversion::response::{",
-        "pub use crate::finalize::error_body::{",
-        "pub use crate::planner::common::{",
-        "pub use crate::planner::route::{",
+        "pub use aether_ai_formats::protocol::conversion::request::{",
+        "pub use aether_ai_formats::protocol::conversion::response::{",
     ] {
         assert!(
-            surface_crate_api.contains(pattern),
-            "aether-ai-surfaces/src/api.rs should expose crate facade seam {pattern}"
+            format_crate_api.contains(pattern),
+            "aether-ai-formats/src/api.rs should expose crate facade seam {pattern}"
         );
     }
 }

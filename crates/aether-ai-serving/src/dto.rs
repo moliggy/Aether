@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use aether_ai_surfaces::api::ExecutionRuntimeAuthContext;
+use aether_ai_formats::api::ExecutionRuntimeAuthContext;
 use aether_contracts::{ExecutionPlan, ExecutionTimeouts, ProxySnapshot};
 use serde::{Deserialize, Serialize};
 

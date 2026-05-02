@@ -45,9 +45,14 @@ dependencies = [
 name = "aether-ai-formats"
 version = "0.1.0"
 dependencies = [
+ "aether-contracts",
+ "base64 0.22.1",
+ "http",
  "regex",
  "serde",
  "serde_json",
+ "sha1",
+ "sha2",
  "uuid",
 ]
 
@@ -56,7 +61,6 @@ name = "aether-ai-serving"
 version = "0.1.0"
 dependencies = [
  "aether-ai-formats",
- "aether-ai-surfaces",
  "aether-contracts",
  "aether-scheduler-core",
  "async-trait",
@@ -65,21 +69,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "url",
-]
-
-[[package]]
-name = "aether-ai-surfaces"
-version = "0.1.0"
-dependencies = [
- "aether-ai-formats",
- "aether-contracts",
- "base64 0.22.1",
- "http",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "uuid",
 ]
 
 [[package]]
@@ -164,8 +153,8 @@ name = "aether-gateway"
 version = "0.1.0"
 dependencies = [
  "aether-admin",
+ "aether-ai-formats",
  "aether-ai-serving",
- "aether-ai-surfaces",
  "aether-billing",
  "aether-cache",
  "aether-contracts",

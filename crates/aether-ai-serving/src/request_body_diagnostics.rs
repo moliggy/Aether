@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use aether_ai_surfaces::api::is_openai_responses_family_format;
+use aether_ai_formats::api::is_openai_responses_family_format;
 
 use crate::{CandidateFailureDiagnostic, CandidateFailureDiagnosticKind};
 

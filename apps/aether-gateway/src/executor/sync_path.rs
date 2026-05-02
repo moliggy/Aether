@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use crate::ai_serving::api::{
     is_matching_stream_request, resolve_execution_runtime_stream_plan_kind,
-    resolve_execution_runtime_sync_plan_kind, supports_sync_scheduler_decision_kind, AiSyncAttempt,
+    resolve_execution_runtime_sync_plan_kind, supports_sync_execution_decision_kind, AiSyncAttempt,
     GEMINI_VIDEO_CANCEL_SYNC_PLAN_KIND, OPENAI_VIDEO_CANCEL_SYNC_PLAN_KIND,
     OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND, OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
 };
@@ -72,7 +72,7 @@ pub(crate) async fn maybe_execute_via_sync_decision_path(
         body_is_empty: body_bytes.is_empty(),
         plan_kind,
         bypass_cache_key,
-        scheduler_supported: supports_sync_scheduler_decision_kind(plan_kind),
+        scheduler_supported: supports_sync_execution_decision_kind(plan_kind),
     };
 
     Ok(from_ai_serving_outcome(

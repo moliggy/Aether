@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use crate::ai_serving::api::{
     is_matching_stream_request, resolve_execution_runtime_stream_plan_kind,
-    supports_stream_scheduler_decision_kind, AiStreamAttempt, OPENAI_VIDEO_CONTENT_PLAN_KIND,
+    supports_stream_execution_decision_kind, AiStreamAttempt, OPENAI_VIDEO_CONTENT_PLAN_KIND,
 };
 use crate::api::response::build_client_response_from_parts;
 use crate::control::GatewayControlDecision;
@@ -60,7 +60,7 @@ pub(crate) async fn maybe_execute_via_stream_decision_path(
         body_base64,
         plan_kind,
         bypass_cache_key,
-        scheduler_supported: supports_stream_scheduler_decision_kind(plan_kind),
+        scheduler_supported: supports_stream_execution_decision_kind(plan_kind),
     };
 
     Ok(from_ai_serving_outcome(

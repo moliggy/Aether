@@ -1,4 +1,4 @@
-pub(crate) use aether_ai_surfaces::api::{
+pub(crate) use aether_ai_formats::api::{
     aggregate_claude_stream_sync_response, aggregate_gemini_stream_sync_response,
     aggregate_openai_chat_stream_sync_response, aggregate_openai_responses_stream_sync_response,
     aggregate_standard_chat_stream_sync_response, aggregate_standard_cli_stream_sync_response,
@@ -62,11 +62,11 @@ pub(crate) use aether_ai_surfaces::api::{
     resolve_local_video_sync_spec, resolve_openai_chat_max_tokens,
     resolve_openai_responses_stream_spec, resolve_openai_responses_sync_spec,
     resolve_requested_openai_image_model_for_request, stream_body_contains_error_event,
-    supports_stream_scheduler_decision_kind, supports_sync_scheduler_decision_kind,
+    supports_stream_execution_decision_kind, supports_sync_execution_decision_kind,
     sync_chat_response_conversion_kind, sync_cli_response_conversion_kind,
-    transform_provider_private_stream_line, value_as_u64, AiSurfaceFinalizeError,
-    AiSurfaceStreamRewriter, CanonicalStreamFrame, ClaudeClientEmitter, ClaudeProviderState,
-    ExecutionRuntimeAuthContext, FinalizeStreamRewriteMode, GatewayControlPlanRequest,
+    transform_provider_private_stream_line, value_as_u64, AiControlPlanRequest,
+    AiSurfaceFinalizeError, AiSurfaceStreamRewriter, CanonicalStreamFrame, ClaudeClientEmitter,
+    ClaudeProviderState, ExecutionRuntimeAuthContext, FinalizeStreamRewriteMode,
     GeminiClientEmitter, GeminiProviderState, KiroToClaudeCliStreamState, LocalCoreSyncErrorKind,
     LocalGeminiFilesSpec, LocalOpenAiImageSpec, LocalOpenAiResponsesSpec,
     LocalSameFormatProviderFamily, LocalSameFormatProviderSpec, LocalStandardSourceFamily,
