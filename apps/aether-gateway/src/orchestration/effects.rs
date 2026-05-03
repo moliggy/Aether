@@ -15,15 +15,16 @@ use tracing::warn;
 
 use super::{
     local_failover_error_message, project_local_adaptive_rate_limit,
-    project_local_adaptive_success, project_local_failure_health, project_local_success_health,
-    LocalFailoverClassification,
+    project_local_adaptive_success, project_local_failure_health, project_local_key_circuit_closed,
+    project_local_key_circuit_open, project_local_success_health, LocalFailoverClassification,
 };
 use crate::ai_serving::extract_pool_sticky_session_token;
 use crate::clock::current_unix_secs;
 use crate::handlers::shared::provider_pool::admin_provider_pool_config_from_config_value;
 use crate::handlers::shared::provider_pool::{
-    record_admin_provider_pool_error, record_admin_provider_pool_stream_timeout,
-    record_admin_provider_pool_success, AdminProviderPoolConfig,
+    admin_provider_pool_key_circuit_breaker_reason, record_admin_provider_pool_error,
+    record_admin_provider_pool_stream_timeout, record_admin_provider_pool_success,
+    AdminProviderPoolConfig,
 };
 use crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL;
 use crate::AppState;
@@ -472,12 +473,20 @@ async fn record_health_success_effect(
     else {
         return;
     };
+    let circuit_breaker_by_format = current_key
+        .circuit_breaker_by_format
+        .as_ref()
+        .and_then(|current| project_local_key_circuit_closed(Some(current), api_format));
+    let circuit_breaker_update = circuit_breaker_by_format
+        .as_ref()
+        .or(current_key.circuit_breaker_by_format.as_ref());
 
     if let Err(err) = state
-        .update_provider_catalog_key_format_health(
+        .update_provider_catalog_key_health_state(
             &context.plan.key_id,
-            api_format,
-            &health_by_format,
+            current_key.is_active,
+            Some(&health_by_format),
+            circuit_breaker_update,
         )
         .await
     {
@@ -516,7 +525,13 @@ async fn record_pool_error_effect(
     context: LocalExecutionEffectContext<'_>,
     effect: LocalPoolErrorEffect<'_>,
 ) {
-    if !local_candidate_failure_should_record_pool_error(effect.classification, effect.status_code)
+    let circuit_reason =
+        admin_provider_pool_key_circuit_breaker_reason(effect.status_code, effect.error_body);
+    if circuit_reason.is_none()
+        && !local_candidate_failure_should_record_pool_error(
+            effect.classification,
+            effect.status_code,
+        )
     {
         return;
     }
@@ -524,6 +539,10 @@ async fn record_pool_error_effect(
     let Some(pool_context) = resolve_pool_feedback_context(state, context).await else {
         return;
     };
+
+    if let Some(reason) = circuit_reason {
+        open_pool_key_circuit_breaker(state, context, &reason).await;
+    }
 
     record_admin_provider_pool_error(
         &pool_context.runner,
@@ -535,6 +554,49 @@ async fn record_pool_error_effect(
         Some(effect.headers),
     )
     .await;
+}
+
+async fn open_pool_key_circuit_breaker(
+    state: &AppState,
+    context: LocalExecutionEffectContext<'_>,
+    reason: &str,
+) {
+    let api_format = context.plan.provider_api_format.trim();
+    if api_format.is_empty() {
+        return;
+    }
+
+    let Some(current_key) = state
+        .read_provider_catalog_keys_by_ids(std::slice::from_ref(&context.plan.key_id))
+        .await
+        .ok()
+        .and_then(|mut keys| keys.drain(..).next())
+    else {
+        return;
+    };
+    let Some(circuit_breaker_by_format) = project_local_key_circuit_open(
+        current_key.circuit_breaker_by_format.as_ref(),
+        api_format,
+        reason,
+        current_unix_secs(),
+    ) else {
+        return;
+    };
+
+    if let Err(err) = state
+        .update_provider_catalog_key_health_state(
+            &context.plan.key_id,
+            current_key.is_active,
+            current_key.health_by_format.as_ref(),
+            Some(&circuit_breaker_by_format),
+        )
+        .await
+    {
+        warn!(
+            "gateway orchestration effects: failed to open pool key circuit for provider {} endpoint {} key {}: {:?}",
+            context.plan.provider_id, context.plan.endpoint_id, context.plan.key_id, err
+        );
+    }
 }
 
 async fn record_oauth_invalidation_effect(
@@ -661,21 +723,33 @@ mod tests {
     use aether_data_contracts::repository::provider_catalog::{
         StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
     };
+    use aether_testkit::ManagedRedisServer;
     use serde_json::{json, Value};
 
     use super::{
         apply_local_execution_effect, local_candidate_failure_should_record_pool_error,
         LocalAdaptiveRateLimitEffect, LocalAdaptiveSuccessEffect, LocalAttemptFailureEffect,
         LocalExecutionEffect, LocalExecutionEffectContext, LocalHealthFailureEffect,
-        LocalHealthSuccessEffect, LocalOAuthInvalidationEffect,
+        LocalHealthSuccessEffect, LocalOAuthInvalidationEffect, LocalPoolErrorEffect,
     };
-    use crate::data::GatewayDataState;
+    use crate::data::{GatewayDataConfig, GatewayDataState};
     use crate::orchestration::LocalFailoverClassification;
     use crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL;
     use crate::AppState;
     use aether_scheduler_core::{
         build_scheduler_affinity_cache_key_for_api_key_id, SchedulerAffinityTarget,
     };
+
+    async fn start_managed_redis_or_skip() -> Option<ManagedRedisServer> {
+        match ManagedRedisServer::start().await {
+            Ok(server) => Some(server),
+            Err(err) if err.to_string().contains("No such file or directory") => {
+                eprintln!("skipping redis-backed orchestration effect test: {err}");
+                None
+            }
+            Err(err) => panic!("redis server should start: {err}"),
+        }
+    }
 
     fn sample_plan() -> ExecutionPlan {
         ExecutionPlan {
@@ -742,7 +816,7 @@ mod tests {
             None,
             Some(20.0),
             None,
-            None,
+            Some(json!({"pool_advanced": {}})),
         )
     }
 
@@ -813,6 +887,24 @@ mod tests {
             )
     }
 
+    fn codex_state_with_redis(redis_url: &str, redis_key_prefix: &str) -> AppState {
+        let repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+            vec![sample_codex_provider()],
+            vec![sample_codex_endpoint()],
+            vec![sample_codex_key()],
+        ));
+        let data_state = GatewayDataState::from_config(
+            GatewayDataConfig::disabled()
+                .with_redis_url(redis_url, Some(redis_key_prefix))
+                .with_encryption_key(DEVELOPMENT_ENCRYPTION_KEY),
+        )
+        .expect("data state should build")
+        .attach_provider_catalog_repository_for_tests(repository);
+        AppState::new()
+            .expect("gateway state should build")
+            .with_data_state_for_tests(data_state)
+    }
+
     fn sample_health_provider() -> StoredProviderCatalogProvider {
         StoredProviderCatalogProvider::new(
             "prov-1".to_string(),
@@ -876,6 +968,20 @@ mod tests {
             vec![sample_health_provider()],
             vec![sample_health_endpoint()],
             vec![sample_health_key()],
+        ));
+        AppState::new()
+            .expect("gateway state should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(repository)
+                    .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
+            )
+    }
+
+    fn health_state_with_key(key: StoredProviderCatalogKey) -> AppState {
+        let repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+            vec![sample_health_provider()],
+            vec![sample_health_endpoint()],
+            vec![key],
         ));
         AppState::new()
             .expect("gateway state should build")
@@ -1183,6 +1289,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pool_account_error_opens_key_circuit() {
+        let Some(redis) = start_managed_redis_or_skip().await else {
+            return;
+        };
+        let state = codex_state_with_redis(redis.redis_url(), "orchestration_pool_circuit");
+        let plan = sample_codex_plan();
+
+        apply_local_execution_effect(
+            &state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: None,
+            },
+            LocalExecutionEffect::PoolError(LocalPoolErrorEffect {
+                status_code: 401,
+                classification: LocalFailoverClassification::StopErrorPattern,
+                headers: &BTreeMap::new(),
+                error_body: Some(r#"{"error":{"message":"account has been deactivated"}}"#),
+            }),
+        )
+        .await;
+
+        let stored_key = state
+            .read_provider_catalog_keys_by_ids(std::slice::from_ref(&plan.key_id))
+            .await
+            .expect("provider catalog keys should load")
+            .into_iter()
+            .next()
+            .expect("stored key should exist");
+        let circuit = stored_key
+            .circuit_breaker_by_format
+            .as_ref()
+            .and_then(|value| value.get("openai:responses"))
+            .expect("format circuit should be stored");
+        assert_eq!(circuit["open"], json!(true));
+        assert_eq!(circuit["reason"], json!("account_deactivated_401"));
+        assert!(circuit["next_probe_at"].is_string());
+        assert!(circuit["next_probe_at_unix_secs"].as_u64().is_some());
+    }
+
+    #[tokio::test]
     async fn oauth_invalidation_marks_codex_key_invalid() {
         let state = codex_state();
         let plan = sample_codex_plan();
@@ -1341,6 +1488,46 @@ mod tests {
                 }
             }))
         );
+    }
+
+    #[tokio::test]
+    async fn health_success_projection_closes_key_circuit_for_format() {
+        let mut key = sample_health_key();
+        key.circuit_breaker_by_format = Some(json!({
+            "openai:chat": {
+                "open": true,
+                "reason": "account_deactivated_401",
+                "next_probe_at_unix_secs": 1_760_001_920u64
+            }
+        }));
+        let state = health_state_with_key(key);
+        let plan = sample_plan();
+
+        apply_local_execution_effect(
+            &state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: None,
+            },
+            LocalExecutionEffect::HealthSuccess(LocalHealthSuccessEffect),
+        )
+        .await;
+
+        let stored_key = state
+            .read_provider_catalog_keys_by_ids(std::slice::from_ref(&plan.key_id))
+            .await
+            .expect("provider catalog keys should load")
+            .into_iter()
+            .next()
+            .expect("stored key should exist");
+        let circuit = stored_key
+            .circuit_breaker_by_format
+            .as_ref()
+            .and_then(|value| value.get("openai:chat"))
+            .expect("format circuit should be stored");
+        assert_eq!(circuit["open"], json!(false));
+        assert_eq!(circuit["reason"], Value::Null);
+        assert_eq!(circuit["next_probe_at_unix_secs"], Value::Null);
     }
 
     #[tokio::test]

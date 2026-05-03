@@ -284,6 +284,33 @@ pub fn is_provider_key_circuit_open(key: &StoredProviderCatalogKey, api_format: 
         .unwrap_or(false)
 }
 
+pub fn is_provider_key_circuit_open_at(
+    key: &StoredProviderCatalogKey,
+    api_format: &str,
+    now_unix_secs: u64,
+) -> bool {
+    let Some(payload) = key
+        .circuit_breaker_by_format
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .and_then(|values| values.get(api_format))
+        .and_then(serde_json::Value::as_object)
+    else {
+        return false;
+    };
+    if !payload
+        .get("open")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    payload
+        .get("next_probe_at_unix_secs")
+        .and_then(serde_json::Value::as_u64)
+        .is_none_or(|next_probe_at| now_unix_secs < next_probe_at)
+}
+
 fn available_provider_key_rpm_slots_for_new_user(
     key: &StoredProviderCatalogKey,
     current_usage: usize,

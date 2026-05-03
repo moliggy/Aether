@@ -31,7 +31,10 @@ pub(crate) use self::effects::{
     LocalHealthFailureEffect, LocalHealthSuccessEffect, LocalOAuthInvalidationEffect,
     LocalPoolErrorEffect,
 };
-pub(crate) use self::health::{project_local_failure_health, project_local_success_health};
+pub(crate) use self::health::{
+    project_local_failure_health, project_local_key_circuit_closed, project_local_key_circuit_open,
+    project_local_success_health,
+};
 pub(crate) use self::policy::{
     append_local_failover_policy_to_value, local_failover_policy_from_report_context,
     local_failover_policy_from_transport, resolve_local_failover_policy, LocalFailoverPolicy,

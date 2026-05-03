@@ -12,6 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
 use uuid::Uuid;
 
+const MAX_POOL_COOLDOWN_SECONDS: u64 = 32 * 60;
+
 const ACCOUNT_DISABLE_PATTERNS: &[&str] = &[
     "organization has been disabled",
     "organization_disabled",
@@ -68,7 +70,7 @@ fn parse_retry_after_seconds(headers: Option<&BTreeMap<String, String>>) -> Opti
             .filter(|value| !value.is_empty())
     })?;
     let seconds = raw.parse::<u64>().ok()?;
-    Some(seconds.clamp(1, 3600))
+    Some(seconds.clamp(1, MAX_POOL_COOLDOWN_SECONDS))
 }
 
 fn parse_google_quota_duration_seconds(raw: &serde_json::Value) -> Option<u64> {
@@ -187,6 +189,33 @@ fn extract_error_message(error_body: Option<&str>) -> String {
         .unwrap_or_else(|| error_body.chars().take(500).collect())
 }
 
+pub(crate) fn admin_provider_pool_key_circuit_breaker_reason(
+    status_code: u16,
+    error_body: Option<&str>,
+) -> Option<String> {
+    let error_message = extract_error_message(error_body).to_ascii_lowercase();
+    match status_code {
+        401 if ACCOUNT_DISABLE_PATTERNS
+            .iter()
+            .any(|pattern| error_message.contains(pattern)) =>
+        {
+            Some("account_deactivated_401".to_string())
+        }
+        402 => Some("payment_required_402".to_string()),
+        403 if FORBIDDEN_ACCOUNT_PATTERNS
+            .iter()
+            .any(|pattern| error_message.contains(pattern)) =>
+        {
+            Some("forbidden_403".to_string())
+        }
+        400 => ACCOUNT_DISABLE_PATTERNS
+            .iter()
+            .find(|pattern| error_message.contains(**pattern))
+            .map(|pattern| format!("account_disabled_400:{pattern}")),
+        _ => None,
+    }
+}
+
 fn resolve_transient_cooldown_ttl(
     status_code: u16,
     retry_after_seconds: Option<u64>,
@@ -213,6 +242,7 @@ async fn set_pool_cooldown(
     if ttl_seconds == 0 {
         return;
     }
+    let ttl_seconds = ttl_seconds.min(MAX_POOL_COOLDOWN_SECONDS);
 
     let Ok(mut connection) = runner.client().get_multiplexed_async_connection().await else {
         warn!(
@@ -393,46 +423,33 @@ pub(crate) async fn record_admin_provider_pool_error(
 
     if status_code == 401 {
         invalidate_pool_oauth_cache(runner, key_id).await;
-        if ACCOUNT_DISABLE_PATTERNS
-            .iter()
-            .any(|pattern| error_message.contains(pattern))
-        {
-            set_pool_cooldown(runner, provider_id, key_id, "account_deactivated_401", 3600).await;
-        }
         return;
     }
 
     if status_code == 402 {
-        set_pool_cooldown(runner, provider_id, key_id, "payment_required_402", 3600).await;
         return;
     }
 
     if status_code == 403 {
-        let severe = FORBIDDEN_ACCOUNT_PATTERNS
+        if FORBIDDEN_ACCOUNT_PATTERNS
             .iter()
-            .any(|pattern| error_message.contains(pattern));
-        let ttl_seconds = if severe {
-            3600
-        } else {
-            pool_config.rate_limit_cooldown_seconds.max(300)
-        };
-        set_pool_cooldown(runner, provider_id, key_id, "forbidden_403", ttl_seconds).await;
+            .any(|pattern| error_message.contains(pattern))
+        {
+            return;
+        }
+        set_pool_cooldown(
+            runner,
+            provider_id,
+            key_id,
+            "forbidden_403",
+            pool_config.rate_limit_cooldown_seconds.max(300),
+        )
+        .await;
         return;
     }
 
     if status_code == 400 {
-        if let Some(pattern) = ACCOUNT_DISABLE_PATTERNS
-            .iter()
-            .find(|pattern| error_message.contains(**pattern))
-        {
-            set_pool_cooldown(
-                runner,
-                provider_id,
-                key_id,
-                &format!("account_disabled_400:{pattern}"),
-                3600,
-            )
-            .await;
+        if admin_provider_pool_key_circuit_breaker_reason(status_code, error_body).is_some() {
             return;
         }
     }
@@ -563,8 +580,9 @@ pub(crate) async fn record_admin_provider_pool_stream_timeout(
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_google_quota_cooldown_seconds_at, record_admin_provider_pool_error,
-        record_admin_provider_pool_stream_timeout, record_admin_provider_pool_success,
+        admin_provider_pool_key_circuit_breaker_reason, parse_google_quota_cooldown_seconds_at,
+        record_admin_provider_pool_error, record_admin_provider_pool_stream_timeout,
+        record_admin_provider_pool_success,
     };
     use crate::data::{GatewayDataConfig, GatewayDataState};
     use crate::handlers::admin::provider::pool::runtime::reads::read_admin_provider_pool_runtime_state;
@@ -866,6 +884,98 @@ mod tests {
             .cooldown_ttl_by_key
             .get("key-google-429")
             .is_some_and(|ttl| *ttl <= 45 && *ttl >= 30));
+    }
+
+    #[tokio::test]
+    async fn error_feedback_caps_long_retry_after_cooldowns_at_32_minutes() {
+        let Some(redis) = start_managed_redis_or_skip().await else {
+            return;
+        };
+        let app = build_runner_app(redis.redis_url(), "pool_runtime_capped_cooldown");
+        let runner = app.redis_kv_runner().expect("redis runner should exist");
+        let pool_config = sample_pool_config();
+        let key_ids = vec!["key-long-cooldown".to_string()];
+
+        record_admin_provider_pool_error(
+            &runner,
+            "provider-1",
+            "key-long-cooldown",
+            &pool_config,
+            429,
+            Some(r#"{"error":{"message":"rate limited"}}"#),
+            Some(&BTreeMap::from([(
+                "Retry-After".to_string(),
+                "3600".to_string(),
+            )])),
+        )
+        .await;
+
+        let runtime = read_admin_provider_pool_runtime_state(
+            &runner,
+            "provider-1",
+            &key_ids,
+            &pool_config,
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            runtime
+                .cooldown_reason_by_key
+                .get("key-long-cooldown")
+                .map(String::as_str),
+            Some("rate_limited_429")
+        );
+        assert!(runtime
+            .cooldown_ttl_by_key
+            .get("key-long-cooldown")
+            .is_some_and(|ttl| *ttl <= 32 * 60 && *ttl >= 31 * 60));
+    }
+
+    #[tokio::test]
+    async fn severe_account_errors_use_circuit_breaker_instead_of_pool_cooldown() {
+        let Some(redis) = start_managed_redis_or_skip().await else {
+            return;
+        };
+        let app = build_runner_app(redis.redis_url(), "pool_runtime_circuit_no_cooldown");
+        let runner = app.redis_kv_runner().expect("redis runner should exist");
+        let pool_config = sample_pool_config();
+        let key_ids = vec!["key-account-disabled".to_string()];
+
+        assert_eq!(
+            admin_provider_pool_key_circuit_breaker_reason(
+                401,
+                Some(r#"{"error":{"message":"account has been deactivated"}}"#),
+            )
+            .as_deref(),
+            Some("account_deactivated_401")
+        );
+        record_admin_provider_pool_error(
+            &runner,
+            "provider-1",
+            "key-account-disabled",
+            &pool_config,
+            401,
+            Some(r#"{"error":{"message":"account has been deactivated"}}"#),
+            None,
+        )
+        .await;
+
+        let runtime = read_admin_provider_pool_runtime_state(
+            &runner,
+            "provider-1",
+            &key_ids,
+            &pool_config,
+            None,
+        )
+        .await;
+
+        assert!(!runtime
+            .cooldown_reason_by_key
+            .contains_key("key-account-disabled"));
+        assert!(!runtime
+            .cooldown_ttl_by_key
+            .contains_key("key-account-disabled"));
     }
 
     #[tokio::test]
