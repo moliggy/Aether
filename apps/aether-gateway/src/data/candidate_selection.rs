@@ -45,8 +45,15 @@ pub(crate) trait MinimalCandidateSelectionRowSource {
     ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError>;
 }
 
-const REQUESTED_MODEL_CANDIDATE_PAGE_SIZE: u32 = 256;
-const REQUESTED_MODEL_MAX_SCANNED_ROWS: u32 = 2048;
+pub(crate) const REQUESTED_MODEL_CANDIDATE_PAGE_SIZE: u32 = 256;
+pub(crate) const REQUESTED_MODEL_MAX_SCANNED_ROWS: u32 = 2048;
+
+#[derive(Debug, Clone)]
+pub(crate) struct RequestedModelCandidateRowsPage {
+    pub(crate) rows: Vec<StoredMinimalCandidateSelectionRow>,
+    pub(crate) scanned_rows: u32,
+    pub(crate) end_of_requested_name: bool,
+}
 
 pub(crate) async fn read_requested_model_rows(
     state: &(impl MinimalCandidateSelectionRowSource + Sync),
@@ -125,16 +132,8 @@ async fn read_requested_model_rows_fast_path(
     requested_model_name: &str,
     enable_model_directives: bool,
 ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
-    let mut requested_names = vec![requested_model_name.trim().to_string()];
-    if enable_model_directives {
-        if let Some(base_model) =
-            crate::ai_serving::model_directive_base_model(requested_model_name)
-        {
-            if !requested_names.iter().any(|value| value == &base_model) {
-                requested_names.push(base_model);
-            }
-        }
-    }
+    let requested_names =
+        requested_model_candidate_names(requested_model_name, enable_model_directives);
 
     let mut rows = Vec::new();
     let mut seen = BTreeSet::new();
@@ -178,6 +177,58 @@ async fn read_requested_model_rows_fast_path(
         }
     }
     Ok(rows)
+}
+
+pub(crate) fn requested_model_candidate_names(
+    requested_model_name: &str,
+    enable_model_directives: bool,
+) -> Vec<String> {
+    let mut requested_names = vec![requested_model_name.trim().to_string()];
+    if enable_model_directives {
+        if let Some(base_model) =
+            crate::ai_serving::model_directive_base_model(requested_model_name)
+        {
+            if !requested_names.iter().any(|value| value == &base_model) {
+                requested_names.push(base_model);
+            }
+        }
+    }
+    requested_names
+}
+
+pub(crate) async fn read_requested_model_rows_fast_path_page(
+    state: &(impl MinimalCandidateSelectionRowSource + Sync),
+    api_format: &str,
+    requested_model_name: &str,
+    requested_name: &str,
+    offset: u32,
+    limit: u32,
+    enable_model_directives: bool,
+) -> Result<RequestedModelCandidateRowsPage, DataLayerError> {
+    let limit = limit.max(1);
+    let page = state
+        .read_minimal_candidate_selection_rows_for_api_format_and_requested_model_page(
+            &StoredRequestedModelCandidateRowsQuery {
+                api_format: api_format.to_string(),
+                requested_model_name: requested_name.to_string(),
+                offset,
+                limit,
+            },
+        )
+        .await?;
+    let scanned_rows = page.len() as u32;
+    let end_of_requested_name = scanned_rows < limit;
+    let rows = filter_rows_for_requested_model(
+        page,
+        requested_model_name,
+        api_format,
+        enable_model_directives,
+    );
+    Ok(RequestedModelCandidateRowsPage {
+        rows,
+        scanned_rows,
+        end_of_requested_name,
+    })
 }
 
 pub(crate) async fn enumerate_minimal_candidate_selection_with_required_capabilities(
@@ -308,7 +359,9 @@ pub(crate) async fn read_global_model_names_for_api_format(
     Ok(model_names.into_iter().collect())
 }
 
-fn auth_snapshot_constraints(snapshot: &GatewayAuthApiKeySnapshot) -> SchedulerAuthConstraints {
+pub(crate) fn auth_snapshot_constraints(
+    snapshot: &GatewayAuthApiKeySnapshot,
+) -> SchedulerAuthConstraints {
     SchedulerAuthConstraints {
         allowed_providers: snapshot
             .effective_allowed_providers()
@@ -325,8 +378,8 @@ fn auth_snapshot_constraints(snapshot: &GatewayAuthApiKeySnapshot) -> SchedulerA
 #[cfg(test)]
 mod tests {
     use super::{
-        read_requested_model_rows, MinimalCandidateSelectionRowSource,
-        StoredMinimalCandidateSelectionRow,
+        read_requested_model_rows, read_requested_model_rows_fast_path_page,
+        MinimalCandidateSelectionRowSource, StoredMinimalCandidateSelectionRow,
     };
     use aether_data::DataLayerError;
     use aether_data_contracts::repository::candidate_selection::{
@@ -495,6 +548,64 @@ mod tests {
             (super::REQUESTED_MODEL_MAX_SCANNED_ROWS / super::REQUESTED_MODEL_CANDIDATE_PAGE_SIZE)
                 as usize
         );
+        assert_eq!(source.fallback_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn requested_model_rows_page_reads_only_requested_slice() {
+        let mut rows = Vec::new();
+        for index in 0..10 {
+            let mut row = sample_row("gpt-5");
+            row.key_id = format!("key-{index}");
+            rows.push(row);
+        }
+        let source = CountingSelectionSource::new(rows, Vec::new());
+
+        let page = read_requested_model_rows_fast_path_page(
+            &source,
+            "openai:chat",
+            "gpt-5",
+            "gpt-5",
+            4,
+            3,
+            false,
+        )
+        .await
+        .expect("page read should succeed");
+
+        assert_eq!(page.scanned_rows, 3);
+        assert!(!page.end_of_requested_name);
+        assert_eq!(
+            page.rows
+                .iter()
+                .map(|row| row.key_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["key-4", "key-5", "key-6"]
+        );
+        assert_eq!(source.fast_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(source.fallback_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn requested_model_rows_page_reports_end_of_requested_name() {
+        let source = CountingSelectionSource::new(vec![sample_row("gpt-5")], Vec::new());
+
+        let page = read_requested_model_rows_fast_path_page(
+            &source,
+            "openai:chat",
+            "gpt-5",
+            "gpt-5",
+            0,
+            3,
+            false,
+        )
+        .await
+        .expect("page read should succeed");
+
+        assert_eq!(page.scanned_rows, 1);
+        assert!(page.end_of_requested_name);
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(source.fast_calls.load(Ordering::SeqCst), 1);
         assert_eq!(source.fallback_calls.load(Ordering::SeqCst), 0);
     }
 }

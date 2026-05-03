@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use tracing::warn;
 
 use super::super::{
+    build_lazy_local_openai_chat_candidate_attempt_source,
     build_local_openai_chat_candidate_attempt_source,
     materialize_local_openai_chat_candidate_attempts,
     maybe_build_local_openai_chat_decision_payload_for_candidate, AppState, GatewayControlDecision,
@@ -49,27 +50,10 @@ pub(crate) async fn build_local_openai_chat_stream_attempt_source<'a>(
         return Ok(None);
     };
 
-    let (candidates, skipped_candidates) =
-        match list_local_openai_chat_candidates(state, &input, true).await {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
-                    trace_id = %trace_id,
-                    error = ?err,
-                    "gateway local openai chat stream decision scheduler selection failed"
-                );
-                set_local_openai_chat_miss_diagnostic(
-                    state,
-                    trace_id,
-                    decision,
-                    plan_kind,
-                    Some(input.requested_model.as_str()),
-                    "scheduler_selection_failed",
-                );
-                return Ok(None);
-            }
-        };
-    let candidate_count = candidates.len() + skipped_candidates.len();
+    let (candidates, candidate_count) = build_lazy_local_openai_chat_candidate_attempt_source(
+        state, trace_id, &input, body_json, true,
+    )
+    .await;
     if candidate_count == 0 {
         set_local_openai_chat_candidate_evaluation_diagnostic(
             state,
@@ -89,16 +73,6 @@ pub(crate) async fn build_local_openai_chat_stream_attempt_source<'a>(
         Some(input.requested_model.as_str()),
         candidate_count,
     );
-
-    let (candidates, candidate_count) = build_local_openai_chat_candidate_attempt_source(
-        state,
-        trace_id,
-        &input,
-        body_json,
-        candidates,
-        skipped_candidates,
-    )
-    .await;
 
     Ok(Some((
         LocalOpenAiChatStreamAttemptSource {

@@ -2,6 +2,7 @@ use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
 use tracing::warn;
 
 use crate::ai_serving::planner::candidate_materialization::{
+    build_lazy_requested_model_execution_candidate_attempt_source_with_serving,
     build_local_execution_candidate_attempt_source_with_serving,
     mark_skipped_local_execution_candidate, mark_skipped_local_execution_candidate_with_extra_data,
     mark_skipped_local_execution_candidate_with_failure_diagnostic,
@@ -240,80 +241,72 @@ pub(crate) async fn build_local_openai_responses_candidate_attempt_source<'a>(
         input.required_capabilities.as_ref(),
         LocalCandidatePersistencePolicyKind::OpenAiResponsesDecision,
     );
-    let preselection = preselect_local_execution_candidates_with_serving(
-        planner_state,
-        spec_metadata.api_format,
-        &input.requested_model,
-        spec_metadata.require_streaming,
-        input.required_capabilities.as_ref(),
-        &input.auth_snapshot,
-        true,
-        LocalCandidatePreselectionKeyMode::ProviderEndpointKeyModelAndApiFormat,
-    )
-    .await?;
-    Ok(build_local_execution_candidate_attempt_source_with_serving(
-        planner_state,
-        trace_id,
-        spec_metadata.api_format,
-        Some(&input.requested_model),
-        Some(&input.auth_snapshot),
-        input.required_capabilities.as_ref(),
-        sticky_session_token.as_deref(),
-        input.request_auth_channel.as_deref(),
-        persistence_policy,
-        preselection.candidates,
-        preselection.skipped_candidates,
-        LocalCandidateResolutionMode::Standard,
-        |eligible| {
-            let provider_api_format = eligible.provider_api_format.clone();
-            let (execution_strategy, conversion_mode) = ai_local_execution_contract_for_formats(
-                spec_metadata.api_format,
-                &provider_api_format,
-            );
-            Some(build_local_execution_candidate_contract_metadata(
-                LocalExecutionCandidateMetadataParts {
-                    eligible,
-                    provider_api_format: provider_api_format.as_str(),
-                    client_api_format: spec_metadata.api_format,
-                    extra_fields: serde_json::Map::new(),
-                },
-                execution_strategy,
-                conversion_mode,
-                eligible.candidate.endpoint_api_format.as_str(),
-            ))
-        },
-        |mut skipped_candidate| {
-            let provider_api_format = skipped_candidate
-                .transport
-                .as_ref()
-                .map(|transport| transport.endpoint.api_format.trim().to_ascii_lowercase())
-                .unwrap_or_else(|| {
-                    skipped_candidate
-                        .candidate
-                        .endpoint_api_format
-                        .trim()
-                        .to_ascii_lowercase()
-                });
-            let (execution_strategy, conversion_mode) = ai_local_execution_contract_for_formats(
-                spec_metadata.api_format,
-                &provider_api_format,
-            );
-            skipped_candidate.extra_data = Some(
-                build_local_execution_candidate_contract_metadata_for_candidate(
-                    &skipped_candidate.candidate,
-                    skipped_candidate.transport_ref(),
-                    provider_api_format.as_str(),
+    Ok(
+        build_lazy_requested_model_execution_candidate_attempt_source_with_serving(
+            planner_state,
+            trace_id,
+            spec_metadata.api_format,
+            &input.requested_model,
+            spec_metadata.require_streaming,
+            &input.auth_snapshot,
+            input.required_capabilities.as_ref(),
+            sticky_session_token.as_deref(),
+            input.request_auth_channel.as_deref(),
+            persistence_policy,
+            true,
+            LocalCandidatePreselectionKeyMode::ProviderEndpointKeyModelAndApiFormat,
+            LocalCandidateResolutionMode::Standard,
+            move |eligible| {
+                let provider_api_format = eligible.provider_api_format.clone();
+                let (execution_strategy, conversion_mode) = ai_local_execution_contract_for_formats(
                     spec_metadata.api_format,
-                    serde_json::Map::new(),
+                    &provider_api_format,
+                );
+                Some(build_local_execution_candidate_contract_metadata(
+                    LocalExecutionCandidateMetadataParts {
+                        eligible,
+                        provider_api_format: provider_api_format.as_str(),
+                        client_api_format: spec_metadata.api_format,
+                        extra_fields: serde_json::Map::new(),
+                    },
                     execution_strategy,
                     conversion_mode,
-                    provider_api_format.as_str(),
-                ),
-            );
-            skipped_candidate
-        },
+                    eligible.candidate.endpoint_api_format.as_str(),
+                ))
+            },
+            move |mut skipped_candidate| {
+                let provider_api_format = skipped_candidate
+                    .transport
+                    .as_ref()
+                    .map(|transport| transport.endpoint.api_format.trim().to_ascii_lowercase())
+                    .unwrap_or_else(|| {
+                        skipped_candidate
+                            .candidate
+                            .endpoint_api_format
+                            .trim()
+                            .to_ascii_lowercase()
+                    });
+                let (execution_strategy, conversion_mode) = ai_local_execution_contract_for_formats(
+                    spec_metadata.api_format,
+                    &provider_api_format,
+                );
+                skipped_candidate.extra_data = Some(
+                    build_local_execution_candidate_contract_metadata_for_candidate(
+                        &skipped_candidate.candidate,
+                        skipped_candidate.transport_ref(),
+                        provider_api_format.as_str(),
+                        spec_metadata.api_format,
+                        serde_json::Map::new(),
+                        execution_strategy,
+                        conversion_mode,
+                        provider_api_format.as_str(),
+                    ),
+                );
+                skipped_candidate
+            },
+        )
+        .await,
     )
-    .await)
 }
 
 pub(crate) async fn mark_skipped_local_openai_responses_candidate(

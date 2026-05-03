@@ -1,13 +1,21 @@
 use aether_ai_serving::{
     run_ai_candidate_preselection, AiCandidatePreselectionOutcome, AiCandidatePreselectionPort,
 };
-use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
+use aether_scheduler_core::{
+    enumerate_minimal_candidate_selection_with_model_directives, normalize_api_format,
+    resolve_requested_global_model_name_with_model_directives,
+    EnumerateMinimalCandidateSelectionInput, SchedulerMinimalCandidateSelectionCandidate,
+};
 use async_trait::async_trait;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ai_serving::planner::candidate_resolution::SkippedLocalExecutionCandidate;
 use crate::ai_serving::{GatewayAuthApiKeySnapshot, PlannerAppState};
 use crate::clock::current_unix_secs;
+use crate::data::candidate_selection::{
+    read_requested_model_rows_fast_path_page, requested_model_candidate_names,
+    REQUESTED_MODEL_CANDIDATE_PAGE_SIZE, REQUESTED_MODEL_MAX_SCANNED_ROWS,
+};
 use crate::scheduler::candidate::SchedulerSkippedCandidate;
 use crate::GatewayError;
 
@@ -174,6 +182,332 @@ pub(crate) async fn preselect_local_execution_candidates_with_serving(
     run_ai_candidate_preselection(&port).await
 }
 
+pub(crate) struct LocalCandidatePreselectionPageCursor<'a> {
+    state: PlannerAppState<'a>,
+    client_api_format: String,
+    requested_model: String,
+    require_streaming: bool,
+    required_capabilities: Option<serde_json::Value>,
+    auth_snapshot: GatewayAuthApiKeySnapshot,
+    use_api_format_alias_match: bool,
+    key_mode: LocalCandidatePreselectionKeyMode,
+    candidate_api_formats: Vec<String>,
+    model_directive_enabled_api_formats: BTreeSet<String>,
+    format_index: usize,
+    requested_name_indexes: BTreeMap<String, usize>,
+    requested_name_offsets: BTreeMap<String, u32>,
+    scanned_rows_by_format: BTreeMap<String, u32>,
+    resolved_global_model_names: BTreeMap<String, String>,
+    seen_candidate_keys: BTreeSet<String>,
+}
+
+impl<'a> LocalCandidatePreselectionPageCursor<'a> {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn new(
+        state: PlannerAppState<'a>,
+        client_api_format: &str,
+        requested_model: &str,
+        require_streaming: bool,
+        required_capabilities: Option<&serde_json::Value>,
+        auth_snapshot: &GatewayAuthApiKeySnapshot,
+        use_api_format_alias_match: bool,
+        key_mode: LocalCandidatePreselectionKeyMode,
+    ) -> Self {
+        let candidate_api_formats =
+            crate::ai_serving::request_candidate_api_formats(client_api_format, require_streaming)
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+        let mut model_directive_enabled_api_formats = BTreeSet::new();
+        for api_format in &candidate_api_formats {
+            if crate::system_features::reasoning_model_directive_enabled_for_api_format_and_model(
+                state.app(),
+                api_format,
+                Some(requested_model),
+            )
+            .await
+            {
+                model_directive_enabled_api_formats
+                    .insert(crate::ai_serving::normalize_api_format_alias(api_format));
+            }
+        }
+
+        Self {
+            state,
+            client_api_format: client_api_format.to_string(),
+            requested_model: requested_model.to_string(),
+            require_streaming,
+            required_capabilities: required_capabilities.cloned(),
+            auth_snapshot: auth_snapshot.clone(),
+            use_api_format_alias_match,
+            key_mode,
+            candidate_api_formats,
+            model_directive_enabled_api_formats,
+            format_index: 0,
+            requested_name_indexes: BTreeMap::new(),
+            requested_name_offsets: BTreeMap::new(),
+            scanned_rows_by_format: BTreeMap::new(),
+            resolved_global_model_names: BTreeMap::new(),
+            seen_candidate_keys: BTreeSet::new(),
+        }
+    }
+
+    pub(crate) async fn next_page(
+        &mut self,
+    ) -> Result<
+        Option<
+            AiCandidatePreselectionOutcome<
+                SchedulerMinimalCandidateSelectionCandidate,
+                SkippedLocalExecutionCandidate,
+            >,
+        >,
+        GatewayError,
+    > {
+        while self.format_index < self.candidate_api_formats.len() {
+            let candidate_api_format = self.candidate_api_formats[self.format_index].clone();
+            let Some(outcome) = self.next_page_for_api_format(&candidate_api_format).await? else {
+                self.format_index += 1;
+                continue;
+            };
+            if outcome.candidates.is_empty() && outcome.skipped_candidates.is_empty() {
+                continue;
+            }
+            return Ok(Some(outcome));
+        }
+        Ok(None)
+    }
+
+    async fn next_page_for_api_format(
+        &mut self,
+        candidate_api_format: &str,
+    ) -> Result<
+        Option<
+            AiCandidatePreselectionOutcome<
+                SchedulerMinimalCandidateSelectionCandidate,
+                SkippedLocalExecutionCandidate,
+            >,
+        >,
+        GatewayError,
+    > {
+        let normalized_api_format = normalize_api_format(candidate_api_format);
+        if normalized_api_format.is_empty() {
+            return Ok(None);
+        }
+        let enable_model_directives = self.model_directive_enabled_api_formats.contains(
+            &crate::ai_serving::normalize_api_format_alias(candidate_api_format),
+        );
+        let requested_names =
+            requested_model_candidate_names(&self.requested_model, enable_model_directives);
+        let scanned = *self
+            .scanned_rows_by_format
+            .get(&normalized_api_format)
+            .unwrap_or(&0);
+        if scanned >= REQUESTED_MODEL_MAX_SCANNED_ROWS {
+            return Ok(None);
+        }
+
+        loop {
+            let requested_name_index = *self
+                .requested_name_indexes
+                .entry(normalized_api_format.clone())
+                .or_insert(0);
+            let Some(requested_name) = requested_names.get(requested_name_index) else {
+                return Ok(None);
+            };
+            if requested_name.trim().is_empty() {
+                self.requested_name_indexes
+                    .insert(normalized_api_format.clone(), requested_name_index + 1);
+                continue;
+            }
+
+            let offset_key = format!("{normalized_api_format}:{requested_name_index}");
+            let offset = *self
+                .requested_name_offsets
+                .entry(offset_key.clone())
+                .or_insert(0);
+            let scanned = *self
+                .scanned_rows_by_format
+                .get(&normalized_api_format)
+                .unwrap_or(&0);
+            let remaining = REQUESTED_MODEL_MAX_SCANNED_ROWS.saturating_sub(scanned);
+            if remaining == 0 {
+                return Ok(None);
+            }
+            let limit = REQUESTED_MODEL_CANDIDATE_PAGE_SIZE.min(remaining);
+            let page = read_requested_model_rows_fast_path_page(
+                self.state.app().data.as_ref(),
+                &normalized_api_format,
+                &self.requested_model,
+                requested_name,
+                offset,
+                limit,
+                enable_model_directives,
+            )
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))?;
+            self.scanned_rows_by_format.insert(
+                normalized_api_format.clone(),
+                scanned.saturating_add(page.scanned_rows),
+            );
+            self.requested_name_offsets
+                .insert(offset_key, offset.saturating_add(limit));
+            if page.end_of_requested_name {
+                self.requested_name_indexes
+                    .insert(normalized_api_format.clone(), requested_name_index + 1);
+            }
+            if page.scanned_rows == 0 {
+                if requested_name_index + 1 >= requested_names.len() {
+                    return Ok(None);
+                }
+                continue;
+            }
+
+            let mut rows = page
+                .rows
+                .into_iter()
+                .filter(|row| {
+                    self.seen_candidate_keys.insert(format!(
+                        "{}:{}:{}:{}",
+                        row.endpoint_id, row.key_id, row.model_id, row.endpoint_api_format
+                    ))
+                })
+                .collect::<Vec<_>>();
+            if rows.is_empty() {
+                continue;
+            }
+            let resolved_global_model_name =
+                if let Some(value) = self.resolved_global_model_names.get(&normalized_api_format) {
+                    value.clone()
+                } else {
+                    let Some(value) = resolve_requested_global_model_name_with_model_directives(
+                        &rows,
+                        &self.requested_model,
+                        &normalized_api_format,
+                        enable_model_directives,
+                    ) else {
+                        continue;
+                    };
+                    self.resolved_global_model_names
+                        .insert(normalized_api_format.clone(), value.clone());
+                    value
+                };
+            rows.retain(|row| row.global_model_name == resolved_global_model_name);
+            if rows.is_empty() {
+                continue;
+            }
+
+            let auth_constraints = matches_client_api_format(
+                self.use_api_format_alias_match,
+                candidate_api_format,
+                &self.client_api_format,
+            )
+            .then_some(&self.auth_snapshot)
+            .map(crate::data::candidate_selection::auth_snapshot_constraints);
+            let enumerated_candidates =
+                enumerate_minimal_candidate_selection_with_model_directives(
+                    EnumerateMinimalCandidateSelectionInput {
+                        rows,
+                        normalized_api_format: &normalized_api_format,
+                        requested_model_name: &self.requested_model,
+                        resolved_global_model_name: resolved_global_model_name.as_str(),
+                        require_streaming: self.require_streaming,
+                        required_capabilities: self.required_capabilities.as_ref(),
+                        auth_constraints: auth_constraints.as_ref(),
+                    },
+                    enable_model_directives,
+                )
+                .map_err(|err| GatewayError::Internal(err.to_string()))?;
+            let mut candidates = Vec::new();
+            for candidate in enumerated_candidates {
+                if !self.candidate_allowed_for_page(
+                    &candidate,
+                    candidate_api_format,
+                    enable_model_directives,
+                ) {
+                    continue;
+                }
+                if !self
+                    .seen_candidate_keys
+                    .insert(local_candidate_preselection_key(&candidate, self.key_mode))
+                {
+                    continue;
+                }
+                candidates.push(candidate);
+            }
+
+            let matches_client_format = matches_client_api_format(
+                self.use_api_format_alias_match,
+                candidate_api_format,
+                &self.client_api_format,
+            );
+            let auth_snapshot = matches_client_format.then_some(&self.auth_snapshot);
+            let (candidates, skipped_candidates) = self
+                .state
+                .list_selectable_enumerated_candidates_with_skip_reasons(
+                    candidate_api_format,
+                    &resolved_global_model_name,
+                    candidates,
+                    self.required_capabilities.as_ref(),
+                    auth_snapshot,
+                    current_unix_secs(),
+                )
+                .await?;
+            let skipped_candidates = skipped_candidates
+                .into_iter()
+                .map(skipped_local_execution_candidate_from_scheduler_skip)
+                .filter(|skipped_candidate| {
+                    self.skipped_candidate_allowed_for_page(
+                        skipped_candidate,
+                        candidate_api_format,
+                        enable_model_directives,
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            return Ok(Some(AiCandidatePreselectionOutcome {
+                candidates,
+                skipped_candidates,
+            }));
+        }
+    }
+
+    fn candidate_allowed_for_page(
+        &self,
+        candidate: &SchedulerMinimalCandidateSelectionCandidate,
+        candidate_api_format: &str,
+        enable_model_directives: bool,
+    ) -> bool {
+        matches_client_api_format(
+            self.use_api_format_alias_match,
+            candidate_api_format,
+            &self.client_api_format,
+        ) || auth_snapshot_allows_cross_format_candidate(
+            &self.auth_snapshot,
+            &self.requested_model,
+            candidate,
+            enable_model_directives,
+        )
+    }
+
+    fn skipped_candidate_allowed_for_page(
+        &self,
+        skipped_candidate: &SkippedLocalExecutionCandidate,
+        candidate_api_format: &str,
+        enable_model_directives: bool,
+    ) -> bool {
+        matches_client_api_format(
+            self.use_api_format_alias_match,
+            candidate_api_format,
+            &self.client_api_format,
+        ) || auth_snapshot_allows_cross_format_candidate(
+            &self.auth_snapshot,
+            &self.requested_model,
+            &skipped_candidate.candidate,
+            enable_model_directives,
+        )
+    }
+}
+
 fn skipped_local_execution_candidate_from_scheduler_skip(
     skipped_candidate: SchedulerSkippedCandidate,
 ) -> SkippedLocalExecutionCandidate {
@@ -208,6 +542,18 @@ fn local_candidate_preselection_key(
             candidate.selected_provider_model_name,
             candidate.endpoint_api_format,
         ),
+    }
+}
+
+fn matches_client_api_format(
+    use_api_format_alias_match: bool,
+    candidate_api_format: &str,
+    client_api_format: &str,
+) -> bool {
+    if use_api_format_alias_match {
+        crate::ai_serving::api_format_alias_matches(candidate_api_format, client_api_format)
+    } else {
+        candidate_api_format == client_api_format
     }
 }
 

@@ -11,6 +11,8 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::convert::Infallible;
+use std::sync::Arc;
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::ai_serving::planner::candidate_affinity_cache::remember_scheduler_affinity_for_candidate;
@@ -19,6 +21,9 @@ use crate::ai_serving::planner::candidate_resolution::{
     resolve_and_rank_local_execution_candidates_without_transport_pair_gate,
     resolve_and_rank_logical_local_execution_candidates, EligibleLocalExecutionCandidate,
     LocalExecutionCandidateKind, SkippedLocalExecutionCandidate,
+};
+use crate::ai_serving::planner::candidate_source::{
+    LocalCandidatePreselectionKeyMode, LocalCandidatePreselectionPageCursor,
 };
 use crate::ai_serving::planner::materialization_policy::LocalCandidatePersistencePolicy;
 use crate::ai_serving::planner::pool_scheduler::PoolKeyCursor;
@@ -42,6 +47,10 @@ pub(crate) struct LocalExecutionCandidateAttemptSource<'a> {
     items: VecDeque<LocalExecutionCandidateAttemptSourceItem<'a>>,
 }
 
+type DecorateSkippedCandidateFn<'a> = Arc<
+    dyn Fn(SkippedLocalExecutionCandidate) -> SkippedLocalExecutionCandidate + Send + Sync + 'a,
+>;
+
 #[async_trait]
 pub(crate) trait LocalExecutionAttemptSource<T>: Send {
     async fn next_execution_attempt(&mut self) -> Result<Option<T>, GatewayError>;
@@ -57,6 +66,9 @@ enum LocalExecutionCandidateAttemptSourceItem<'a> {
         cursor: PoolKeyCursor<'a>,
         candidate_index: u32,
         pending_attempts: VecDeque<LocalExecutionCandidateAttempt>,
+    },
+    RequestedModelPage {
+        cursor: Box<RequestedModelAttemptPageCursor<'a>>,
     },
 }
 
@@ -92,6 +104,13 @@ impl<'a> LocalExecutionCandidateAttemptSource<'a> {
                         candidate,
                         *candidate_index,
                     );
+                }
+                LocalExecutionCandidateAttemptSourceItem::RequestedModelPage { cursor } => {
+                    let Some(attempt) = cursor.next_attempt().await else {
+                        self.items.pop_front();
+                        continue;
+                    };
+                    return Some(attempt);
                 }
             }
         }
@@ -476,9 +495,34 @@ where
         &candidates,
     );
 
+    let (items, _) = build_logical_candidate_items(
+        state,
+        candidates,
+        0,
+        sticky_session_token,
+        requested_model,
+        request_auth_channel,
+    );
+
+    (
+        LocalExecutionCandidateAttemptSource { items },
+        candidate_count,
+    )
+}
+
+fn build_logical_candidate_items<'a>(
+    state: PlannerAppState<'a>,
+    candidates: Vec<EligibleLocalExecutionCandidate>,
+    starting_candidate_index: u32,
+    sticky_session_token: Option<&str>,
+    requested_model: Option<&str>,
+    request_auth_channel: Option<&str>,
+) -> (VecDeque<LocalExecutionCandidateAttemptSourceItem<'a>>, u32) {
     let mut items = VecDeque::new();
-    for (candidate_index, candidate) in candidates.into_iter().enumerate() {
-        let candidate_index = candidate_index as u32;
+    let mut next_candidate_index = starting_candidate_index;
+    for candidate in candidates {
+        let candidate_index = next_candidate_index;
+        next_candidate_index = next_candidate_index.saturating_add(1);
         match candidate.kind {
             LocalExecutionCandidateKind::SingleKey => {
                 let attempts = build_unpersisted_local_execution_candidate_attempts(
@@ -504,11 +548,226 @@ where
             }
         }
     }
+    (items, next_candidate_index)
+}
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn build_lazy_requested_model_execution_candidate_attempt_source_with_serving<
+    'a,
+    F,
+    G,
+>(
+    state: PlannerAppState<'a>,
+    trace_id: &str,
+    client_api_format: &str,
+    requested_model: &str,
+    require_streaming: bool,
+    auth_snapshot: &GatewayAuthApiKeySnapshot,
+    required_capabilities: Option<&Value>,
+    sticky_session_token: Option<&str>,
+    request_auth_channel: Option<&str>,
+    persistence_policy: LocalCandidatePersistencePolicy<'_>,
+    use_api_format_alias_match: bool,
+    key_mode: LocalCandidatePreselectionKeyMode,
+    resolution_mode: LocalCandidateResolutionMode,
+    build_available_extra_data: F,
+    decorate_skipped_candidate: G,
+) -> (LocalExecutionCandidateAttemptSource<'a>, usize)
+where
+    F: Fn(&EligibleLocalExecutionCandidate) -> Option<Value> + Send + Sync + 'a,
+    G: Fn(SkippedLocalExecutionCandidate) -> SkippedLocalExecutionCandidate + Send + Sync + 'a,
+{
+    let _ = build_available_extra_data;
+    let decorate_skipped_candidate = Arc::new(decorate_skipped_candidate);
+    let record_runtime_miss_diagnostic = persistence_policy.skipped.record_runtime_miss_diagnostic;
+    let page_cursor = LocalCandidatePreselectionPageCursor::new(
+        state,
+        client_api_format,
+        requested_model,
+        require_streaming,
+        required_capabilities,
+        auth_snapshot,
+        use_api_format_alias_match,
+        key_mode,
+    )
+    .await;
+    let mut cursor = RequestedModelAttemptPageCursor {
+        state,
+        trace_id: trace_id.to_string(),
+        client_api_format: client_api_format.to_string(),
+        requested_model: requested_model.to_string(),
+        auth_snapshot: auth_snapshot.clone(),
+        required_capabilities: required_capabilities.cloned(),
+        sticky_session_token: sticky_session_token.map(str::to_string),
+        request_auth_channel: request_auth_channel.map(str::to_string),
+        record_runtime_miss_diagnostic,
+        resolution_mode,
+        decorate_skipped_candidate,
+        page_cursor,
+        pending_items: VecDeque::new(),
+        candidate_count: 0,
+        next_candidate_index: 0,
+        remembered_affinity: false,
+    };
+    cursor.load_next_page().await;
+    let candidate_count = cursor.candidate_count;
+    let mut items = VecDeque::new();
+    if !cursor.pending_items.is_empty() {
+        items.push_back(
+            LocalExecutionCandidateAttemptSourceItem::RequestedModelPage {
+                cursor: Box::new(cursor),
+            },
+        );
+    }
     (
         LocalExecutionCandidateAttemptSource { items },
         candidate_count,
     )
+}
+
+struct RequestedModelAttemptPageCursor<'a> {
+    state: PlannerAppState<'a>,
+    trace_id: String,
+    client_api_format: String,
+    requested_model: String,
+    auth_snapshot: GatewayAuthApiKeySnapshot,
+    required_capabilities: Option<Value>,
+    sticky_session_token: Option<String>,
+    request_auth_channel: Option<String>,
+    record_runtime_miss_diagnostic: bool,
+    resolution_mode: LocalCandidateResolutionMode,
+    decorate_skipped_candidate: DecorateSkippedCandidateFn<'a>,
+    page_cursor: LocalCandidatePreselectionPageCursor<'a>,
+    pending_items: VecDeque<LocalExecutionCandidateAttemptSourceItem<'a>>,
+    candidate_count: usize,
+    next_candidate_index: u32,
+    remembered_affinity: bool,
+}
+
+impl<'a> RequestedModelAttemptPageCursor<'a> {
+    async fn next_attempt(&mut self) -> Option<LocalExecutionCandidateAttempt> {
+        loop {
+            if let Some(attempt) = pop_attempt_from_items(&mut self.pending_items).await {
+                return Some(attempt);
+            }
+            if !self.load_next_page().await {
+                return None;
+            }
+        }
+    }
+
+    async fn load_next_page(&mut self) -> bool {
+        loop {
+            let page = match self.page_cursor.next_page().await {
+                Ok(Some(page)) => page,
+                Ok(None) => return false,
+                Err(error) => {
+                    warn!(
+                        trace_id = %self.trace_id,
+                        error = ?error,
+                        "gateway lazy requested-model candidate page read failed"
+                    );
+                    return false;
+                }
+            };
+
+            let (candidates, resolved_skipped) =
+                resolve_and_rank_logical_local_execution_candidates(
+                    self.state,
+                    page.candidates,
+                    &self.client_api_format,
+                    Some(&self.requested_model),
+                    Some(&self.auth_snapshot),
+                    self.required_capabilities.as_ref(),
+                    self.sticky_session_token.as_deref(),
+                    self.request_auth_channel.as_deref(),
+                    self.resolution_mode,
+                )
+                .await;
+            let skipped_candidates = page
+                .skipped_candidates
+                .into_iter()
+                .chain(resolved_skipped)
+                .map(|skipped| (self.decorate_skipped_candidate)(skipped))
+                .collect::<Vec<_>>();
+            self.candidate_count = self
+                .candidate_count
+                .saturating_add(candidates.len() + skipped_candidates.len());
+            if self.record_runtime_miss_diagnostic {
+                for skipped_candidate in &skipped_candidates {
+                    record_local_runtime_candidate_skip_reason(
+                        self.state.app(),
+                        &self.trace_id,
+                        skipped_candidate.skip_reason,
+                    );
+                }
+            }
+            if !self.remembered_affinity && !candidates.is_empty() {
+                remember_first_local_candidate_affinity(
+                    self.state,
+                    Some(&self.auth_snapshot),
+                    &self.client_api_format,
+                    Some(&self.requested_model),
+                    &candidates,
+                );
+                self.remembered_affinity = true;
+            }
+            let (items, next_candidate_index) = build_logical_candidate_items(
+                self.state,
+                candidates,
+                self.next_candidate_index,
+                self.sticky_session_token.as_deref(),
+                Some(&self.requested_model),
+                self.request_auth_channel.as_deref(),
+            );
+            self.next_candidate_index = next_candidate_index;
+            if !items.is_empty() {
+                self.pending_items = items;
+                return true;
+            }
+        }
+    }
+}
+
+async fn pop_attempt_from_items(
+    items: &mut VecDeque<LocalExecutionCandidateAttemptSourceItem<'_>>,
+) -> Option<LocalExecutionCandidateAttempt> {
+    loop {
+        let front = items.front_mut()?;
+        match front {
+            LocalExecutionCandidateAttemptSourceItem::Static { attempts } => {
+                if let Some(attempt) = attempts.pop_front() {
+                    if attempts.is_empty() {
+                        items.pop_front();
+                    }
+                    return Some(attempt);
+                }
+                items.pop_front();
+            }
+            LocalExecutionCandidateAttemptSourceItem::Pool {
+                cursor,
+                candidate_index,
+                pending_attempts,
+            } => {
+                if let Some(attempt) = pending_attempts.pop_front() {
+                    return Some(attempt);
+                }
+                let Some(candidate) = cursor.next_key().await else {
+                    cursor.log_exhausted();
+                    let _ = cursor.take_skipped_candidates();
+                    items.pop_front();
+                    continue;
+                };
+                *pending_attempts = build_unpersisted_local_execution_candidate_attempts(
+                    candidate,
+                    *candidate_index,
+                );
+            }
+            LocalExecutionCandidateAttemptSourceItem::RequestedModelPage { .. } => {
+                items.pop_front();
+            }
+        }
+    }
 }
 
 pub(crate) fn remember_first_local_candidate_affinity(

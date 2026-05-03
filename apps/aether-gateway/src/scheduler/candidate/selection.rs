@@ -112,7 +112,7 @@ pub(super) async fn collect_selectable_candidates_with_skip_reasons(
     let ordering_config = runtime_state.read_scheduler_ordering_config().await?;
     let priority_affinity_key =
         scheduling_priority_affinity_key(auth_snapshot, ordering_config.scheduling_mode);
-    let mut candidates = enumerate_scheduler_candidates(
+    let candidates = enumerate_scheduler_candidates(
         selection_row_source,
         api_format,
         global_model_name,
@@ -122,6 +122,38 @@ pub(super) async fn collect_selectable_candidates_with_skip_reasons(
         enable_model_directives,
     )
     .await?;
+    collect_selectable_enumerated_candidates_with_skip_reasons(
+        runtime_state,
+        api_format,
+        global_model_name,
+        candidates,
+        required_capabilities,
+        auth_snapshot,
+        now_unix_secs,
+        ordering_config,
+        priority_affinity_key,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn collect_selectable_enumerated_candidates_with_skip_reasons(
+    runtime_state: &impl SchedulerRuntimeState,
+    api_format: &str,
+    global_model_name: &str,
+    mut candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
+    required_capabilities: Option<&serde_json::Value>,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    now_unix_secs: u64,
+    ordering_config: crate::scheduler::config::SchedulerOrderingConfig,
+    priority_affinity_key: Option<&str>,
+) -> Result<
+    (
+        Vec<SchedulerMinimalCandidateSelectionCandidate>,
+        Vec<SchedulerSkippedCandidate>,
+    ),
+    GatewayError,
+> {
     let runtime_snapshot =
         read_candidate_runtime_selection_snapshot(runtime_state, &candidates, now_unix_secs)
             .await?;
@@ -178,7 +210,7 @@ pub(super) async fn collect_selectable_candidates_with_skip_reasons(
     Ok((selected, skipped))
 }
 
-fn scheduling_priority_affinity_key<'a>(
+pub(super) fn scheduling_priority_affinity_key<'a>(
     auth_snapshot: Option<&'a GatewayAuthApiKeySnapshot>,
     scheduling_mode: SchedulerSchedulingMode,
 ) -> Option<&'a str> {

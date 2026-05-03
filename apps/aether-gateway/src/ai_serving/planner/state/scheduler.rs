@@ -99,6 +99,33 @@ impl<'a> PlannerAppState<'a> {
         }
     }
 
+    pub(crate) async fn list_selectable_enumerated_candidates_with_skip_reasons(
+        self,
+        api_format: &str,
+        global_model_name: &str,
+        candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
+        required_capabilities: Option<&serde_json::Value>,
+        auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+        now_unix_secs: u64,
+    ) -> Result<
+        (
+            Vec<SchedulerMinimalCandidateSelectionCandidate>,
+            Vec<SchedulerSkippedCandidate>,
+        ),
+        GatewayError,
+    > {
+        crate::scheduler::candidate::list_selectable_enumerated_candidates_with_skip_reasons(
+            self.app(),
+            api_format,
+            global_model_name,
+            candidates,
+            required_capabilities,
+            auth_snapshot,
+            now_unix_secs,
+        )
+        .await
+    }
+
     pub(crate) async fn list_selectable_candidates_for_required_capability_without_requested_model(
         self,
         candidate_api_format: &str,
