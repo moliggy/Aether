@@ -1638,11 +1638,14 @@ async fn skips_codex_candidate_when_account_quota_is_exhausted_and_pool_flag_ena
     .await
     .expect("selection should succeed");
 
-    assert_eq!(selected.len(), 1);
-    assert_eq!(selected[0].provider_id, "provider-openai");
-    assert_eq!(skipped.len(), 1);
-    assert_eq!(skipped[0].candidate.provider_id, "provider-codex");
-    assert_eq!(skipped[0].skip_reason, "account_quota_exhausted");
+    assert_eq!(selected.len(), 2);
+    assert!(selected
+        .iter()
+        .any(|item| item.provider_id == "provider-codex"));
+    assert!(selected
+        .iter()
+        .any(|item| item.provider_id == "provider-openai"));
+    assert!(skipped.is_empty());
 }
 
 #[tokio::test]
@@ -2240,11 +2243,14 @@ async fn skips_kiro_candidate_when_account_quota_is_exhausted_and_pool_flag_enab
     .await
     .expect("selection should succeed");
 
-    assert_eq!(selected.len(), 1);
-    assert_eq!(selected[0].provider_id, "provider-openai");
-    assert_eq!(skipped.len(), 1);
-    assert_eq!(skipped[0].candidate.provider_id, "provider-kiro");
-    assert_eq!(skipped[0].skip_reason, "account_quota_exhausted");
+    assert_eq!(selected.len(), 2);
+    assert!(selected
+        .iter()
+        .any(|item| item.provider_id == "provider-kiro"));
+    assert!(selected
+        .iter()
+        .any(|item| item.provider_id == "provider-openai"));
+    assert!(skipped.is_empty());
 }
 
 #[tokio::test]

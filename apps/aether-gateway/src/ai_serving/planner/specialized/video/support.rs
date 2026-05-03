@@ -3,6 +3,7 @@ use tracing::warn;
 
 use super::{LocalVideoCreateFamily, LocalVideoCreateSpec};
 use crate::ai_serving::planner::candidate_materialization::{
+    build_local_execution_candidate_attempt_source_with_serving,
     mark_skipped_local_execution_candidate,
     mark_skipped_local_execution_candidate_with_failure_diagnostic,
     materialize_local_execution_candidates_with_serving, LocalCandidateResolutionMode,
@@ -26,9 +27,10 @@ use crate::ai_serving::{
     PlannerAppState,
 };
 use crate::clock::current_unix_secs;
-use crate::AppState;
+use crate::{AppState, GatewayError};
 
 pub(super) use crate::ai_serving::planner::candidate_materialization::LocalExecutionCandidateAttempt as LocalVideoCreateCandidateAttempt;
+pub(super) use crate::ai_serving::planner::candidate_materialization::LocalExecutionCandidateAttemptSource as LocalVideoCreateCandidateAttemptSource;
 pub(super) use crate::ai_serving::planner::decision_input::LocalRequestedModelDecisionInput as LocalVideoCreateDecisionInput;
 
 pub(super) async fn resolve_local_video_create_decision_input(
@@ -141,6 +143,94 @@ pub(super) async fn list_local_video_create_candidate_attempts(
         )
         .await,
     )
+}
+
+pub(super) async fn build_local_video_create_candidate_attempt_source<'a>(
+    state: &'a AppState,
+    trace_id: &str,
+    input: &LocalVideoCreateDecisionInput,
+    body_json: &serde_json::Value,
+    api_format: &str,
+    decision_kind: &str,
+) -> Result<Option<(LocalVideoCreateCandidateAttemptSource<'a>, usize)>, GatewayError> {
+    let planner_state = PlannerAppState::new(state);
+    let (candidates, preselection_skipped) = match planner_state
+        .list_selectable_candidates_with_skip_reasons(
+            api_format,
+            &input.requested_model,
+            false,
+            input.required_capabilities.as_ref(),
+            Some(&input.auth_snapshot),
+            current_unix_secs(),
+        )
+        .await
+    {
+        Ok(candidates) => candidates,
+        Err(err) => {
+            warn!(
+                trace_id = %trace_id,
+                decision_kind = decision_kind,
+                error = ?err,
+                "gateway local video decision scheduler selection failed"
+            );
+            return Ok(None);
+        }
+    };
+
+    let sticky_session_token = extract_pool_sticky_session_token(body_json);
+    let persistence_policy = build_local_candidate_persistence_policy(
+        &input.auth_context,
+        input.required_capabilities.as_ref(),
+        LocalCandidatePersistencePolicyKind::VideoDecision,
+    );
+
+    let (source, candidate_count) = build_local_execution_candidate_attempt_source_with_serving(
+        planner_state,
+        trace_id,
+        api_format,
+        Some(&input.requested_model),
+        Some(&input.auth_snapshot),
+        input.required_capabilities.as_ref(),
+        sticky_session_token.as_deref(),
+        input.request_auth_channel.as_deref(),
+        persistence_policy,
+        candidates,
+        preselection_skipped
+            .into_iter()
+            .map(|item| SkippedLocalExecutionCandidate {
+                candidate: item.candidate,
+                skip_reason: item.skip_reason,
+                transport: None,
+                ranking: None,
+                extra_data: None,
+            })
+            .collect(),
+        LocalCandidateResolutionMode::Standard,
+        |eligible| {
+            Some(build_local_execution_candidate_metadata(
+                LocalExecutionCandidateMetadataParts {
+                    eligible,
+                    provider_api_format: api_format,
+                    client_api_format: api_format,
+                    extra_fields: serde_json::Map::new(),
+                },
+            ))
+        },
+        |mut skipped_candidate| {
+            skipped_candidate.extra_data =
+                Some(build_local_execution_candidate_metadata_for_candidate(
+                    &skipped_candidate.candidate,
+                    skipped_candidate.transport_ref(),
+                    api_format,
+                    api_format,
+                    serde_json::Map::new(),
+                ));
+            skipped_candidate
+        },
+    )
+    .await;
+
+    Ok(Some((source, candidate_count)))
 }
 
 async fn materialize_local_video_create_candidate_attempts(

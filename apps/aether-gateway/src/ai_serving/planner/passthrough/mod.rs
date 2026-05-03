@@ -3,7 +3,9 @@
 mod provider;
 
 pub(crate) use self::provider::{
+    build_local_stream_attempt_source as build_local_same_format_stream_attempt_source,
     build_local_stream_plan_and_reports as build_local_same_format_stream_plan_and_reports,
+    build_local_sync_attempt_source as build_local_same_format_sync_attempt_source,
     build_local_sync_plan_and_reports as build_local_same_format_sync_plan_and_reports,
     maybe_build_local_same_format_provider_decision_payload_for_candidate,
     maybe_build_stream_local_same_format_provider_decision_payload,

@@ -12,11 +12,14 @@ mod decision;
 mod plans;
 
 use self::decision::{
+    build_local_openai_chat_candidate_attempt_source,
     materialize_local_openai_chat_candidate_attempts,
-    maybe_build_local_openai_chat_decision_payload_for_candidate, LocalOpenAiChatDecisionInput,
+    maybe_build_local_openai_chat_decision_payload_for_candidate, LocalOpenAiChatCandidateAttempt,
+    LocalOpenAiChatCandidateAttemptSource, LocalOpenAiChatDecisionInput,
 };
 use self::plans::{
-    build_local_openai_chat_stream_plan_and_reports, build_local_openai_chat_sync_plan_and_reports,
+    build_local_openai_chat_stream_attempt_source, build_local_openai_chat_stream_plan_and_reports,
+    build_local_openai_chat_sync_attempt_source, build_local_openai_chat_sync_plan_and_reports,
     list_local_openai_chat_candidates, resolve_local_openai_chat_decision_input,
     set_local_openai_chat_miss_diagnostic,
 };
@@ -44,6 +47,50 @@ pub(crate) async fn build_local_openai_chat_stream_plan_and_reports_for_kind(
     plan_kind: &str,
 ) -> Result<Vec<crate::ai_serving::planner::plan_builders::AiStreamAttempt>, GatewayError> {
     build_local_openai_chat_stream_plan_and_reports(
+        state, parts, trace_id, decision, body_json, plan_kind,
+    )
+    .await
+}
+
+pub(crate) async fn build_local_openai_chat_sync_attempt_source_for_kind<'a>(
+    state: &'a AppState,
+    parts: &'a http::request::Parts,
+    trace_id: &'a str,
+    decision: &'a GatewayControlDecision,
+    body_json: &'a serde_json::Value,
+    plan_kind: &str,
+) -> Result<
+    Option<(
+        impl crate::ai_serving::planner::LocalExecutionAttemptSource<
+                crate::ai_serving::planner::plan_builders::AiSyncAttempt,
+            > + 'a,
+        usize,
+    )>,
+    GatewayError,
+> {
+    build_local_openai_chat_sync_attempt_source(
+        state, parts, trace_id, decision, body_json, plan_kind,
+    )
+    .await
+}
+
+pub(crate) async fn build_local_openai_chat_stream_attempt_source_for_kind<'a>(
+    state: &'a AppState,
+    parts: &'a http::request::Parts,
+    trace_id: &'a str,
+    decision: &'a GatewayControlDecision,
+    body_json: &'a serde_json::Value,
+    plan_kind: &str,
+) -> Result<
+    Option<(
+        impl crate::ai_serving::planner::LocalExecutionAttemptSource<
+                crate::ai_serving::planner::plan_builders::AiStreamAttempt,
+            > + 'a,
+        usize,
+    )>,
+    GatewayError,
+> {
+    build_local_openai_chat_stream_attempt_source(
         state, parts, trace_id, decision, body_json, plan_kind,
     )
     .await

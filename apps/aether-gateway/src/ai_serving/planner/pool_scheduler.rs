@@ -1,4 +1,4 @@
-use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
+use std::collections::{btree_map::Entry, BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use aether_ai_serving::{
@@ -6,14 +6,20 @@ use aether_ai_serving::{
     AiPoolCandidateOrchestration, AiPoolCatalogKeyContext, AiPoolRuntimeState,
     AiPoolSchedulingConfig, AiPoolSchedulingPreset,
 };
+use aether_data_contracts::repository::candidate_selection::{
+    StoredMinimalCandidateSelectionRow, StoredPoolKeyCandidateRowsQuery,
+};
 use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 use serde_json::{Map, Value};
 use tracing::warn;
 
 use crate::ai_serving::planner::candidate_resolution::{
-    EligibleLocalExecutionCandidate, SkippedLocalExecutionCandidate,
+    candidate_auth_channel_skip_reason, read_candidate_transport_snapshot,
+    EligibleLocalExecutionCandidate, LocalExecutionCandidateKind, SkippedLocalExecutionCandidate,
 };
-use crate::ai_serving::PlannerAppState;
+use crate::ai_serving::{
+    candidate_common_transport_skip_reason, CandidateTransportPolicyFacts, PlannerAppState,
+};
 use crate::clock::current_unix_ms;
 use crate::handlers::shared::provider_pool::admin_provider_pool_config_from_config_value;
 use crate::handlers::shared::provider_pool::read_admin_provider_pool_runtime_state;
@@ -28,6 +34,8 @@ use crate::orchestration::LocalExecutionCandidateMetadata;
 use crate::provider_key_auth::provider_key_auth_semantics;
 
 static LOAD_BALANCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const DEFAULT_POOL_KEY_PAGE_SIZE: u32 = 128;
+const DEFAULT_POOL_MAX_SCANNED_KEYS: u32 = 1024;
 
 type PoolCatalogKeyContext = AiPoolCatalogKeyContext;
 
@@ -35,6 +43,8 @@ pub(crate) async fn apply_local_execution_pool_scheduler(
     state: PlannerAppState<'_>,
     candidates: Vec<EligibleLocalExecutionCandidate>,
     sticky_session_token: Option<&str>,
+    requested_model: Option<&str>,
+    request_auth_channel: Option<&str>,
 ) -> (
     Vec<EligibleLocalExecutionCandidate>,
     Vec<SkippedLocalExecutionCandidate>,
@@ -46,6 +56,40 @@ pub(crate) async fn apply_local_execution_pool_scheduler(
     let sticky_session_token = sticky_session_token
         .map(str::trim)
         .filter(|value| !value.is_empty());
+
+    let mut scheduled = Vec::new();
+    let mut skipped = Vec::new();
+    for candidate in candidates {
+        if candidate.kind == LocalExecutionCandidateKind::PoolGroup {
+            let mut expanded = expand_pool_group_candidate(
+                state,
+                candidate,
+                sticky_session_token,
+                requested_model,
+                request_auth_channel,
+            )
+            .await;
+            scheduled.append(&mut expanded.0);
+            skipped.append(&mut expanded.1);
+        } else {
+            scheduled.push(candidate);
+        }
+    }
+
+    (scheduled, skipped)
+}
+
+async fn schedule_pool_page_candidates(
+    state: PlannerAppState<'_>,
+    candidates: Vec<EligibleLocalExecutionCandidate>,
+    sticky_session_token: Option<&str>,
+) -> (
+    Vec<EligibleLocalExecutionCandidate>,
+    Vec<SkippedLocalExecutionCandidate>,
+) {
+    if candidates.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
 
     let mut provider_runtime_requirements =
         BTreeMap::<String, (AdminProviderPoolConfig, BTreeSet<String>)>::new();
@@ -86,6 +130,249 @@ pub(crate) async fn apply_local_execution_pool_scheduler(
         &runtime_by_provider,
         &key_context_by_id,
     )
+}
+
+async fn expand_pool_group_candidate(
+    state: PlannerAppState<'_>,
+    group: EligibleLocalExecutionCandidate,
+    sticky_session_token: Option<&str>,
+    requested_model: Option<&str>,
+    request_auth_channel: Option<&str>,
+) -> (
+    Vec<EligibleLocalExecutionCandidate>,
+    Vec<SkippedLocalExecutionCandidate>,
+) {
+    let mut cursor = PoolKeyCursor::new(
+        state,
+        group,
+        sticky_session_token,
+        requested_model,
+        request_auth_channel,
+    );
+    let mut scheduled = Vec::new();
+    let mut skipped = Vec::new();
+
+    while let Some(candidate) = cursor.next_key().await {
+        scheduled.push(candidate);
+    }
+    skipped.append(&mut cursor.take_skipped_candidates());
+
+    if scheduled.is_empty() {
+        cursor.log_exhausted();
+    }
+    (scheduled, skipped)
+}
+
+pub(crate) struct PoolKeyCursor<'a> {
+    state: PlannerAppState<'a>,
+    group: EligibleLocalExecutionCandidate,
+    sticky_session_token: Option<String>,
+    requested_model: Option<String>,
+    request_auth_channel: Option<String>,
+    next_offset: u32,
+    scanned_keys: u32,
+    page_size: u32,
+    max_scanned_keys: u32,
+    skip_reason_counts: BTreeMap<&'static str, u32>,
+    next_pool_key_index: u32,
+    queued_candidates: VecDeque<EligibleLocalExecutionCandidate>,
+    skipped_candidates: Vec<SkippedLocalExecutionCandidate>,
+    exhausted_logged: bool,
+}
+
+impl<'a> PoolKeyCursor<'a> {
+    pub(crate) fn new(
+        state: PlannerAppState<'a>,
+        group: EligibleLocalExecutionCandidate,
+        sticky_session_token: Option<&str>,
+        requested_model: Option<&str>,
+        request_auth_channel: Option<&str>,
+    ) -> Self {
+        Self {
+            state,
+            group,
+            sticky_session_token: sticky_session_token.map(str::to_string),
+            requested_model: requested_model.map(str::to_string),
+            request_auth_channel: request_auth_channel.map(str::to_string),
+            next_offset: 0,
+            scanned_keys: 0,
+            page_size: DEFAULT_POOL_KEY_PAGE_SIZE,
+            max_scanned_keys: DEFAULT_POOL_MAX_SCANNED_KEYS,
+            skip_reason_counts: BTreeMap::new(),
+            next_pool_key_index: 0,
+            queued_candidates: VecDeque::new(),
+            skipped_candidates: Vec::new(),
+            exhausted_logged: false,
+        }
+    }
+
+    pub(crate) async fn next_key(&mut self) -> Option<EligibleLocalExecutionCandidate> {
+        loop {
+            if let Some(candidate) = self.queued_candidates.pop_front() {
+                return Some(candidate);
+            }
+
+            let page_candidates = self.next_page_candidates().await?;
+            let (mut page_scheduled, mut page_skipped) = schedule_pool_page_candidates(
+                self.state,
+                page_candidates,
+                self.sticky_session_token.as_deref(),
+            )
+            .await;
+            for skipped_candidate in &page_skipped {
+                self.record_skip_reason(skipped_candidate.skip_reason);
+            }
+            for candidate in &mut page_scheduled {
+                candidate.orchestration.pool_key_index = Some(self.next_pool_key_index);
+                self.next_pool_key_index = self.next_pool_key_index.saturating_add(1);
+            }
+            self.queued_candidates.extend(page_scheduled);
+            self.skipped_candidates.append(&mut page_skipped);
+        }
+    }
+
+    pub(crate) fn take_skipped_candidates(&mut self) -> Vec<SkippedLocalExecutionCandidate> {
+        std::mem::take(&mut self.skipped_candidates)
+    }
+
+    pub(crate) fn log_exhausted(&mut self) {
+        if self.exhausted_logged {
+            return;
+        }
+        self.exhausted_logged = true;
+        warn!(
+            event_name = "pool_group_exhausted",
+            log_type = "event",
+            provider_id = %self.group.candidate.provider_id,
+            endpoint_id = %self.group.candidate.endpoint_id,
+            model_id = %self.group.candidate.model_id,
+            scanned_keys = self.scanned_keys,
+            skip_reason_counts = ?self.skip_reason_counts,
+            "gateway pool scheduler exhausted pool group without a schedulable key"
+        );
+    }
+
+    async fn next_page_candidates(&mut self) -> Option<Vec<EligibleLocalExecutionCandidate>> {
+        if self.scanned_keys >= self.max_scanned_keys {
+            return None;
+        }
+
+        let limit = self
+            .page_size
+            .min(self.max_scanned_keys - self.scanned_keys);
+        let query = StoredPoolKeyCandidateRowsQuery {
+            api_format: self.group.candidate.endpoint_api_format.clone(),
+            provider_id: self.group.candidate.provider_id.clone(),
+            endpoint_id: self.group.candidate.endpoint_id.clone(),
+            model_id: self.group.candidate.model_id.clone(),
+            selected_provider_model_name: self.group.candidate.selected_provider_model_name.clone(),
+            offset: self.next_offset,
+            limit,
+        };
+        let rows = match self
+            .state
+            .app()
+            .list_pool_key_candidate_rows_for_group(&query)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(err) => {
+                warn!(
+                    event_name = "pool_group_key_page_load_failed",
+                    log_type = "event",
+                    provider_id = %self.group.candidate.provider_id,
+                    endpoint_id = %self.group.candidate.endpoint_id,
+                    model_id = %self.group.candidate.model_id,
+                    selected_provider_model_name = %self.group.candidate.selected_provider_model_name,
+                    offset = self.next_offset,
+                    limit,
+                    error = ?err,
+                    "gateway pool scheduler failed to read pool key page"
+                );
+                return None;
+            }
+        };
+        if rows.is_empty() {
+            return None;
+        }
+
+        self.scanned_keys += rows.len() as u32;
+        self.next_offset = self.next_offset.saturating_add(rows.len() as u32);
+        Some(self.build_page_eligible_candidates(rows).await)
+    }
+
+    async fn build_page_eligible_candidates(
+        &mut self,
+        rows: Vec<StoredMinimalCandidateSelectionRow>,
+    ) -> Vec<EligibleLocalExecutionCandidate> {
+        let mut candidates = Vec::with_capacity(rows.len());
+        for row in rows {
+            let candidate = pool_candidate_from_row(&self.group, row);
+            let Some(transport) = read_candidate_transport_snapshot(self.state, &candidate).await
+            else {
+                self.record_skip_reason("transport_snapshot_missing");
+                continue;
+            };
+            if let Some(skip_reason) =
+                candidate_auth_channel_skip_reason(&transport, self.request_auth_channel.as_deref())
+            {
+                self.record_skip_reason(skip_reason);
+                continue;
+            }
+            if let Some(skip_reason) = candidate_common_transport_skip_reason(
+                &transport,
+                pool_candidate_transport_policy_facts(&candidate),
+                self.requested_model.as_deref(),
+            ) {
+                self.record_skip_reason(skip_reason);
+                continue;
+            }
+            candidates.push(EligibleLocalExecutionCandidate {
+                kind: LocalExecutionCandidateKind::SingleKey,
+                candidate,
+                provider_api_format: transport.endpoint.api_format.trim().to_ascii_lowercase(),
+                transport: std::sync::Arc::new(transport),
+                orchestration: LocalExecutionCandidateMetadata::default(),
+                ranking: self.group.ranking.clone(),
+            });
+        }
+        candidates
+    }
+
+    fn record_skip_reason(&mut self, reason: &'static str) {
+        *self.skip_reason_counts.entry(reason).or_insert(0) += 1;
+    }
+}
+
+fn pool_candidate_transport_policy_facts(
+    candidate: &aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate,
+) -> CandidateTransportPolicyFacts<'_> {
+    CandidateTransportPolicyFacts {
+        endpoint_api_format: candidate.endpoint_api_format.as_str(),
+        global_model_name: candidate.global_model_name.as_str(),
+        selected_provider_model_name: candidate.selected_provider_model_name.as_str(),
+        mapping_matched_model: candidate.mapping_matched_model.as_deref(),
+    }
+}
+
+fn pool_candidate_from_row(
+    group: &EligibleLocalExecutionCandidate,
+    row: StoredMinimalCandidateSelectionRow,
+) -> aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate {
+    let mut candidate = group.candidate.clone();
+    candidate.key_id = row.key_id;
+    candidate.key_name = row.key_name;
+    candidate.key_auth_type = row.key_auth_type;
+    candidate.key_internal_priority = row.key_internal_priority;
+    candidate.key_global_priority_for_format =
+        aether_scheduler_core::extract_global_priority_for_format(
+            row.key_global_priority_by_format.as_ref(),
+            group.candidate.endpoint_api_format.as_str(),
+        )
+        .ok()
+        .flatten();
+    candidate.key_capabilities = row.key_capabilities;
+    candidate
 }
 
 async fn read_pool_catalog_key_contexts_by_id(
@@ -402,7 +689,9 @@ mod tests {
         apply_local_execution_pool_scheduler_with_runtime_map, build_pool_catalog_key_context,
         PoolCatalogKeyContext,
     };
-    use crate::ai_serving::planner::candidate_resolution::EligibleLocalExecutionCandidate;
+    use crate::ai_serving::planner::candidate_resolution::{
+        EligibleLocalExecutionCandidate, LocalExecutionCandidateKind,
+    };
     use crate::ai_serving::PlannerAppState;
     use crate::data::GatewayDataState;
     use crate::handlers::shared::provider_pool::AdminProviderPoolRuntimeState;
@@ -1170,6 +1459,11 @@ mod tests {
         provider_config: Option<serde_json::Value>,
     ) -> EligibleLocalExecutionCandidate {
         EligibleLocalExecutionCandidate {
+            kind: if provider_config.is_some() {
+                LocalExecutionCandidateKind::PoolGroup
+            } else {
+                LocalExecutionCandidateKind::SingleKey
+            },
             candidate: SchedulerMinimalCandidateSelectionCandidate {
                 provider_id: provider_id.to_string(),
                 provider_name: provider_id.to_string(),

@@ -40,6 +40,25 @@ pub struct StoredMinimalCandidateSelectionRow {
     pub model_is_available: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StoredPoolKeyCandidateRowsQuery {
+    pub api_format: String,
+    pub provider_id: String,
+    pub endpoint_id: String,
+    pub model_id: String,
+    pub selected_provider_model_name: String,
+    pub offset: u32,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StoredRequestedModelCandidateRowsQuery {
+    pub api_format: String,
+    pub requested_model_name: String,
+    pub offset: u32,
+    pub limit: u32,
+}
+
 impl StoredMinimalCandidateSelectionRow {
     pub fn supports_streaming(&self) -> bool {
         self.model_supports_streaming
@@ -72,6 +91,22 @@ pub trait MinimalCandidateSelectionReadRepository: Send + Sync {
         &self,
         api_format: &str,
         global_model_name: &str,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, crate::DataLayerError>;
+
+    async fn list_for_exact_api_format_and_requested_model(
+        &self,
+        api_format: &str,
+        requested_model_name: &str,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, crate::DataLayerError>;
+
+    async fn list_for_exact_api_format_and_requested_model_page(
+        &self,
+        query: &StoredRequestedModelCandidateRowsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, crate::DataLayerError>;
+
+    async fn list_pool_key_rows_for_group(
+        &self,
+        query: &StoredPoolKeyCandidateRowsQuery,
     ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, crate::DataLayerError>;
 }
 

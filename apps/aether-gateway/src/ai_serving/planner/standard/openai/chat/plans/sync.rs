@@ -1,15 +1,19 @@
+use async_trait::async_trait;
 use tracing::warn;
 
 use super::super::{
+    build_local_openai_chat_candidate_attempt_source,
     materialize_local_openai_chat_candidate_attempts,
     maybe_build_local_openai_chat_decision_payload_for_candidate, AppState, GatewayControlDecision,
-    GatewayError,
+    GatewayError, LocalOpenAiChatCandidateAttempt, LocalOpenAiChatCandidateAttemptSource,
+    LocalOpenAiChatDecisionInput,
 };
 use super::candidates::list_local_openai_chat_candidates;
 use super::diagnostic::{
     set_local_openai_chat_candidate_evaluation_diagnostic, set_local_openai_chat_miss_diagnostic,
 };
 use super::resolve::resolve_local_openai_chat_decision_input;
+use crate::ai_serving::planner::candidate_materialization::LocalExecutionAttemptSource;
 use crate::ai_serving::planner::common::{
     force_upstream_streaming_for_provider, OPENAI_CHAT_SYNC_PLAN_KIND,
 };
@@ -18,11 +22,171 @@ use crate::ai_serving::planner::plan_builders::{
 };
 use crate::ai_serving::planner::runtime_miss::apply_local_runtime_candidate_terminal_reason;
 
+pub(crate) struct LocalOpenAiChatSyncAttemptSource<'a> {
+    state: &'a AppState,
+    parts: &'a http::request::Parts,
+    trace_id: &'a str,
+    body_json: &'a serde_json::Value,
+    input: LocalOpenAiChatDecisionInput,
+    candidates: LocalOpenAiChatCandidateAttemptSource<'a>,
+}
+
 fn openai_chat_sync_upstream_is_stream_for_candidate(
     provider_type: &str,
     provider_api_format: &str,
 ) -> bool {
     force_upstream_streaming_for_provider(provider_type, provider_api_format)
+}
+
+pub(crate) async fn build_local_openai_chat_sync_attempt_source<'a>(
+    state: &'a AppState,
+    parts: &'a http::request::Parts,
+    trace_id: &'a str,
+    decision: &'a GatewayControlDecision,
+    body_json: &'a serde_json::Value,
+    plan_kind: &str,
+) -> Result<Option<(LocalOpenAiChatSyncAttemptSource<'a>, usize)>, GatewayError> {
+    if plan_kind != OPENAI_CHAT_SYNC_PLAN_KIND {
+        return Ok(None);
+    }
+
+    let Some(input) = resolve_local_openai_chat_decision_input(
+        state, trace_id, decision, body_json, plan_kind, true,
+    )
+    .await
+    else {
+        return Ok(None);
+    };
+
+    let (candidates, skipped_candidates) =
+        match list_local_openai_chat_candidates(state, &input, false).await {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    trace_id = %trace_id,
+                    error = ?err,
+                    "gateway local openai chat sync decision scheduler selection failed"
+                );
+                set_local_openai_chat_miss_diagnostic(
+                    state,
+                    trace_id,
+                    decision,
+                    plan_kind,
+                    Some(input.requested_model.as_str()),
+                    "scheduler_selection_failed",
+                );
+                return Ok(None);
+            }
+        };
+    let candidate_count = candidates.len() + skipped_candidates.len();
+    if candidate_count == 0 {
+        set_local_openai_chat_candidate_evaluation_diagnostic(
+            state,
+            trace_id,
+            decision,
+            plan_kind,
+            Some(input.requested_model.as_str()),
+            0,
+        );
+        return Ok(None);
+    }
+    set_local_openai_chat_candidate_evaluation_diagnostic(
+        state,
+        trace_id,
+        decision,
+        plan_kind,
+        Some(input.requested_model.as_str()),
+        candidate_count,
+    );
+
+    let (candidates, candidate_count) = build_local_openai_chat_candidate_attempt_source(
+        state,
+        trace_id,
+        &input,
+        body_json,
+        candidates,
+        skipped_candidates,
+    )
+    .await;
+
+    Ok(Some((
+        LocalOpenAiChatSyncAttemptSource {
+            state,
+            parts,
+            trace_id,
+            body_json,
+            input,
+            candidates,
+        },
+        candidate_count,
+    )))
+}
+
+#[async_trait]
+impl LocalExecutionAttemptSource<AiSyncAttempt> for LocalOpenAiChatSyncAttemptSource<'_> {
+    async fn next_execution_attempt(&mut self) -> Result<Option<AiSyncAttempt>, GatewayError> {
+        while let Some(attempt) = self.candidates.next_attempt().await {
+            match self.build_sync_attempt(attempt).await? {
+                Some(attempt) => return Ok(Some(attempt)),
+                None => continue,
+            }
+        }
+        apply_local_runtime_candidate_terminal_reason(
+            self.state,
+            self.trace_id,
+            "no_local_sync_plans",
+        );
+        Ok(None)
+    }
+
+    async fn drain_execution_attempts(&mut self) -> Result<Vec<AiSyncAttempt>, GatewayError> {
+        let mut drained = Vec::new();
+        for attempt in self.candidates.drain_static_attempts() {
+            if let Some(attempt) = self.build_sync_attempt(attempt).await? {
+                drained.push(attempt);
+            }
+        }
+        Ok(drained)
+    }
+}
+
+impl LocalOpenAiChatSyncAttemptSource<'_> {
+    async fn build_sync_attempt(
+        &self,
+        attempt: LocalOpenAiChatCandidateAttempt,
+    ) -> Result<Option<AiSyncAttempt>, GatewayError> {
+        let upstream_is_stream = openai_chat_sync_upstream_is_stream_for_candidate(
+            attempt.eligible.transport.provider.provider_type.as_str(),
+            attempt.eligible.provider_api_format.as_str(),
+        );
+        let Some(payload) = maybe_build_local_openai_chat_decision_payload_for_candidate(
+            self.state,
+            self.parts,
+            self.trace_id,
+            self.body_json,
+            &self.input,
+            attempt,
+            OPENAI_CHAT_SYNC_PLAN_KIND,
+            "openai_chat_sync_success",
+            upstream_is_stream,
+        )
+        .await
+        else {
+            return Ok(None);
+        };
+
+        match build_openai_chat_sync_plan_from_decision(self.parts, self.body_json, payload) {
+            Ok(value) => Ok(value),
+            Err(err) => {
+                warn!(
+                    trace_id = %self.trace_id,
+                    error = ?err,
+                    "gateway local openai chat sync decision plan build failed"
+                );
+                Ok(None)
+            }
+        }
+    }
 }
 
 pub(crate) async fn build_local_openai_chat_sync_plan_and_reports(

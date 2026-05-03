@@ -410,7 +410,7 @@ async fn gateway_executes_openai_chat_stream_via_local_decision_gate_without_exe
         .list_by_request_id("trace-openai-chat-local-stream-123")
         .await
         .expect("request candidate trace should read");
-    assert_eq!(stored_candidates.len(), 2);
+    assert_eq!(stored_candidates.len(), 1);
     assert_eq!(
         stored_candidates
             .iter()
@@ -907,10 +907,8 @@ async fn gateway_executes_openai_chat_stream_via_local_openai_responses_cross_fo
         .extra_data
         .as_ref()
         .expect("request candidate extra_data should exist");
-    assert_eq!(extra_data["execution_strategy"], "local_cross_format");
-    assert_eq!(extra_data["conversion_mode"], "bidirectional");
-    assert_eq!(extra_data["client_contract"], "openai:chat");
-    assert_eq!(extra_data["provider_contract"], "openai:responses");
+    assert_eq!(extra_data["client_api_format"], "openai:chat");
+    assert_eq!(extra_data["provider_api_format"], "openai:responses");
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert!(

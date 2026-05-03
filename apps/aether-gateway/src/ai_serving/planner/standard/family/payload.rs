@@ -288,7 +288,9 @@ mod tests {
 
     use super::maybe_build_local_standard_decision_payload_for_candidate;
     use crate::ai_serving::planner::candidate_materialization::LocalExecutionCandidateAttempt;
-    use crate::ai_serving::planner::candidate_resolution::EligibleLocalExecutionCandidate;
+    use crate::ai_serving::planner::candidate_resolution::{
+        EligibleLocalExecutionCandidate, LocalExecutionCandidateKind,
+    };
     use crate::ai_serving::planner::decision_input::LocalRequestedModelDecisionInput;
     use crate::ai_serving::{
         ExecutionRuntimeAuthContext, GatewayAuthApiKeySnapshot, LocalStandardSourceFamily,
@@ -452,6 +454,7 @@ mod tests {
     ) -> LocalExecutionCandidateAttempt {
         LocalExecutionCandidateAttempt {
             eligible: EligibleLocalExecutionCandidate {
+                kind: LocalExecutionCandidateKind::SingleKey,
                 candidate: sample_candidate(api_format, endpoint_id),
                 transport: Arc::new(sample_transport(api_format, endpoint_id)),
                 provider_api_format: api_format.to_string(),

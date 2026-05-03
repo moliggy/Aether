@@ -7,8 +7,9 @@ mod support;
 
 pub(super) use self::payload::maybe_build_local_openai_responses_decision_payload_for_candidate;
 pub(super) use self::support::{
+    build_local_openai_responses_candidate_attempt_source,
     materialize_local_openai_responses_candidate_attempts,
     resolve_local_openai_responses_decision_input, LocalOpenAiResponsesCandidateAttempt,
-    LocalOpenAiResponsesDecisionInput,
+    LocalOpenAiResponsesCandidateAttemptSource, LocalOpenAiResponsesDecisionInput,
 };
 pub(super) use crate::ai_serving::LocalOpenAiResponsesSpec;

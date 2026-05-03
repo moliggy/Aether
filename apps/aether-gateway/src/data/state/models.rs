@@ -2,9 +2,10 @@ use super::{
     AdminGlobalModelListQuery, AdminProviderModelListQuery, CreateAdminGlobalModelRecord,
     DataLayerError, GatewayDataState, PublicCatalogModelListQuery, PublicCatalogModelSearchQuery,
     PublicGlobalModelQuery, StoredAdminGlobalModel, StoredAdminGlobalModelPage,
-    StoredAdminProviderModel, StoredMinimalCandidateSelectionRow, StoredProviderActiveGlobalModel,
-    StoredProviderModelStats, StoredPublicCatalogModel, StoredPublicGlobalModel,
-    StoredPublicGlobalModelPage, UpdateAdminGlobalModelRecord, UpsertAdminProviderModelRecord,
+    StoredAdminProviderModel, StoredMinimalCandidateSelectionRow, StoredPoolKeyCandidateRowsQuery,
+    StoredProviderActiveGlobalModel, StoredProviderModelStats, StoredPublicCatalogModel,
+    StoredPublicGlobalModel, StoredPublicGlobalModelPage, StoredRequestedModelCandidateRowsQuery,
+    UpdateAdminGlobalModelRecord, UpsertAdminProviderModelRecord,
 };
 
 impl GatewayDataState {
@@ -23,12 +24,51 @@ impl GatewayDataState {
         }
     }
 
+    pub(crate) async fn list_minimal_candidate_selection_rows_for_requested_model(
+        &self,
+        api_format: &str,
+        requested_model_name: &str,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        match &self.minimal_candidate_selection_reader {
+            Some(repository) => {
+                repository
+                    .list_for_exact_api_format_and_requested_model(api_format, requested_model_name)
+                    .await
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub(crate) async fn list_minimal_candidate_selection_rows_for_requested_model_page(
+        &self,
+        query: &StoredRequestedModelCandidateRowsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        match &self.minimal_candidate_selection_reader {
+            Some(repository) => {
+                repository
+                    .list_for_exact_api_format_and_requested_model_page(query)
+                    .await
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
     pub(crate) async fn list_minimal_candidate_selection_rows_for_api_format(
         &self,
         api_format: &str,
     ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
         match &self.minimal_candidate_selection_reader {
             Some(repository) => repository.list_for_exact_api_format(api_format).await,
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub(crate) async fn list_pool_key_candidate_rows_for_group(
+        &self,
+        query: &StoredPoolKeyCandidateRowsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        match &self.minimal_candidate_selection_reader {
+            Some(repository) => repository.list_pool_key_rows_for_group(query).await,
             None => Ok(Vec::new()),
         }
     }

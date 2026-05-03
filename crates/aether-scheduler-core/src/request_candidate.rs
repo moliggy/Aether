@@ -309,6 +309,29 @@ pub fn build_execution_request_candidate_seed(
         Value::String(plan.endpoint_id.clone()),
     );
     context.insert("key_id".to_string(), Value::String(plan.key_id.clone()));
+    let mut extra_data = parse_request_candidate_report_context(Some(&Value::Object(
+        context.clone(),
+    )))
+    .and_then(|metadata| {
+        build_report_candidate_extra_data(ReportCandidateExtraDataInput {
+            client_api_format: metadata.client_api_format,
+            provider_api_format: metadata.provider_api_format,
+            upstream_url: metadata.upstream_url,
+            mapped_model: metadata.mapped_model,
+            key_name: metadata.key_name,
+            header_rules: metadata.header_rules,
+            body_rules: metadata.body_rules,
+            proxy: metadata.proxy,
+            error_flow: metadata.error_flow,
+            ranking_mode: metadata.ranking_mode,
+            priority_mode: metadata.priority_mode,
+            ranking_index: metadata.ranking_index,
+            priority_slot: metadata.priority_slot,
+            promoted_by: metadata.promoted_by,
+            demoted_by: metadata.demoted_by,
+        })
+    });
+    append_seed_extra_data_from_report_context(&mut extra_data, &context);
 
     SchedulerExecutionRequestCandidateSeed {
         upsert_record: UpsertRequestCandidateRecord {
@@ -331,7 +354,7 @@ pub fn build_execution_request_candidate_seed(
             error_message: None,
             latency_ms: None,
             concurrent_requests: None,
-            extra_data: None,
+            extra_data,
             required_capabilities: None,
             created_at_unix_ms: Some(started_at_unix_ms),
             started_at_unix_ms: Some(started_at_unix_ms),
@@ -339,6 +362,33 @@ pub fn build_execution_request_candidate_seed(
         },
         report_context: Value::Object(context),
     }
+}
+
+fn append_seed_extra_data_from_report_context(
+    extra_data: &mut Option<Value>,
+    context: &Map<String, Value>,
+) {
+    const PASSTHROUGH_FIELDS: &[&str] = &[
+        "execution_strategy",
+        "conversion_mode",
+        "client_contract",
+        "provider_contract",
+        "transport_diagnostics",
+    ];
+
+    let mut object = extra_data
+        .take()
+        .and_then(|value| match value {
+            Value::Object(object) => Some(object),
+            _ => None,
+        })
+        .unwrap_or_default();
+    for field in PASSTHROUGH_FIELDS {
+        if let Some(value) = context.get(*field).filter(|value| !value.is_null()) {
+            object.insert((*field).to_string(), value.clone());
+        }
+    }
+    *extra_data = (!object.is_empty()).then_some(Value::Object(object));
 }
 
 pub fn build_local_request_candidate_status_record(

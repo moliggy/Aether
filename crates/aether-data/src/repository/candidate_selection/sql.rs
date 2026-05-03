@@ -5,11 +5,13 @@ use std::collections::BTreeSet;
 
 use super::{
     MinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
-    StoredProviderModelMapping,
+    StoredPoolKeyCandidateRowsQuery, StoredProviderModelMapping,
+    StoredRequestedModelCandidateRowsQuery,
 };
 use crate::{error::SqlxResultExt, DataLayerError};
 
 const LIST_FOR_EXACT_API_FORMAT_SQL: &str = r#"
+WITH candidate_rows AS (
 SELECT
   p.id AS provider_id,
   p.name AS provider_name,
@@ -46,7 +48,8 @@ SELECT
   m.provider_model_mappings AS model_provider_model_mappings,
   m.supports_streaming AS model_supports_streaming,
   m.is_active AS model_is_active,
-  m.is_available AS model_is_available
+  m.is_available AS model_is_available,
+  (p.config -> 'pool_advanced') IS NOT NULL AS provider_pool_enabled
 FROM providers p
 INNER JOIN provider_endpoints pe
   ON pe.provider_id = p.id
@@ -124,17 +127,67 @@ WHERE p.is_active = TRUE
       AND LOWER(BTRIM(pak.auth_type)) <> 'oauth'
     )
   )
+),
+pool_rows AS (
+  SELECT DISTINCT ON (provider_id, endpoint_id, model_id)
+    *
+  FROM candidate_rows
+  WHERE provider_pool_enabled
+  ORDER BY
+    provider_id ASC,
+    endpoint_id ASC,
+    model_id ASC,
+    key_internal_priority ASC,
+    key_id ASC
+),
+selected_rows AS (
+  SELECT * FROM candidate_rows WHERE NOT provider_pool_enabled
+  UNION ALL
+  SELECT * FROM pool_rows
+)
+SELECT
+  provider_id,
+  provider_name,
+  provider_type,
+  provider_priority,
+  provider_is_active,
+  endpoint_id,
+  endpoint_api_format,
+  endpoint_api_family,
+  endpoint_kind,
+  endpoint_is_active,
+  key_id,
+  key_name,
+  key_auth_type,
+  key_is_active,
+  key_api_formats,
+  key_allowed_models,
+  key_capabilities,
+  key_internal_priority,
+  key_global_priority_by_format,
+  model_id,
+  global_model_id,
+  global_model_name,
+  global_model_mappings,
+  global_model_supports_streaming,
+  model_provider_model_name,
+  model_provider_model_mappings,
+  model_supports_streaming,
+  model_is_active,
+  model_is_available
+FROM selected_rows
 ORDER BY
-  gm.name ASC,
-  p.provider_priority ASC,
-  pak.internal_priority ASC,
-  p.id ASC,
-  pe.id ASC,
-  pak.id ASC,
-  m.id ASC
+  global_model_name ASC,
+  provider_priority ASC,
+  key_internal_priority ASC,
+  provider_id ASC,
+  endpoint_id ASC,
+  key_id ASC,
+  model_id ASC
 "#;
 
 const LIST_FOR_EXACT_API_FORMAT_AND_GLOBAL_MODEL_SQL: &str = r#"
+WITH candidate_rows AS (
 SELECT
   p.id AS provider_id,
   p.name AS provider_name,
@@ -171,7 +224,8 @@ SELECT
   m.provider_model_mappings AS model_provider_model_mappings,
   m.supports_streaming AS model_supports_streaming,
   m.is_active AS model_is_active,
-  m.is_available AS model_is_available
+  m.is_available AS model_is_available,
+  (p.config -> 'pool_advanced') IS NOT NULL AS provider_pool_enabled
 FROM providers p
 INNER JOIN provider_endpoints pe
   ON pe.provider_id = p.id
@@ -250,13 +304,187 @@ WHERE p.is_active = TRUE
       AND LOWER(BTRIM(pak.auth_type)) <> 'oauth'
     )
   )
+),
+pool_rows AS (
+  SELECT DISTINCT ON (provider_id, endpoint_id, model_id)
+    *
+  FROM candidate_rows
+  WHERE provider_pool_enabled
+  ORDER BY
+    provider_id ASC,
+    endpoint_id ASC,
+    model_id ASC,
+    key_internal_priority ASC,
+    key_id ASC
+),
+selected_rows AS (
+  SELECT * FROM candidate_rows WHERE NOT provider_pool_enabled
+  UNION ALL
+  SELECT * FROM pool_rows
+)
+SELECT
+  provider_id,
+  provider_name,
+  provider_type,
+  provider_priority,
+  provider_is_active,
+  endpoint_id,
+  endpoint_api_format,
+  endpoint_api_family,
+  endpoint_kind,
+  endpoint_is_active,
+  key_id,
+  key_name,
+  key_auth_type,
+  key_is_active,
+  key_api_formats,
+  key_allowed_models,
+  key_capabilities,
+  key_internal_priority,
+  key_global_priority_by_format,
+  model_id,
+  global_model_id,
+  global_model_name,
+  global_model_mappings,
+  global_model_supports_streaming,
+  model_provider_model_name,
+  model_provider_model_mappings,
+  model_supports_streaming,
+  model_is_active,
+  model_is_available
+FROM selected_rows
 ORDER BY
-  p.provider_priority ASC,
+  provider_priority ASC,
+  key_internal_priority ASC,
+  provider_id ASC,
+  endpoint_id ASC,
+  key_id ASC,
+  model_id ASC
+"#;
+
+const LIST_POOL_KEYS_FOR_GROUP_SQL: &str = r#"
+SELECT
+  p.id AS provider_id,
+  p.name AS provider_name,
+  p.provider_type AS provider_type,
+  p.provider_priority AS provider_priority,
+  p.is_active AS provider_is_active,
+  pe.id AS endpoint_id,
+  pe.api_format AS endpoint_api_format,
+  pe.api_family AS endpoint_api_family,
+  pe.endpoint_kind AS endpoint_kind,
+  pe.is_active AS endpoint_is_active,
+  pak.id AS key_id,
+  pak.name AS key_name,
+  pak.auth_type AS key_auth_type,
+  pak.is_active AS key_is_active,
+  pak.api_formats AS key_api_formats,
+  pak.allowed_models AS key_allowed_models,
+  pak.capabilities AS key_capabilities,
+  pak.internal_priority AS key_internal_priority,
+  pak.global_priority_by_format AS key_global_priority_by_format,
+  m.id AS model_id,
+  m.global_model_id AS global_model_id,
+  gm.name AS global_model_name,
+  CASE
+    WHEN gm.config IS NOT NULL THEN gm.config -> 'model_mappings'
+    ELSE NULL
+  END AS global_model_mappings,
+  CASE
+    WHEN gm.config IS NOT NULL AND gm.config ? 'streaming'
+      THEN (gm.config ->> 'streaming')::BOOLEAN
+    ELSE NULL
+  END AS global_model_supports_streaming,
+  m.provider_model_name AS model_provider_model_name,
+  m.provider_model_mappings AS model_provider_model_mappings,
+  m.supports_streaming AS model_supports_streaming,
+  m.is_active AS model_is_active,
+  m.is_available AS model_is_available
+FROM providers p
+INNER JOIN provider_endpoints pe
+  ON pe.provider_id = p.id
+INNER JOIN provider_api_keys pak
+  ON pak.provider_id = p.id
+INNER JOIN models m
+  ON m.provider_id = p.id
+INNER JOIN global_models gm
+  ON gm.id = m.global_model_id
+WHERE p.is_active = TRUE
+  AND pe.is_active = TRUE
+  AND pak.is_active = TRUE
+  AND m.is_active = TRUE
+  AND m.is_available = TRUE
+  AND gm.is_active = TRUE
+  AND LOWER(pe.api_format) = LOWER($1)
+  AND p.id = $2
+  AND pe.id = $3
+  AND m.id = $4
+  AND (
+    pak.api_formats IS NULL
+    OR EXISTS (
+      SELECT 1
+      FROM json_array_elements_text(pak.api_formats) AS fmt(value)
+      WHERE LOWER(BTRIM(fmt.value)) = ANY($5::text[])
+    )
+  )
+  AND (
+    (
+      LOWER(BTRIM(p.provider_type)) = 'codex'
+      AND LOWER(BTRIM(pak.auth_type)) = 'oauth'
+      AND LOWER($6) IN ('openai:responses', 'openai:responses:compact', 'openai:image')
+    )
+    OR (
+      LOWER(BTRIM(p.provider_type)) = 'claude_code'
+      AND LOWER(BTRIM(pak.auth_type)) = 'oauth'
+      AND LOWER($6) = 'claude:messages'
+    )
+    OR (
+      LOWER(BTRIM(p.provider_type)) = 'kiro'
+      AND LOWER($6) = 'claude:messages'
+      AND (
+        LOWER(BTRIM(pak.auth_type)) = 'oauth'
+        OR (
+          LOWER(BTRIM(pak.auth_type)) = 'bearer'
+          AND pak.auth_config IS NOT NULL
+          AND BTRIM(pak.auth_config) <> ''
+        )
+      )
+    )
+    OR (
+      LOWER(BTRIM(p.provider_type)) IN ('gemini_cli', 'antigravity')
+      AND LOWER(BTRIM(pak.auth_type)) = 'oauth'
+      AND LOWER($6) = 'gemini:generate_content'
+    )
+    OR (
+      LOWER(BTRIM(p.provider_type)) = 'vertex_ai'
+      AND (
+        (
+          LOWER(BTRIM(pak.auth_type)) = 'api_key'
+          AND LOWER($6) = 'gemini:generate_content'
+        )
+        OR (
+          LOWER(BTRIM(pak.auth_type)) IN ('service_account', 'vertex_ai')
+          AND LOWER($6) IN ('claude:messages', 'gemini:generate_content')
+        )
+      )
+    )
+    OR (
+      LOWER(BTRIM(p.provider_type)) NOT IN (
+        'claude_code',
+        'codex',
+        'gemini_cli',
+        'vertex_ai',
+        'antigravity',
+        'kiro'
+      )
+      AND LOWER(BTRIM(pak.auth_type)) <> 'oauth'
+    )
+  )
+ORDER BY
   pak.internal_priority ASC,
-  p.id ASC,
-  pe.id ASC,
-  pak.id ASC,
-  m.id ASC
+  pak.id ASC
+LIMIT $7
+OFFSET $8
 "#;
 
 #[derive(Debug, Clone)]
@@ -336,6 +564,130 @@ impl SqlxMinimalCandidateSelectionReadRepository {
         }
         Ok(dedupe_candidate_selection_rows(rows))
     }
+
+    pub async fn list_for_exact_api_format_and_requested_model(
+        &self,
+        api_format: &str,
+        requested_model_name: &str,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        let mut rows = Vec::new();
+        let canonical_api_format = normalize_api_format(api_format);
+        let storage_aliases = api_format_aliases(&canonical_api_format);
+        let sql_match_aliases = sql_match_aliases(&storage_aliases);
+        let sql = requested_model_selection_sql();
+        for api_format in storage_aliases {
+            rows.extend(
+                Self::collect_query_rows(
+                    sqlx::query(sql.as_str())
+                        .bind(api_format)
+                        .bind(requested_model_name)
+                        .bind(sql_match_aliases.clone())
+                        .bind(canonical_api_format.clone())
+                        .fetch(&self.pool),
+                    map_candidate_selection_row,
+                )
+                .await?,
+            );
+        }
+        Ok(dedupe_candidate_selection_rows(rows))
+    }
+
+    pub async fn list_for_exact_api_format_and_requested_model_page(
+        &self,
+        query: &StoredRequestedModelCandidateRowsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        let mut rows = Vec::new();
+        let canonical_api_format = normalize_api_format(&query.api_format);
+        let storage_aliases = api_format_aliases(&canonical_api_format);
+        let sql_match_aliases = sql_match_aliases(&storage_aliases);
+        let limit = i64::from(query.limit.max(1));
+        let offset = i64::from(query.offset);
+        let sql = requested_model_selection_page_sql();
+        for api_format in storage_aliases {
+            rows.extend(
+                Self::collect_query_rows(
+                    sqlx::query(sql.as_str())
+                        .bind(api_format)
+                        .bind(query.requested_model_name.as_str())
+                        .bind(sql_match_aliases.clone())
+                        .bind(canonical_api_format.clone())
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch(&self.pool),
+                    map_candidate_selection_row,
+                )
+                .await?,
+            );
+        }
+        Ok(dedupe_candidate_selection_rows(rows))
+    }
+
+    pub async fn list_pool_key_rows_for_group(
+        &self,
+        query: &StoredPoolKeyCandidateRowsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        let mut rows = Vec::new();
+        let canonical_api_format = normalize_api_format(&query.api_format);
+        let storage_aliases = api_format_aliases(&canonical_api_format);
+        let sql_match_aliases = sql_match_aliases(&storage_aliases);
+        let limit = i64::from(query.limit.max(1));
+        let offset = i64::from(query.offset);
+        for api_format in storage_aliases {
+            rows.extend(
+                Self::collect_query_rows(
+                    sqlx::query(LIST_POOL_KEYS_FOR_GROUP_SQL)
+                        .bind(api_format)
+                        .bind(query.provider_id.as_str())
+                        .bind(query.endpoint_id.as_str())
+                        .bind(query.model_id.as_str())
+                        .bind(sql_match_aliases.clone())
+                        .bind(canonical_api_format.clone())
+                        .bind(limit)
+                        .bind(offset)
+                        .fetch(&self.pool),
+                    map_candidate_selection_row,
+                )
+                .await?,
+            );
+        }
+        Ok(dedupe_candidate_selection_rows(rows))
+    }
+}
+
+fn requested_model_selection_sql() -> String {
+    LIST_FOR_EXACT_API_FORMAT_AND_GLOBAL_MODEL_SQL
+        .replace(
+            "AND gm.name = $2",
+            r#"AND (
+    gm.name = $2
+    OR m.provider_model_name = $2
+    OR (
+      jsonb_typeof(m.provider_model_mappings) = 'array'
+      AND EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(m.provider_model_mappings) AS mapping(value)
+        WHERE mapping.value ->> 'name' = $2
+          AND (
+            mapping.value -> 'api_formats' IS NULL
+            OR jsonb_typeof(mapping.value -> 'api_formats') <> 'array'
+            OR EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(mapping.value -> 'api_formats') AS fmt(value)
+              WHERE LOWER(BTRIM(fmt.value)) = ANY($3::text[])
+            )
+          )
+      )
+    )
+  )"#,
+        )
+        .replace(
+            "ORDER BY\n  provider_priority ASC,",
+            "ORDER BY\n  global_model_name ASC,\n  provider_priority ASC,",
+        )
+}
+
+fn requested_model_selection_page_sql() -> String {
+    format!("{}\nLIMIT $5\nOFFSET $6", requested_model_selection_sql())
 }
 
 fn api_format_aliases(api_format: &str) -> Vec<String> {
@@ -383,6 +735,29 @@ impl MinimalCandidateSelectionReadRepository for SqlxMinimalCandidateSelectionRe
         global_model_name: &str,
     ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
         Self::list_for_exact_api_format_and_global_model(self, api_format, global_model_name).await
+    }
+
+    async fn list_for_exact_api_format_and_requested_model(
+        &self,
+        api_format: &str,
+        requested_model_name: &str,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        Self::list_for_exact_api_format_and_requested_model(self, api_format, requested_model_name)
+            .await
+    }
+
+    async fn list_for_exact_api_format_and_requested_model_page(
+        &self,
+        query: &StoredRequestedModelCandidateRowsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        Self::list_for_exact_api_format_and_requested_model_page(self, query).await
+    }
+
+    async fn list_pool_key_rows_for_group(
+        &self,
+        query: &StoredPoolKeyCandidateRowsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        Self::list_pool_key_rows_for_group(self, query).await
     }
 }
 
@@ -630,8 +1005,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        parse_provider_model_mappings, parse_string_list,
-        SqlxMinimalCandidateSelectionReadRepository,
+        parse_provider_model_mappings, parse_string_list, requested_model_selection_page_sql,
+        requested_model_selection_sql, SqlxMinimalCandidateSelectionReadRepository,
     };
     use crate::postgres::{PostgresPoolConfig, PostgresPoolFactory};
     use crate::repository::candidate_selection::StoredProviderModelMapping;
@@ -653,6 +1028,25 @@ mod tests {
         let pool = factory.connect_lazy().expect("pool should build");
         let repository = SqlxMinimalCandidateSelectionReadRepository::new(pool);
         let _ = repository.pool();
+    }
+
+    #[test]
+    fn requested_model_selection_sql_filters_before_row_materialization() {
+        let sql = requested_model_selection_sql();
+
+        assert!(sql.contains("m.provider_model_name = $2"));
+        assert!(sql.contains("jsonb_array_elements(m.provider_model_mappings)"));
+        assert!(!sql.contains("json_typeof(m.provider_model_mappings)"));
+        assert!(!sql.contains("json_array_elements_text(gm.config -> 'model_mappings')"));
+        assert!(sql.contains("ORDER BY\n  global_model_name ASC,"));
+        assert!(!sql.contains("AND gm.name = $2\n  AND"));
+    }
+
+    #[test]
+    fn requested_model_selection_page_sql_adds_limit_and_offset() {
+        let sql = requested_model_selection_page_sql();
+
+        assert!(sql.ends_with("LIMIT $5\nOFFSET $6"));
     }
 
     #[test]

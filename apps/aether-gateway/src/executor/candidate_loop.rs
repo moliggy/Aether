@@ -11,6 +11,7 @@ use axum::http::Response;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, warn, Instrument};
 
+use crate::ai_serving::LocalExecutionAttemptSource;
 use crate::clock::current_unix_ms;
 use crate::control::GatewayControlDecision;
 use crate::execution_runtime::{execute_execution_runtime_stream, execute_execution_runtime_sync};
@@ -75,6 +76,42 @@ where
             }
             AiAttemptLoopOutcome::NoPath => Ok(LocalExecutionRequestOutcome::NoPath),
         }
+    }
+    .instrument(span)
+    .await
+}
+
+pub(crate) async fn execute_sync_attempt_source<T, S>(
+    state: &AppState,
+    parts: &http::request::Parts,
+    trace_id: &str,
+    decision: &GatewayControlDecision,
+    plan_kind: &str,
+    mut source: S,
+) -> Result<LocalExecutionRequestOutcome, GatewayError>
+where
+    T: AiExecutionAttempt + Send + Sync + 'static,
+    S: LocalExecutionAttemptSource<T>,
+{
+    let span = tracing::debug_span!("candidates", trace_id = %trace_id, plan_kind);
+
+    async move {
+        tracing::debug!(
+            event_name = "candidate_loop_started",
+            log_type = "event",
+            trace_id = %trace_id,
+            plan_kind,
+            "dynamic candidate loop started"
+        );
+
+        let port = SyncAttemptLoopPort {
+            state,
+            parts,
+            trace_id,
+            decision,
+            plan_kind,
+        };
+        run_dynamic_attempt_loop(&port, &mut source).await
     }
     .instrument(span)
     .await
@@ -180,6 +217,75 @@ where
     }
     .instrument(span)
     .await
+}
+
+pub(crate) async fn execute_stream_attempt_source<T, S>(
+    state: &AppState,
+    trace_id: &str,
+    decision: &GatewayControlDecision,
+    plan_kind: &str,
+    mut source: S,
+) -> Result<LocalExecutionRequestOutcome, GatewayError>
+where
+    T: AiExecutionAttempt + Send + Sync + 'static,
+    S: LocalExecutionAttemptSource<T>,
+{
+    let span = tracing::debug_span!("candidates", trace_id = %trace_id, plan_kind);
+
+    async move {
+        tracing::debug!(
+            event_name = "candidate_loop_started",
+            log_type = "event",
+            trace_id = %trace_id,
+            plan_kind,
+            "dynamic candidate loop started"
+        );
+
+        let port = StreamAttemptLoopPort {
+            state,
+            trace_id,
+            decision,
+            plan_kind,
+        };
+        run_dynamic_attempt_loop(&port, &mut source).await
+    }
+    .instrument(span)
+    .await
+}
+
+async fn run_dynamic_attempt_loop<Port, Source, Attempt>(
+    port: &Port,
+    source: &mut Source,
+) -> Result<LocalExecutionRequestOutcome, GatewayError>
+where
+    Port: AiAttemptLoopPort<
+        Attempt,
+        Response = Response<Body>,
+        Exhaustion = crate::executor::LocalExecutionExhaustion,
+        Error = GatewayError,
+    >,
+    Source: LocalExecutionAttemptSource<Attempt>,
+    Attempt: AiExecutionAttempt + Send + Sync + 'static,
+{
+    let mut last_attempted = None;
+
+    while let Some(attempt) = source.next_execution_attempt().await? {
+        last_attempted = Some((attempt.execution_plan().clone(), attempt.report_context()));
+        if let Some(response) = port.execute_attempt(&attempt).await? {
+            let remaining = source.drain_execution_attempts().await?;
+            port.mark_unused_attempts(remaining).await?;
+            return Ok(LocalExecutionRequestOutcome::responded(response));
+        }
+    }
+
+    let Some((last_plan, last_report_context)) = last_attempted else {
+        return Ok(LocalExecutionRequestOutcome::NoPath);
+    };
+
+    Ok(LocalExecutionRequestOutcome::Exhausted(
+        port.build_exhaustion(last_plan, last_report_context)
+            .await?,
+    ))
 }
 
 struct StreamAttemptLoopPort<'a> {
@@ -307,10 +413,7 @@ where
 
 fn should_skip_unused_persistence(report_context: Option<&serde_json::Value>) -> bool {
     let metadata = local_execution_candidate_metadata_from_report_context(report_context);
-    metadata.candidate_group_id.is_some()
-        && metadata
-            .pool_key_index
-            .is_some_and(|pool_key_index| pool_key_index > 0)
+    metadata.candidate_group_id.is_some() && metadata.pool_key_index.is_some()
 }
 
 fn resolve_stream_candidate_watchdog_timeout(plan: &aether_contracts::ExecutionPlan) -> Duration {
@@ -521,11 +624,11 @@ mod tests {
     fn unused_persistence_skips_pool_internal_candidates() {
         assert!(should_skip_unused_persistence(Some(&json!({
             "candidate_group_id": "pool-group",
-            "pool_key_index": 1,
-        }))));
-        assert!(!should_skip_unused_persistence(Some(&json!({
-            "candidate_group_id": "pool-group",
             "pool_key_index": 0,
+        }))));
+        assert!(should_skip_unused_persistence(Some(&json!({
+            "candidate_group_id": "pool-group",
+            "pool_key_index": 1,
         }))));
         assert!(!should_skip_unused_persistence(Some(&json!({
             "candidate_group_id": "pool-group",

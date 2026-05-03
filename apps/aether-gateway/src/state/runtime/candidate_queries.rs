@@ -23,6 +23,40 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
+    pub(crate) async fn list_minimal_candidate_selection_rows_for_api_format_and_requested_model(
+        &self,
+        api_format: &str,
+        requested_model_name: &str,
+    ) -> Result<Vec<candidate_selection::StoredMinimalCandidateSelectionRow>, GatewayError> {
+        self.data
+            .list_minimal_candidate_selection_rows_for_requested_model(
+                api_format,
+                requested_model_name,
+            )
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn list_minimal_candidate_selection_rows_for_api_format_and_requested_model_page(
+        &self,
+        query: &candidate_selection::StoredRequestedModelCandidateRowsQuery,
+    ) -> Result<Vec<candidate_selection::StoredMinimalCandidateSelectionRow>, GatewayError> {
+        self.data
+            .list_minimal_candidate_selection_rows_for_requested_model_page(query)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn list_pool_key_candidate_rows_for_group(
+        &self,
+        query: &candidate_selection::StoredPoolKeyCandidateRowsQuery,
+    ) -> Result<Vec<candidate_selection::StoredMinimalCandidateSelectionRow>, GatewayError> {
+        self.data
+            .list_pool_key_candidate_rows_for_group(query)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
     pub(crate) async fn read_provider_quota_snapshot(
         &self,
         provider_id: &str,

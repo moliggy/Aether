@@ -141,7 +141,7 @@ where
 }
 
 pub fn ai_should_persist_available_candidate_for_pool_key(pool_key_index: Option<u32>) -> bool {
-    pool_key_index.is_none_or(|index| index == 0)
+    pool_key_index.is_none()
 }
 
 pub fn ai_should_persist_skipped_candidate_for_pool_membership(is_pool_candidate: bool) -> bool {
@@ -387,9 +387,9 @@ mod tests {
     }
 
     #[test]
-    fn pool_candidate_persistence_policy_persists_representatives_only() {
+    fn pool_candidate_persistence_policy_skips_pool_keys_until_execution() {
         assert!(ai_should_persist_available_candidate_for_pool_key(None));
-        assert!(ai_should_persist_available_candidate_for_pool_key(Some(0)));
+        assert!(!ai_should_persist_available_candidate_for_pool_key(Some(0)));
         assert!(!ai_should_persist_available_candidate_for_pool_key(Some(1)));
 
         assert!(ai_should_persist_skipped_candidate_for_pool_membership(

@@ -359,7 +359,7 @@ async fn gateway_executes_openai_chat_sync_via_local_decision_gate_without_execu
         .list_by_request_id("trace-openai-chat-local-123")
         .await
         .expect("request candidate trace should read");
-    assert_eq!(stored_candidates.len(), 2);
+    assert_eq!(stored_candidates.len(), 1);
     assert_eq!(
         stored_candidates
             .iter()
@@ -933,7 +933,7 @@ async fn gateway_executes_openai_chat_sync_via_local_cross_format_gemini_candida
         .list_by_request_id("trace-openai-chat-gemini-local-123")
         .await
         .expect("request candidate trace should read");
-    assert_eq!(stored_candidates.len(), 2);
+    assert_eq!(stored_candidates.len(), 1);
     assert_eq!(
         stored_candidates
             .iter()
@@ -941,24 +941,6 @@ async fn gateway_executes_openai_chat_sync_via_local_cross_format_gemini_candida
             .count(),
         1
     );
-    let skipped_candidate = stored_candidates
-        .iter()
-        .find(|candidate| candidate.status == RequestCandidateStatus::Skipped)
-        .expect("disabled conversion candidate should be persisted as skipped");
-    assert_eq!(
-        skipped_candidate.skip_reason.as_deref(),
-        Some("format_conversion_disabled")
-    );
-    let extra_data = skipped_candidate
-        .extra_data
-        .as_ref()
-        .expect("skipped cross-format candidate extra_data should exist");
-    assert_eq!(extra_data["execution_strategy"], "local_cross_format");
-    assert_eq!(
-        extra_data["transport_diagnostics"]["request_pair"]["conversion_enabled"],
-        false
-    );
-
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert!(
         !*seen_report.lock().expect("mutex should lock"),

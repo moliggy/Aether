@@ -15,7 +15,8 @@ mod openai;
 
 pub(crate) use self::codex::apply_codex_openai_responses_special_headers;
 pub(crate) use self::family::{
-    build_local_stream_plan_and_reports, build_local_sync_plan_and_reports,
+    build_local_stream_attempt_source, build_local_stream_plan_and_reports,
+    build_local_sync_attempt_source, build_local_sync_plan_and_reports,
 };
 pub(crate) use self::normalize::{
     build_cross_format_openai_chat_request_body, build_cross_format_openai_chat_upstream_url,
@@ -25,9 +26,13 @@ pub(crate) use self::normalize::{
     build_local_openai_responses_upstream_url,
 };
 pub(crate) use self::openai::{
+    build_local_openai_chat_stream_attempt_source_for_kind,
     build_local_openai_chat_stream_plan_and_reports_for_kind,
+    build_local_openai_chat_sync_attempt_source_for_kind,
     build_local_openai_chat_sync_plan_and_reports_for_kind,
+    build_local_openai_responses_stream_attempt_source_for_kind,
     build_local_openai_responses_stream_plan_and_reports_for_kind,
+    build_local_openai_responses_sync_attempt_source_for_kind,
     build_local_openai_responses_sync_plan_and_reports_for_kind, copy_request_number_field,
     copy_request_number_field_as, map_openai_reasoning_effort_to_claude_output,
     map_openai_reasoning_effort_to_gemini_budget, maybe_build_stream_local_decision_payload,

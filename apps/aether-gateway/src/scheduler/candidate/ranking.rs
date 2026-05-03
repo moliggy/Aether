@@ -26,9 +26,16 @@ pub(super) fn rank_scheduler_candidates(
         .iter()
         .enumerate()
         .map(|(index, candidate)| {
-            let provider_key = runtime_snapshot
-                .provider_key_rpm_states
-                .get(&candidate.key_id);
+            let pool_group = runtime_snapshot
+                .pool_provider_ids
+                .contains(candidate.provider_id.as_str());
+            let provider_key = (!pool_group)
+                .then(|| {
+                    runtime_snapshot
+                        .provider_key_rpm_states
+                        .get(&candidate.key_id)
+                })
+                .flatten();
             SchedulerRankableCandidate::from_candidate(candidate, index)
                 .with_capability_priority(requested_capability_priority_for_candidate(
                     required_capabilities,

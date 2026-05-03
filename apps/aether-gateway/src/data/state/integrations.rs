@@ -146,12 +146,39 @@ impl MinimalCandidateSelectionRowSource for GatewayDataState {
             .await
     }
 
+    async fn read_minimal_candidate_selection_rows_for_api_format_and_requested_model(
+        &self,
+        api_format: &str,
+        requested_model_name: &str,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        self.list_minimal_candidate_selection_rows_for_requested_model(
+            api_format,
+            requested_model_name,
+        )
+        .await
+    }
+
+    async fn read_minimal_candidate_selection_rows_for_api_format_and_requested_model_page(
+        &self,
+        query: &aether_data_contracts::repository::candidate_selection::StoredRequestedModelCandidateRowsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        self.list_minimal_candidate_selection_rows_for_requested_model_page(query)
+            .await
+    }
+
     async fn read_minimal_candidate_selection_rows_for_api_format(
         &self,
         api_format: &str,
     ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
         self.list_minimal_candidate_selection_rows_for_api_format(api_format)
             .await
+    }
+
+    async fn read_pool_key_candidate_rows_for_group(
+        &self,
+        query: &aether_data_contracts::repository::candidate_selection::StoredPoolKeyCandidateRowsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        self.list_pool_key_candidate_rows_for_group(query).await
     }
 }
 

@@ -11,6 +11,7 @@ pub struct AiCandidateResolutionRequest<'a> {
     pub client_api_format: &'a str,
     pub requested_model: Option<&'a str>,
     pub mode: AiCandidateResolutionMode,
+    pub expand_pool_groups: bool,
 }
 
 impl<'a> AiCandidateResolutionRequest<'a> {
@@ -19,6 +20,7 @@ impl<'a> AiCandidateResolutionRequest<'a> {
             client_api_format,
             requested_model,
             mode: AiCandidateResolutionMode::Standard,
+            expand_pool_groups: true,
         }
     }
 
@@ -30,7 +32,13 @@ impl<'a> AiCandidateResolutionRequest<'a> {
             client_api_format,
             requested_model,
             mode: AiCandidateResolutionMode::WithoutTransportPairGate,
+            expand_pool_groups: true,
         }
+    }
+
+    pub fn logical_pool_groups(mut self) -> Self {
+        self.expand_pool_groups = false;
+        self
     }
 }
 
@@ -140,8 +148,13 @@ where
     let ranked = port
         .rank_eligible_candidates(eligible, normalized_client_api_format.as_str())
         .await?;
-    let (ranked, pool_skipped) = port.apply_pool_scheduler(ranked).await?;
-    skipped.extend(pool_skipped);
+    let ranked = if request.expand_pool_groups {
+        let (ranked, pool_skipped) = port.apply_pool_scheduler(ranked).await?;
+        skipped.extend(pool_skipped);
+        ranked
+    } else {
+        ranked
+    };
 
     Ok(AiCandidateResolutionOutcome {
         eligible_candidates: ranked,
@@ -381,6 +394,38 @@ mod tests {
                 "common:unsupported:",
                 "rank:openai:chat",
                 "pool",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn resolution_can_keep_pool_groups_logical() {
+        let port = TestPort::default();
+
+        let outcome = run_ai_candidate_resolution(
+            &port,
+            vec!["first", "second"],
+            AiCandidateResolutionRequest::standard("openai:chat", Some("gpt-4.1"))
+                .logical_pool_groups(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            outcome.eligible_candidates,
+            ["eligible:second", "eligible:first"]
+        );
+        assert!(outcome.skipped_candidates.is_empty());
+        assert_eq!(
+            port.calls.lock().unwrap().as_slice(),
+            [
+                "transport:first",
+                "common:first:gpt-4.1",
+                "pair:first:openai:chat:gpt-4.1",
+                "transport:second",
+                "common:second:gpt-4.1",
+                "pair:second:openai:chat:gpt-4.1",
+                "rank:openai:chat",
             ]
         );
     }

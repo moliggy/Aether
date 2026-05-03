@@ -24,8 +24,10 @@ mod specialized;
 mod standard;
 mod state;
 
+pub(crate) use self::candidate_materialization::LocalExecutionAttemptSource;
 pub(crate) use self::passthrough::{
-    build_local_same_format_stream_plan_and_reports, build_local_same_format_sync_plan_and_reports,
+    build_local_same_format_stream_attempt_source, build_local_same_format_stream_plan_and_reports,
+    build_local_same_format_sync_attempt_source, build_local_same_format_sync_plan_and_reports,
 };
 pub(crate) use self::plan_builders::{
     build_gemini_stream_plan_from_decision, build_gemini_sync_plan_from_decision,
@@ -36,18 +38,29 @@ pub(crate) use self::plan_builders::{
 };
 pub(crate) use self::route::is_matching_stream_request as planner_is_matching_stream_request;
 pub(crate) use self::specialized::{
+    build_local_gemini_files_stream_attempt_source_for_kind,
     build_local_gemini_files_stream_plan_and_reports_for_kind,
+    build_local_gemini_files_sync_attempt_source_for_kind,
     build_local_gemini_files_sync_plan_and_reports_for_kind,
+    build_local_image_stream_attempt_source_for_kind,
     build_local_image_stream_plan_and_reports_for_kind,
+    build_local_image_sync_attempt_source_for_kind,
     build_local_image_sync_plan_and_reports_for_kind,
+    build_local_video_sync_attempt_source_for_kind,
     build_local_video_sync_plan_and_reports_for_kind,
 };
 pub(crate) use self::standard::{
+    build_local_openai_chat_stream_attempt_source_for_kind,
     build_local_openai_chat_stream_plan_and_reports_for_kind,
+    build_local_openai_chat_sync_attempt_source_for_kind,
     build_local_openai_chat_sync_plan_and_reports_for_kind,
+    build_local_openai_responses_stream_attempt_source_for_kind,
     build_local_openai_responses_stream_plan_and_reports_for_kind,
+    build_local_openai_responses_sync_attempt_source_for_kind,
     build_local_openai_responses_sync_plan_and_reports_for_kind,
+    build_local_stream_attempt_source as build_standard_family_stream_attempt_source,
     build_local_stream_plan_and_reports as build_standard_family_stream_plan_and_reports,
+    build_local_sync_attempt_source as build_standard_family_sync_attempt_source,
     build_local_sync_plan_and_reports as build_standard_family_sync_plan_and_reports,
     set_local_openai_chat_execution_exhausted_diagnostic,
 };

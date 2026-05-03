@@ -22,11 +22,19 @@ use super::pool_scheduler::apply_local_execution_pool_scheduler;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct EligibleLocalExecutionCandidate {
+    pub(crate) kind: LocalExecutionCandidateKind,
     pub(crate) candidate: SchedulerMinimalCandidateSelectionCandidate,
     pub(crate) transport: Arc<GatewayProviderTransportSnapshot>,
     pub(crate) provider_api_format: String,
     pub(crate) orchestration: LocalExecutionCandidateMetadata,
     pub(crate) ranking: Option<SchedulerRankingOutcome>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum LocalExecutionCandidateKind {
+    #[default]
+    SingleKey,
+    PoolGroup,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -87,6 +95,9 @@ impl AiCandidateResolutionPort for GatewayLocalCandidateResolutionPort<'_> {
         transport: &Self::Transport,
         requested_model: Option<&str>,
     ) -> Option<&'static str> {
+        if provider_transport_uses_pool(transport) {
+            return pool_group_common_transport_skip_reason(candidate, transport);
+        }
         if let Some(skip_reason) =
             candidate_auth_channel_skip_reason(transport, self.request_auth_channel)
         {
@@ -131,7 +142,13 @@ impl AiCandidateResolutionPort for GatewayLocalCandidateResolutionPort<'_> {
         transport: Self::Transport,
     ) -> Self::Eligible {
         let provider_api_format = transport.endpoint.api_format.trim().to_ascii_lowercase();
+        let kind = if provider_transport_uses_pool(&transport) {
+            LocalExecutionCandidateKind::PoolGroup
+        } else {
+            LocalExecutionCandidateKind::SingleKey
+        };
         EligibleLocalExecutionCandidate {
+            kind,
             candidate,
             transport: Arc::new(transport),
             provider_api_format,
@@ -160,10 +177,14 @@ impl AiCandidateResolutionPort for GatewayLocalCandidateResolutionPort<'_> {
         &self,
         candidates: Vec<Self::Eligible>,
     ) -> Result<(Vec<Self::Eligible>, Vec<Self::Skipped>), Self::Error> {
-        Ok(
-            apply_local_execution_pool_scheduler(self.state, candidates, self.sticky_session_token)
-                .await,
+        Ok(apply_local_execution_pool_scheduler(
+            self.state,
+            candidates,
+            self.sticky_session_token,
+            self.requested_model,
+            self.request_auth_channel,
         )
+        .await)
     }
 }
 
@@ -223,6 +244,35 @@ pub(crate) async fn resolve_and_rank_local_execution_candidates_without_transpor
     .await
 }
 
+pub(crate) async fn resolve_and_rank_logical_local_execution_candidates(
+    state: PlannerAppState<'_>,
+    candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
+    client_api_format: &str,
+    requested_model: Option<&str>,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    required_capabilities: Option<&serde_json::Value>,
+    sticky_session_token: Option<&str>,
+    request_auth_channel: Option<&str>,
+    mode: AiCandidateResolutionMode,
+) -> (
+    Vec<EligibleLocalExecutionCandidate>,
+    Vec<SkippedLocalExecutionCandidate>,
+) {
+    resolve_and_rank_local_execution_candidates_with_pool_expansion(
+        state,
+        candidates,
+        client_api_format,
+        requested_model,
+        auth_snapshot,
+        required_capabilities,
+        sticky_session_token,
+        request_auth_channel,
+        mode,
+        false,
+    )
+    .await
+}
+
 async fn resolve_and_rank_local_execution_candidates_with_mode(
     state: PlannerAppState<'_>,
     candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
@@ -233,6 +283,37 @@ async fn resolve_and_rank_local_execution_candidates_with_mode(
     sticky_session_token: Option<&str>,
     request_auth_channel: Option<&str>,
     mode: AiCandidateResolutionMode,
+) -> (
+    Vec<EligibleLocalExecutionCandidate>,
+    Vec<SkippedLocalExecutionCandidate>,
+) {
+    resolve_and_rank_local_execution_candidates_with_pool_expansion(
+        state,
+        candidates,
+        client_api_format,
+        requested_model,
+        auth_snapshot,
+        required_capabilities,
+        sticky_session_token,
+        request_auth_channel,
+        mode,
+        true,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn resolve_and_rank_local_execution_candidates_with_pool_expansion(
+    state: PlannerAppState<'_>,
+    candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
+    client_api_format: &str,
+    requested_model: Option<&str>,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    required_capabilities: Option<&serde_json::Value>,
+    sticky_session_token: Option<&str>,
+    request_auth_channel: Option<&str>,
+    mode: AiCandidateResolutionMode,
+    expand_pool_groups: bool,
 ) -> (
     Vec<EligibleLocalExecutionCandidate>,
     Vec<SkippedLocalExecutionCandidate>,
@@ -250,6 +331,7 @@ async fn resolve_and_rank_local_execution_candidates_with_mode(
         client_api_format,
         requested_model,
         mode,
+        expand_pool_groups,
     };
 
     match run_ai_candidate_resolution(&port, candidates, request).await {
@@ -269,7 +351,33 @@ fn candidate_transport_policy_facts(
     }
 }
 
-fn candidate_auth_channel_skip_reason(
+fn provider_transport_uses_pool(transport: &GatewayProviderTransportSnapshot) -> bool {
+    crate::handlers::shared::provider_pool::admin_provider_pool_config_from_config_value(
+        transport.provider.config.as_ref(),
+    )
+    .is_some()
+}
+
+fn pool_group_common_transport_skip_reason(
+    candidate: &SchedulerMinimalCandidateSelectionCandidate,
+    transport: &GatewayProviderTransportSnapshot,
+) -> Option<&'static str> {
+    if !transport.provider.is_active {
+        return Some("provider_inactive");
+    }
+    if !transport.endpoint.is_active {
+        return Some("endpoint_inactive");
+    }
+    if !crate::ai_serving::api_format_alias_matches(
+        candidate.endpoint_api_format.as_str(),
+        transport.endpoint.api_format.trim(),
+    ) {
+        return Some("endpoint_api_format_changed");
+    }
+    None
+}
+
+pub(crate) fn candidate_auth_channel_skip_reason(
     transport: &GatewayProviderTransportSnapshot,
     request_auth_channel: Option<&str>,
 ) -> Option<&'static str> {
@@ -381,12 +489,13 @@ pub(crate) async fn read_candidate_transport_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use super::candidate_auth_channel_skip_reason;
+    use super::{candidate_auth_channel_skip_reason, pool_group_common_transport_skip_reason};
     use crate::ai_serving::GatewayProviderTransportSnapshot;
     use aether_provider_transport::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
         GatewayProviderTransportProvider,
     };
+    use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
     use serde_json::json;
 
     fn sample_transport(auth_type: &str) -> GatewayProviderTransportSnapshot {
@@ -444,6 +553,28 @@ mod tests {
         }
     }
 
+    fn sample_candidate() -> SchedulerMinimalCandidateSelectionCandidate {
+        SchedulerMinimalCandidateSelectionCandidate {
+            provider_id: "provider-1".to_string(),
+            provider_name: "provider".to_string(),
+            provider_type: "custom".to_string(),
+            provider_priority: 10,
+            endpoint_id: "endpoint-1".to_string(),
+            endpoint_api_format: "claude:messages".to_string(),
+            key_id: "key-1".to_string(),
+            key_name: "key".to_string(),
+            key_auth_type: "bearer".to_string(),
+            key_internal_priority: 10,
+            key_global_priority_for_format: None,
+            key_capabilities: None,
+            model_id: "model-1".to_string(),
+            global_model_id: "global-model-1".to_string(),
+            global_model_name: "claude-sonnet".to_string(),
+            selected_provider_model_name: "claude-sonnet".to_string(),
+            mapping_matched_model: None,
+        }
+    }
+
     #[test]
     fn auth_channel_gate_skips_mismatched_raw_secret_auth() {
         let transport = sample_transport("bearer");
@@ -474,6 +605,19 @@ mod tests {
         assert_eq!(
             candidate_auth_channel_skip_reason(&transport, Some("api_key")),
             Some("auth_channel_mismatch")
+        );
+    }
+
+    #[test]
+    fn pool_group_common_gate_ignores_representative_key_model_policy() {
+        let candidate = sample_candidate();
+        let mut transport = sample_transport("bearer");
+        transport.key.allowed_models = Some(vec!["different-model".to_string()]);
+        transport.key.api_formats = Some(vec!["different:format".to_string()]);
+
+        assert_eq!(
+            pool_group_common_transport_skip_reason(&candidate, &transport),
+            None
         );
     }
 }
