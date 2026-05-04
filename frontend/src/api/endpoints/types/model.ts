@@ -38,6 +38,7 @@ export interface Model {
   supports_streaming?: boolean | null
   supports_extended_thinking?: boolean | null
   supports_image_generation?: boolean | null
+  supports_embedding?: boolean | null
   // 有效值（合并 Model 和 GlobalModel 默认值后的结果）
   effective_tiered_pricing?: TieredPricingConfig | null  // 有效阶梯计费配置
   effective_input_price?: number | null
@@ -48,6 +49,7 @@ export interface Model {
   effective_supports_streaming?: boolean | null
   effective_supports_extended_thinking?: boolean | null
   effective_supports_image_generation?: boolean | null
+  effective_supports_embedding?: boolean | null
   is_active: boolean
   is_available: boolean
   created_at: string
@@ -96,6 +98,7 @@ export interface ModelCapabilities {
   supports_vision: boolean
   supports_function_calling: boolean
   supports_streaming: boolean
+  supports_embedding: boolean
   [key: string]: boolean
 }
 
@@ -130,6 +133,7 @@ export interface ModelCatalogProviderDetail {
   supports_vision?: boolean | null
   supports_function_calling?: boolean | null
   supports_streaming?: boolean | null
+  supports_embedding?: boolean | null
   is_active: boolean
   mapping_id?: string | null
 }
@@ -211,6 +215,7 @@ export interface GlobalModelResponse {
   default_tiered_pricing: TieredPricingConfig
   // Key 能力配置 - 模型支持的能力列表
   supported_capabilities?: string[] | null
+  supports_embedding?: boolean | null
   // 模型配置（JSON格式）
   config?: Record<string, unknown> | null
   // 统计数据

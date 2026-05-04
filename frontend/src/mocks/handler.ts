@@ -228,6 +228,19 @@ const MOCK_ENDPOINT_STATUS = {
       last_event_at: new Date().toISOString(),
       // 94.0% 成功率：successRate=0.940, failRate=0.043, skipRate=0.017
       events: generateHealthEvents(100, 0.940, 0.043, 0.017, 800, 600)
+    },
+    {
+      api_format: 'openai:embedding',
+      api_path: '/v1/embeddings',
+      total_attempts: 620,
+      success_count: 612,
+      failed_count: 6,
+      skipped_count: 2,
+      success_rate: 0.987,
+      provider_count: 1,
+      key_count: 1,
+      last_event_at: new Date().toISOString(),
+      events: generateHealthEvents(40, 0.987, 0.01, 0.003, 320, 140)
     }
   ]
 }
@@ -447,6 +460,12 @@ function getMockEndpointExtras(apiFormat: string) {
     extras.config = { upstream_stream_policy: 'force_stream' }
   } else if (normalizedFormat === 'openai:responses') {
     extras.config = { upstream_stream_policy: 'force_non_stream' }
+  } else if (normalizedFormat === 'openai:embedding') {
+    extras.custom_path = '/v1/embeddings'
+    extras.config = { route_kind: 'embedding' }
+  } else if (normalizedFormat === 'openai:rerank' || normalizedFormat === 'jina:rerank') {
+    extras.custom_path = '/v1/rerank'
+    extras.config = { route_kind: 'rerank' }
   } else if (normalizedFormat === 'gemini:generate_content') {
     extras.custom_path = '/v1beta/models/gemini-3-pro-preview:generateContent'
     extras.body_rules = [
@@ -718,6 +737,23 @@ const mockHandlers: Record<string, (config: AxiosRequestConfig) => Promise<Axios
       health_score: e.health_score,
       is_active: e.is_active
     })))
+  },
+
+  'GET /api/users/me/available-models': async () => {
+    await delay()
+    const models = MOCK_GLOBAL_MODELS.filter(model => model.is_active).map(model => ({
+      id: model.id,
+      name: model.name,
+      display_name: model.display_name,
+      is_active: model.is_active,
+      default_price_per_request: model.default_price_per_request ?? null,
+      default_tiered_pricing: model.default_tiered_pricing,
+      supported_capabilities: model.supported_capabilities ?? null,
+      supports_embedding: model.supports_embedding ?? null,
+      config: model.config ?? null,
+      usage_count: model.usage_count ?? 0,
+    }))
+    return createMockResponse({ models, total: models.length })
   },
 
   'GET /api/users/me/preferences': async () => {
@@ -1146,6 +1182,7 @@ const mockHandlers: Record<string, (config: AxiosRequestConfig) => Promise<Axios
         default_tiered_pricing: m.default_tiered_pricing,
         default_price_per_request: m.default_price_per_request,
         supported_capabilities: m.supported_capabilities,
+        supports_embedding: m.supports_embedding,
         config: m.config
       })),
       total: MOCK_GLOBAL_MODELS.length
@@ -1419,6 +1456,8 @@ function generateMockModelsForProvider(providerId: string) {
   const hasClaude = provider.api_formats.some(f => f.includes('claude'))
   const hasOpenAI = provider.api_formats.some(f => f.includes('openai'))
   const hasGemini = provider.api_formats.some(f => f.includes('gemini'))
+  const hasEmbedding = provider.api_formats.some(f => f.endsWith(':embedding'))
+  const hasRerank = provider.api_formats.some(f => f.endsWith(':rerank'))
 
   const models: Record<string, unknown>[] = []
   const now = new Date().toISOString()
@@ -1502,6 +1541,66 @@ function generateMockModelsForProvider(providerId: string) {
         updated_at: now
       }
     )
+  }
+  if (hasEmbedding) {
+    models.push({
+      id: `pm-${providerId}-embedding-1`,
+      provider_id: providerId,
+      global_model_id: 'gm-010',
+      provider_model_name: 'text-embedding-3-small',
+      global_model_name: 'text-embedding-3-small',
+      global_model_display_name: 'text-embedding-3-small',
+      effective_input_price: 0.02,
+      effective_output_price: 0,
+      supports_embedding: true,
+      effective_supports_embedding: true,
+      supports_streaming: false,
+      effective_supports_streaming: false,
+      config: {
+        embedding: true,
+        model_type: 'embedding',
+        api_formats: ['openai:embedding'],
+      },
+      effective_config: {
+        embedding: true,
+        model_type: 'embedding',
+        api_formats: ['openai:embedding'],
+        streaming: false,
+      },
+      is_active: true,
+      is_available: true,
+      created_at: provider.created_at,
+      updated_at: now
+    })
+  }
+  if (hasRerank) {
+    models.push({
+      id: `pm-${providerId}-rerank-1`,
+      provider_id: providerId,
+      global_model_id: 'gm-rerank-001',
+      provider_model_name: 'bge-reranker-base',
+      global_model_name: 'bge-reranker-base',
+      global_model_display_name: 'bge-reranker-base',
+      effective_input_price: 0.05,
+      effective_output_price: 0,
+      supports_streaming: false,
+      effective_supports_streaming: false,
+      config: {
+        rerank: true,
+        model_type: 'rerank',
+        api_formats: ['openai:rerank'],
+      },
+      effective_config: {
+        rerank: true,
+        model_type: 'rerank',
+        api_formats: ['openai:rerank'],
+        streaming: false,
+      },
+      is_active: true,
+      is_available: true,
+      created_at: provider.created_at,
+      updated_at: now
+    })
   }
   if (hasGemini) {
     models.push(

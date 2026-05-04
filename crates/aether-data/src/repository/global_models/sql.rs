@@ -60,6 +60,27 @@ SELECT
   COALESCE(m.supports_vision, CAST(gm.config->>'vision' AS BOOLEAN), FALSE) AS supports_vision,
   COALESCE(m.supports_function_calling, CAST(gm.config->>'function_calling' AS BOOLEAN), FALSE) AS supports_function_calling,
   COALESCE(m.supports_streaming, CAST(gm.config->>'streaming' AS BOOLEAN), TRUE) AS supports_streaming,
+  (
+    COALESCE(gm.supported_capabilities::jsonb @> '["embedding"]'::jsonb, FALSE)
+    OR LOWER(COALESCE(gm.config->>'embedding', 'false')) = 'true'
+    OR LOWER(COALESCE(gm.config->>'model_type', '')) = 'embedding'
+    OR LOWER(COALESCE(gm.config->>'type', '')) = 'embedding'
+    OR COALESCE(gm.config->'capabilities' @> '["embedding"]'::jsonb, FALSE)
+    OR COALESCE(gm.config->'supported_capabilities' @> '["embedding"]'::jsonb, FALSE)
+    OR COALESCE(gm.config->'api_formats' @> '["openai:embedding"]'::jsonb, FALSE)
+    OR COALESCE(gm.config->'api_formats' @> '["jina:embedding"]'::jsonb, FALSE)
+    OR COALESCE(gm.config->'api_formats' @> '["gemini:embedding"]'::jsonb, FALSE)
+    OR COALESCE(gm.config->'api_formats' @> '["doubao:embedding"]'::jsonb, FALSE)
+    OR LOWER(COALESCE(m.config->>'embedding', 'false')) = 'true'
+    OR LOWER(COALESCE(m.config->>'model_type', '')) = 'embedding'
+    OR LOWER(COALESCE(m.config->>'type', '')) = 'embedding'
+    OR COALESCE(m.config::jsonb->'capabilities' @> '["embedding"]'::jsonb, FALSE)
+    OR COALESCE(m.config::jsonb->'supported_capabilities' @> '["embedding"]'::jsonb, FALSE)
+    OR COALESCE(m.config::jsonb->'api_formats' @> '["openai:embedding"]'::jsonb, FALSE)
+    OR COALESCE(m.config::jsonb->'api_formats' @> '["jina:embedding"]'::jsonb, FALSE)
+    OR COALESCE(m.config::jsonb->'api_formats' @> '["gemini:embedding"]'::jsonb, FALSE)
+    OR COALESCE(m.config::jsonb->'api_formats' @> '["doubao:embedding"]'::jsonb, FALSE)
+  ) AS supports_embedding,
   m.is_active
 FROM models m
 JOIN providers p ON p.id = m.provider_id
@@ -98,6 +119,7 @@ SELECT
   gm.display_name AS global_model_display_name,
   CAST(gm.default_price_per_request AS DOUBLE PRECISION) AS global_model_default_price_per_request,
   gm.default_tiered_pricing AS global_model_default_tiered_pricing,
+  gm.supported_capabilities AS global_model_supported_capabilities,
   gm.config AS global_model_config
 FROM models m
 LEFT JOIN global_models gm ON gm.id = m.global_model_id
@@ -302,6 +324,7 @@ SELECT
   gm.display_name AS global_model_display_name,
   CAST(gm.default_price_per_request AS DOUBLE PRECISION) AS global_model_default_price_per_request,
   gm.default_tiered_pricing AS global_model_default_tiered_pricing,
+  gm.supported_capabilities AS global_model_supported_capabilities,
   gm.config AS global_model_config
 FROM models m
 LEFT JOIN global_models gm ON gm.id = m.global_model_id
@@ -348,6 +371,7 @@ SELECT
   gm.display_name AS global_model_display_name,
   CAST(gm.default_price_per_request AS DOUBLE PRECISION) AS global_model_default_price_per_request,
   gm.default_tiered_pricing AS global_model_default_tiered_pricing,
+  gm.supported_capabilities AS global_model_supported_capabilities,
   gm.config AS global_model_config
 FROM models m
 JOIN global_models gm ON gm.id = m.global_model_id
@@ -487,6 +511,7 @@ SELECT
   gm.display_name AS global_model_display_name,
   CAST(gm.default_price_per_request AS DOUBLE PRECISION) AS global_model_default_price_per_request,
   gm.default_tiered_pricing AS global_model_default_tiered_pricing,
+  gm.supported_capabilities AS global_model_supported_capabilities,
   gm.config AS global_model_config
 FROM models m
 LEFT JOIN global_models gm ON gm.id = m.global_model_id
@@ -1020,7 +1045,7 @@ fn apply_public_catalog_model_filters(
     provider_id: Option<&str>,
     search: Option<&str>,
 ) {
-    builder.push(" WHERE m.is_active = TRUE AND p.is_active = TRUE");
+    builder.push(" WHERE m.is_active = TRUE AND COALESCE(m.is_available, TRUE) = TRUE AND p.is_active = TRUE AND COALESCE(gm.is_active, TRUE) = TRUE");
 
     if let Some(provider_id) = provider_id.map(str::trim).filter(|value| !value.is_empty()) {
         builder
@@ -1060,6 +1085,7 @@ fn map_public_catalog_model_row(row: &PgRow) -> Result<StoredPublicCatalogModel,
         row.try_get("supports_function_calling")
             .map_postgres_err()?,
         row.try_get("supports_streaming").map_postgres_err()?,
+        row.try_get("supports_embedding").map_postgres_err()?,
         row.try_get("is_active").map_postgres_err()?,
     )
 }
@@ -1100,6 +1126,8 @@ fn map_admin_provider_model_row(row: &PgRow) -> Result<StoredAdminProviderModel,
         row.try_get("global_model_default_price_per_request")
             .map_postgres_err()?,
         row.try_get("global_model_default_tiered_pricing")
+            .map_postgres_err()?,
+        row.try_get("global_model_supported_capabilities")
             .map_postgres_err()?,
         row.try_get("global_model_config").map_postgres_err()?,
     )
@@ -1177,8 +1205,41 @@ fn map_provider_active_global_model_row(
 
 #[cfg(test)]
 mod tests {
-    use super::SqlxGlobalModelReadRepository;
+    use super::{SqlxGlobalModelReadRepository, LIST_ADMIN_PROVIDER_MODELS_PREFIX};
     use crate::postgres::{PostgresPoolConfig, PostgresPoolFactory};
+
+    const ADMIN_PROVIDER_MODEL_REQUIRED_COLUMNS: &[&str] = &[
+        "global_model_default_tiered_pricing",
+        "global_model_supported_capabilities",
+        "global_model_config",
+    ];
+
+    fn assert_admin_provider_model_projection_has_required_columns(sql: &str) {
+        for column in ADMIN_PROVIDER_MODEL_REQUIRED_COLUMNS {
+            assert!(
+                sql.contains(column),
+                "admin provider model SQL projection should include {column}"
+            );
+        }
+    }
+
+    #[test]
+    fn admin_provider_model_sql_projections_include_supported_capabilities() {
+        assert_admin_provider_model_projection_has_required_columns(
+            LIST_ADMIN_PROVIDER_MODELS_PREFIX,
+        );
+        assert_admin_provider_model_projection_has_required_columns(include_str!("sql.rs"));
+        let supported_capabilities_projection = format!(
+            "{} AS {}",
+            "gm.supported_capabilities", "global_model_supported_capabilities"
+        );
+        assert_eq!(
+            include_str!("sql.rs")
+                .matches(&supported_capabilities_projection)
+                .count(),
+            4
+        );
+    }
 
     #[tokio::test]
     async fn repository_constructs_from_lazy_pool() {

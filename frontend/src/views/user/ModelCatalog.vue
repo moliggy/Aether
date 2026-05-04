@@ -80,6 +80,14 @@
                   <div>
                     <div class="flex items-center gap-2">
                       <span class="font-medium hover:text-primary transition-colors">{{ model.display_name || model.name }}</span>
+                      <Badge
+                        v-for="capability in getModelCapabilityLabels(model)"
+                        :key="capability"
+                        variant="secondary"
+                        class="text-[10px] px-1.5 py-0"
+                      >
+                        {{ capability }}
+                      </Badge>
                     </div>
                     <div class="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                       <span>{{ model.name }}</span>
@@ -150,6 +158,16 @@
             <div class="flex items-start justify-between gap-3">
               <div class="flex-1 min-w-0">
                 <span class="font-medium truncate block">{{ model.display_name || model.name }}</span>
+                <div class="flex flex-wrap gap-1 mt-1">
+                  <Badge
+                    v-for="capability in getModelCapabilityLabels(model)"
+                    :key="capability"
+                    variant="secondary"
+                    class="text-[10px] px-1.5 py-0"
+                  >
+                    {{ capability }}
+                  </Badge>
+                </div>
                 <div class="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                   <span class="truncate">{{ model.name }}</span>
                   <button
@@ -228,6 +246,7 @@ import UserModelDetailDrawer from './components/UserModelDetailDrawer.vue'
 import { useRowClick } from '@/composables/useRowClick'
 import { log } from '@/utils/logger'
 import { parseApiError } from '@/utils/errorParser'
+import { getModelCapabilityLabels } from './model-catalog-helpers'
 
 const { error: showError } = useToast()
 const { copyToClipboard } = useClipboard()

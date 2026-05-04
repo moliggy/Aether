@@ -16,6 +16,8 @@ pub enum FormatFamily {
     OpenAi,
     Claude,
     Gemini,
+    Jina,
+    Doubao,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -29,8 +31,14 @@ pub enum FormatId {
     OpenAiChat,
     OpenAiResponses,
     OpenAiResponsesCompact,
+    OpenAiEmbedding,
+    OpenAiRerank,
     ClaudeMessages,
     GeminiGenerateContent,
+    GeminiEmbedding,
+    JinaEmbedding,
+    JinaRerank,
+    DoubaoEmbedding,
 }
 
 impl FormatId {
@@ -44,11 +52,15 @@ impl FormatId {
 
     pub fn family(self) -> FormatFamily {
         match self {
-            Self::OpenAiChat | Self::OpenAiResponses | Self::OpenAiResponsesCompact => {
-                FormatFamily::OpenAi
-            }
+            Self::OpenAiChat
+            | Self::OpenAiResponses
+            | Self::OpenAiResponsesCompact
+            | Self::OpenAiEmbedding
+            | Self::OpenAiRerank => FormatFamily::OpenAi,
             Self::ClaudeMessages => FormatFamily::Claude,
-            Self::GeminiGenerateContent => FormatFamily::Gemini,
+            Self::GeminiGenerateContent | Self::GeminiEmbedding => FormatFamily::Gemini,
+            Self::JinaEmbedding | Self::JinaRerank => FormatFamily::Jina,
+            Self::DoubaoEmbedding => FormatFamily::Doubao,
         }
     }
 
@@ -64,8 +76,14 @@ impl FormatId {
             Self::OpenAiChat => "openai:chat",
             Self::OpenAiResponses => "openai:responses",
             Self::OpenAiResponsesCompact => "openai:responses:compact",
+            Self::OpenAiEmbedding => "openai:embedding",
+            Self::OpenAiRerank => "openai:rerank",
             Self::ClaudeMessages => "claude:messages",
             Self::GeminiGenerateContent => "gemini:generate_content",
+            Self::GeminiEmbedding => "gemini:embedding",
+            Self::JinaEmbedding => "jina:embedding",
+            Self::JinaRerank => "jina:rerank",
+            Self::DoubaoEmbedding => "doubao:embedding",
         }
     }
 }
@@ -86,8 +104,14 @@ impl FromStr for FormatId {
             "openai:responses:compact" | "/v1/responses/compact" => {
                 Ok(Self::OpenAiResponsesCompact)
             }
+            "openai:embedding" | "/v1/embeddings" => Ok(Self::OpenAiEmbedding),
+            "openai:rerank" | "/v1/rerank" => Ok(Self::OpenAiRerank),
             "claude:messages" | "/v1/messages" => Ok(Self::ClaudeMessages),
             "gemini:generate_content" => Ok(Self::GeminiGenerateContent),
+            "gemini:embedding" => Ok(Self::GeminiEmbedding),
+            "jina:embedding" | "/jina/v1/embeddings" => Ok(Self::JinaEmbedding),
+            "jina:rerank" | "/jina/v1/rerank" => Ok(Self::JinaRerank),
+            "doubao:embedding" => Ok(Self::DoubaoEmbedding),
             _ => Err(()),
         }
     }
@@ -137,6 +161,90 @@ mod tests {
     }
 
     #[test]
+    fn parses_embedding_api_formats() {
+        assert_eq!(
+            FormatId::parse("openai:embedding"),
+            Some(FormatId::OpenAiEmbedding)
+        );
+        assert_eq!(
+            FormatId::parse("/v1/embeddings"),
+            Some(FormatId::OpenAiEmbedding)
+        );
+        assert_eq!(
+            FormatId::parse("gemini:embedding"),
+            Some(FormatId::GeminiEmbedding)
+        );
+        assert_eq!(
+            FormatId::parse("jina:embedding"),
+            Some(FormatId::JinaEmbedding)
+        );
+        assert_eq!(
+            FormatId::parse("/jina/v1/embeddings"),
+            Some(FormatId::JinaEmbedding)
+        );
+        assert_eq!(
+            FormatId::parse("doubao:embedding"),
+            Some(FormatId::DoubaoEmbedding)
+        );
+        assert_eq!(FormatId::OpenAiEmbedding.to_string(), "openai:embedding");
+    }
+
+    #[test]
+    fn embedding_format_ids_keep_provider_family_and_default_profile() {
+        use super::{FormatFamily, FormatProfile};
+
+        for (format, family) in [
+            (FormatId::OpenAiEmbedding, FormatFamily::OpenAi),
+            (FormatId::GeminiEmbedding, FormatFamily::Gemini),
+            (FormatId::JinaEmbedding, FormatFamily::Jina),
+            (FormatId::DoubaoEmbedding, FormatFamily::Doubao),
+        ] {
+            assert_eq!(format.family(), family);
+            assert_eq!(format.profile(), FormatProfile::Default);
+            assert_eq!(FormatId::parse(format.as_str()), Some(format));
+            assert_eq!(format.to_string(), format.as_str());
+        }
+    }
+
+    #[test]
+    fn parses_rerank_api_formats() {
+        assert_eq!(
+            FormatId::parse("openai:rerank"),
+            Some(FormatId::OpenAiRerank)
+        );
+        assert_eq!(FormatId::parse("/v1/rerank"), Some(FormatId::OpenAiRerank));
+        assert_eq!(FormatId::parse("jina:rerank"), Some(FormatId::JinaRerank));
+        assert_eq!(
+            FormatId::parse("/jina/v1/rerank"),
+            Some(FormatId::JinaRerank)
+        );
+        assert_eq!(FormatId::OpenAiRerank.to_string(), "openai:rerank");
+    }
+
+    #[test]
+    fn rerank_format_ids_keep_provider_family_and_default_profile() {
+        use super::{FormatFamily, FormatProfile};
+
+        for (format, family) in [
+            (FormatId::OpenAiRerank, FormatFamily::OpenAi),
+            (FormatId::JinaRerank, FormatFamily::Jina),
+        ] {
+            assert_eq!(format.family(), family);
+            assert_eq!(format.profile(), FormatProfile::Default);
+            assert_eq!(FormatId::parse(format.as_str()), Some(format));
+            assert_eq!(format.to_string(), format.as_str());
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_embedding_format() {
+        assert_eq!(FormatId::parse("embedding"), None);
+        assert_eq!(FormatId::parse("openai:embeddings"), None);
+        assert_eq!(FormatId::parse("claude:embedding"), None);
+        assert_eq!(FormatId::parse("gemini:embed_content"), None);
+    }
+
+    #[test]
     fn normalizes_api_format_aliases() {
         assert_eq!(
             normalize_api_format_alias(" OPENAI:RESPONSES "),
@@ -153,6 +261,10 @@ mod tests {
         assert_eq!(
             normalize_api_format_alias("GEMINI:GENERATE_CONTENT"),
             "gemini:generate_content"
+        );
+        assert_eq!(
+            normalize_api_format_alias("OPENAI:EMBEDDING"),
+            "openai:embedding"
         );
         assert_eq!(normalize_api_format_alias("openai:image"), "openai:image");
         assert_eq!(normalize_api_format_alias("openai:video"), "openai:video");
@@ -183,6 +295,22 @@ mod tests {
         assert_eq!(
             api_format_storage_aliases("gemini:generate_content"),
             vec!["gemini:generate_content".to_string()]
+        );
+        assert_eq!(
+            api_format_storage_aliases("openai:embedding"),
+            vec!["openai:embedding".to_string()]
+        );
+        assert_eq!(
+            api_format_storage_aliases("gemini:embedding"),
+            vec!["gemini:embedding".to_string()]
+        );
+        assert_eq!(
+            api_format_storage_aliases("jina:embedding"),
+            vec!["jina:embedding".to_string()]
+        );
+        assert_eq!(
+            api_format_storage_aliases("doubao:embedding"),
+            vec!["doubao:embedding".to_string()]
         );
     }
 }

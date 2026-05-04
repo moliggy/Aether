@@ -233,7 +233,8 @@ async fn gateway_creates_admin_provider_model_locally_with_trusted_admin_princip
             "provider_model_name": "gpt-5-upstream",
             "global_model_id": "global-gpt-5",
             "supports_vision": true,
-            "config": {"provider_hint": "gpt-5-upstream"}
+            "provider_model_mappings": [{"name": "text-embedding-3-small", "priority": 1, "api_formats": ["openai:embedding"]}],
+            "config": {"provider_hint": "gpt-5-upstream", "api_formats": ["openai:embedding"], "model_type": "embedding"}
         }))
         .send()
         .await
@@ -245,6 +246,11 @@ async fn gateway_creates_admin_provider_model_locally_with_trusted_admin_princip
     assert_eq!(payload["global_model_id"], "global-gpt-5");
     assert_eq!(payload["provider_model_name"], "gpt-5-upstream");
     assert_eq!(payload["effective_supports_vision"], true);
+    assert_eq!(payload["effective_supports_embedding"], true);
+    assert_eq!(
+        payload["provider_model_mappings"][0]["api_formats"],
+        json!(["openai:embedding"])
+    );
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     let created = global_model_repository
@@ -258,6 +264,13 @@ async fn gateway_creates_admin_provider_model_locally_with_trusted_admin_princip
         .expect("models should read");
     assert_eq!(created.len(), 1);
     assert_eq!(created[0].provider_model_name, "gpt-5-upstream");
+    assert_eq!(
+        created[0]
+            .config
+            .as_ref()
+            .and_then(|value| value.get("api_formats")),
+        Some(&json!(["openai:embedding"]))
+    );
 
     gateway_handle.abort();
     upstream_handle.abort();
@@ -320,8 +333,10 @@ async fn gateway_updates_and_deletes_admin_provider_model_locally_with_trusted_a
         .json(&json!({
             "provider_model_name": "gpt-5-mini-upstream",
             "global_model_id": "global-gpt-5-mini",
+            "provider_model_mappings": [{"name": "text-embedding-3-small", "priority": 1, "api_formats": ["openai:embedding"]}],
             "supports_streaming": false,
-            "is_available": false
+            "is_available": false,
+            "config": {"api_formats": ["openai:embedding"], "model_type": "embedding"}
         }))
         .send()
         .await
@@ -334,6 +349,7 @@ async fn gateway_updates_and_deletes_admin_provider_model_locally_with_trusted_a
     assert_eq!(update_payload["provider_model_name"], "gpt-5-mini-upstream");
     assert_eq!(update_payload["global_model_id"], "global-gpt-5-mini");
     assert_eq!(update_payload["is_available"], false);
+    assert_eq!(update_payload["effective_supports_embedding"], true);
 
     let delete_response = reqwest::Client::new()
         .delete(format!(
@@ -456,27 +472,37 @@ async fn gateway_handles_admin_provider_available_source_models_locally_with_tru
         Vec::new(),
         Vec::new(),
     ));
+    let mut global_model = sample_admin_global_model(
+        "global-gpt-5",
+        "text-embedding-3-small",
+        "Text Embedding 3 Small",
+    );
+    global_model.supported_capabilities = Some(json!(["embedding"]));
+    global_model.config = Some(json!({"api_formats": ["openai:embedding"]}));
+    let mut primary_model = sample_admin_provider_model(
+        "model-openai-gpt5",
+        "provider-openai",
+        "global-gpt-5",
+        "text-embedding-3-small",
+    );
+    primary_model.global_model_name = Some("text-embedding-3-small".to_string());
+    primary_model.global_model_display_name = Some("Text Embedding 3 Small".to_string());
+    primary_model.global_model_supported_capabilities = Some(json!(["embedding"]));
+    primary_model.global_model_config = Some(json!({"api_formats": ["openai:embedding"]}));
+    let mut alternate_model = sample_admin_provider_model(
+        "model-openai-gpt5-b",
+        "provider-openai",
+        "global-gpt-5",
+        "gpt-5-alt",
+    );
+    alternate_model.global_model_name = Some("text-embedding-3-small".to_string());
+    alternate_model.global_model_display_name = Some("Text Embedding 3 Small".to_string());
+    alternate_model.global_model_supported_capabilities = Some(json!(["embedding"]));
+    alternate_model.global_model_config = Some(json!({"api_formats": ["openai:embedding"]}));
     let global_model_repository = Arc::new(
         InMemoryGlobalModelReadRepository::seed(Vec::new())
-            .with_admin_global_models(vec![sample_admin_global_model(
-                "global-gpt-5",
-                "gpt-5",
-                "GPT 5",
-            )])
-            .with_admin_provider_models(vec![
-                sample_admin_provider_model(
-                    "model-openai-gpt5",
-                    "provider-openai",
-                    "global-gpt-5",
-                    "gpt-5-upstream",
-                ),
-                sample_admin_provider_model(
-                    "model-openai-gpt5-b",
-                    "provider-openai",
-                    "global-gpt-5",
-                    "gpt-5-alt",
-                ),
-            ]),
+            .with_admin_global_models(vec![global_model])
+            .with_admin_provider_models(vec![primary_model, alternate_model]),
     );
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
@@ -507,7 +533,14 @@ async fn gateway_handles_admin_provider_available_source_models_locally_with_tru
     assert_eq!(response.status(), StatusCode::OK);
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(payload["total"], 1);
-    assert_eq!(payload["models"][0]["global_model_name"], "gpt-5");
+    assert_eq!(
+        payload["models"][0]["global_model_name"],
+        "text-embedding-3-small"
+    );
+    assert_eq!(
+        payload["models"][0]["capabilities"]["supports_embedding"],
+        true
+    );
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();

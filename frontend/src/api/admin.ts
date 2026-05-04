@@ -200,6 +200,7 @@ export interface ModelExport {
   supports_streaming?: boolean | null
   supports_extended_thinking?: boolean | null
   supports_image_generation?: boolean | null
+  supports_embedding?: boolean | null
   is_active: boolean
   config?: Record<string, unknown>
 }

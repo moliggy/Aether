@@ -72,6 +72,7 @@ export interface ModelsDevModelItem {
   supportsStructuredOutput?: boolean
   supportsTemperature?: boolean
   supportsAttachment?: boolean
+  supportsEmbedding?: boolean
   openWeights?: boolean
   deprecated?: boolean
   official?: boolean // 是否来自官方提供商
@@ -180,6 +181,9 @@ export async function getModelsDevList(officialOnly: boolean = true): Promise<Mo
           supportsStructuredOutput: model.structured_output,
           supportsTemperature: model.temperature,
           supportsAttachment: model.attachment,
+          supportsEmbedding: model.id.toLowerCase().includes('embedding')
+            || model.name.toLowerCase().includes('embedding')
+            || model.family?.toLowerCase().includes('embedding') === true,
           openWeights: model.open_weights,
           deprecated: model.deprecated,
           official: provider.official,

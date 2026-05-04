@@ -1,7 +1,8 @@
 use crate::contracts::{
     CLAUDE_CHAT_STREAM_PLAN_KIND, CLAUDE_CHAT_SYNC_PLAN_KIND, CLAUDE_CLI_STREAM_PLAN_KIND,
     CLAUDE_CLI_SYNC_PLAN_KIND, GEMINI_CHAT_STREAM_PLAN_KIND, GEMINI_CHAT_SYNC_PLAN_KIND,
-    GEMINI_CLI_STREAM_PLAN_KIND, GEMINI_CLI_SYNC_PLAN_KIND,
+    GEMINI_CLI_STREAM_PLAN_KIND, GEMINI_CLI_SYNC_PLAN_KIND, OPENAI_EMBEDDING_SYNC_PLAN_KIND,
+    OPENAI_RERANK_SYNC_PLAN_KIND,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +48,20 @@ pub fn resolve_sync_spec(plan_kind: &str) -> Option<LocalSameFormatProviderSpec>
             decision_kind: GEMINI_CLI_SYNC_PLAN_KIND,
             report_kind: "gemini_cli_sync_success",
             family: LocalSameFormatProviderFamily::Gemini,
+            require_streaming: false,
+        }),
+        OPENAI_EMBEDDING_SYNC_PLAN_KIND => Some(LocalSameFormatProviderSpec {
+            api_format: "openai:embedding",
+            decision_kind: OPENAI_EMBEDDING_SYNC_PLAN_KIND,
+            report_kind: "openai_embedding_sync_success",
+            family: LocalSameFormatProviderFamily::Standard,
+            require_streaming: false,
+        }),
+        OPENAI_RERANK_SYNC_PLAN_KIND => Some(LocalSameFormatProviderSpec {
+            api_format: "openai:rerank",
+            decision_kind: OPENAI_RERANK_SYNC_PLAN_KIND,
+            report_kind: "openai_rerank_sync_success",
+            family: LocalSameFormatProviderFamily::Standard,
             require_streaming: false,
         }),
         _ => None,
@@ -105,5 +120,21 @@ mod tests {
         assert_eq!(spec.api_format, "gemini:generate_content");
         assert_eq!(spec.report_kind, "gemini_cli_stream_success");
         assert!(spec.require_streaming);
+    }
+
+    #[test]
+    fn resolves_openai_embedding_sync_same_format_spec() {
+        let spec = resolve_sync_spec("openai_embedding_sync").expect("spec");
+        assert_eq!(spec.api_format, "openai:embedding");
+        assert_eq!(spec.report_kind, "openai_embedding_sync_success");
+        assert!(!spec.require_streaming);
+    }
+
+    #[test]
+    fn resolves_openai_rerank_sync_same_format_spec() {
+        let spec = resolve_sync_spec("openai_rerank_sync").expect("spec");
+        assert_eq!(spec.api_format, "openai:rerank");
+        assert_eq!(spec.report_kind, "openai_rerank_sync_success");
+        assert!(!spec.require_streaming);
     }
 }

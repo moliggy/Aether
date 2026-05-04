@@ -844,6 +844,94 @@ async fn gateway_handles_public_catalog_models_without_proxying_upstream() {
 }
 
 #[tokio::test]
+async fn public_catalog_excludes_unsupported_embedding_provider() {
+    let upstream_hits = Arc::new(Mutex::new(0usize));
+    let upstream_hits_clone = Arc::clone(&upstream_hits);
+    let upstream = Router::new().route(
+        "/{*path}",
+        any(move |_request: Request| {
+            let upstream_hits_inner = Arc::clone(&upstream_hits_clone);
+            async move {
+                *upstream_hits_inner.lock().expect("mutex should lock") += 1;
+                (StatusCode::OK, Body::from("proxied"))
+            }
+        }),
+    );
+
+    let mut active_embedding = sample_public_catalog_model(
+        "model-openai-embedding-small",
+        "provider-openai",
+        "openai",
+        "text-embedding-3-small",
+        "text-embedding-3-small",
+        "Text Embedding 3 Small",
+    );
+    active_embedding.supports_embedding = Some(true);
+    active_embedding.supports_streaming = Some(false);
+    let mut inactive_embedding = sample_public_catalog_model(
+        "model-openai-embedding-inactive",
+        "provider-openai",
+        "openai",
+        "text-embedding-3-large",
+        "text-embedding-3-large",
+        "Text Embedding 3 Large",
+    );
+    inactive_embedding.supports_embedding = Some(true);
+    inactive_embedding.is_active = false;
+    let mut unsupported_embedding = sample_public_catalog_model(
+        "model-unsupported-embedding",
+        "provider-openai",
+        "openai",
+        "legacy-embedding",
+        "legacy-embedding",
+        "Legacy Embedding",
+    );
+    unsupported_embedding.supports_embedding = Some(false);
+    unsupported_embedding.is_active = false;
+
+    let global_model_repository = Arc::new(
+        InMemoryGlobalModelReadRepository::seed(Vec::<StoredPublicGlobalModel>::new())
+            .with_public_catalog_models(vec![
+                active_embedding,
+                inactive_embedding,
+                unsupported_embedding,
+            ]),
+    );
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                crate::data::GatewayDataState::with_global_model_reader_for_tests(
+                    global_model_repository,
+                ),
+            ),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{gateway_url}/api/public/models?provider_id=provider-openai&limit=10"
+        ))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    let models = payload.as_array().expect("models should be an array");
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0]["id"], "model-openai-embedding-small");
+    assert_eq!(models[0]["supports_embedding"], true);
+    assert_eq!(models[0]["supports_streaming"], false);
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
 async fn gateway_handles_public_catalog_search_models_without_proxying_upstream() {
     let upstream_hits = Arc::new(Mutex::new(0usize));
     let upstream_hits_clone = Arc::clone(&upstream_hits);

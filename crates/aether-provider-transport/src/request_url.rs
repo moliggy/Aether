@@ -78,6 +78,12 @@ pub fn build_transport_request_url(
             params.request_query,
             true,
         )),
+        "openai:embedding" | "jina:embedding" => {
+            build_provider_embedding_v1_url(&transport.endpoint.base_url, params.request_query)
+        }
+        "openai:rerank" | "jina:rerank" => {
+            build_provider_rerank_v1_url(&transport.endpoint.base_url, params.request_query)
+        }
         "claude:messages" => Some(build_claude_messages_url(
             &transport.endpoint.base_url,
             params.request_query,
@@ -87,6 +93,17 @@ pub fn build_transport_request_url(
             params.mapped_model?,
             params.upstream_is_stream,
             params.request_query,
+        ),
+        "gemini:embedding" => build_gemini_embedding_url(
+            &transport.endpoint.base_url,
+            params.mapped_model?,
+            params.request_query,
+        ),
+        "doubao:embedding" => build_passthrough_path_url(
+            &transport.endpoint.base_url,
+            "/embeddings/multimodal",
+            params.request_query,
+            &[],
         ),
         _ => None,
     }?;
@@ -221,11 +238,8 @@ fn build_transport_hook_url(
         ));
     }
 
-    if params
-        .provider_api_format
-        .trim()
-        .to_ascii_lowercase()
-        .starts_with("gemini:")
+    if aether_ai_formats::normalize_api_format_alias(params.provider_api_format)
+        == "gemini:generate_content"
     {
         if let Some(auth) = resolve_local_vertex_api_key_query_auth(transport) {
             return build_vertex_api_key_gemini_content_url(
@@ -266,15 +280,14 @@ fn build_path_params(params: TransportRequestUrlParams<'_>) -> BTreeMap<&'static
     {
         path_params.insert("model", model);
     }
-    if params
-        .provider_api_format
-        .trim()
-        .to_ascii_lowercase()
-        .starts_with("gemini:")
-    {
+    let provider_api_format =
+        aether_ai_formats::normalize_api_format_alias(params.provider_api_format);
+    if provider_api_format.starts_with("gemini:") {
         path_params.insert(
             "action",
-            if params.upstream_is_stream {
+            if provider_api_format == "gemini:embedding" {
+                "embedContent"
+            } else if params.upstream_is_stream {
                 "streamGenerateContent"
             } else {
                 "generateContent"
@@ -282,6 +295,60 @@ fn build_path_params(params: TransportRequestUrlParams<'_>) -> BTreeMap<&'static
         );
     }
     path_params
+}
+
+fn build_provider_embedding_v1_url(upstream_base_url: &str, query: Option<&str>) -> Option<String> {
+    build_provider_v1_url(upstream_base_url, "/embeddings", "/v1/embeddings", query)
+}
+
+fn build_provider_rerank_v1_url(upstream_base_url: &str, query: Option<&str>) -> Option<String> {
+    build_provider_v1_url(upstream_base_url, "/rerank", "/v1/rerank", query)
+}
+
+fn build_provider_v1_url(
+    upstream_base_url: &str,
+    v1_path: &str,
+    default_path: &str,
+    query: Option<&str>,
+) -> Option<String> {
+    let base_without_query = upstream_base_url
+        .trim()
+        .split_once('?')
+        .map(|(base, _)| base)
+        .unwrap_or_else(|| upstream_base_url.trim())
+        .trim_end_matches('/');
+    let path = if base_without_query.ends_with("/v1") {
+        v1_path
+    } else {
+        default_path
+    };
+    build_passthrough_path_url(upstream_base_url, path, query, &[])
+}
+
+fn build_gemini_embedding_url(
+    upstream_base_url: &str,
+    model: &str,
+    query: Option<&str>,
+) -> Option<String> {
+    let trimmed_base_url = upstream_base_url
+        .trim()
+        .split_once('?')
+        .map(|(base, _)| base)
+        .unwrap_or_else(|| upstream_base_url.trim())
+        .trim_end_matches('/');
+    let trimmed_model = model.trim();
+    if trimmed_base_url.is_empty() || trimmed_model.is_empty() {
+        return None;
+    }
+
+    let path = if trimmed_base_url.ends_with("/v1beta") {
+        format!("/models/{trimmed_model}:embedContent")
+    } else if trimmed_base_url.contains("/v1beta/models/") {
+        ":embedContent".to_string()
+    } else {
+        format!("/v1beta/models/{trimmed_model}:embedContent")
+    };
+    build_passthrough_path_url(upstream_base_url, &path, query, &["key"])
 }
 
 fn expand_custom_path_template(path: &str, params: BTreeMap<&'static str, &str>) -> String {
@@ -320,7 +387,10 @@ fn maybe_add_gemini_stream_alt_sse(
     provider_api_format: &str,
     upstream_is_stream: bool,
 ) -> String {
-    if !provider_api_format.starts_with("gemini:") || !upstream_is_stream {
+    if aether_ai_formats::normalize_api_format_alias(provider_api_format)
+        != "gemini:generate_content"
+        || !upstream_is_stream
+    {
         return upstream_url;
     }
 
@@ -547,5 +617,261 @@ mod tests {
             "https://codewhisperer.us-west-2.amazonaws.com/generateAssistantResponse"
         ));
         assert!(url.contains("conversationId=abc"));
+    }
+
+    #[test]
+    fn embedding_request_url_builds_provider_default_paths() {
+        let openai = sample_transport(
+            "openai",
+            "openai:embedding",
+            "https://api.openai.example/v1",
+            None,
+        );
+        let jina = sample_transport("jina", "jina:embedding", "https://api.jina.example", None);
+        let gemini = sample_transport(
+            "gemini",
+            "gemini:embedding",
+            "https://generativelanguage.googleapis.com/v1beta",
+            None,
+        );
+        let doubao = sample_transport(
+            "doubao",
+            "doubao:embedding",
+            "https://ark.volces.example/api/v3",
+            None,
+        );
+
+        assert_eq!(
+            build_transport_request_url(
+                &openai,
+                TransportRequestUrlParams {
+                    provider_api_format: "openai:embedding",
+                    mapped_model: Some("text-embedding-3-small"),
+                    upstream_is_stream: false,
+                    request_query: Some("tenant=demo"),
+                    kiro_api_region: None,
+                },
+            )
+            .as_deref(),
+            Some("https://api.openai.example/v1/embeddings?tenant=demo")
+        );
+        assert_eq!(
+            build_transport_request_url(
+                &jina,
+                TransportRequestUrlParams {
+                    provider_api_format: "jina:embedding",
+                    mapped_model: Some("jina-embeddings-v3"),
+                    upstream_is_stream: false,
+                    request_query: None,
+                    kiro_api_region: None,
+                },
+            )
+            .as_deref(),
+            Some("https://api.jina.example/v1/embeddings")
+        );
+        assert_eq!(
+            build_transport_request_url(
+                &gemini,
+                TransportRequestUrlParams {
+                    provider_api_format: "gemini:embedding",
+                    mapped_model: Some("gemini-embedding-001"),
+                    upstream_is_stream: false,
+                    request_query: Some("key=client-key&foo=bar"),
+                    kiro_api_region: None,
+                },
+            )
+            .as_deref(),
+            Some(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?foo=bar"
+            )
+        );
+        assert_eq!(
+            build_transport_request_url(
+                &doubao,
+                TransportRequestUrlParams {
+                    provider_api_format: "doubao:embedding",
+                    mapped_model: Some("doubao-embedding-vision"),
+                    upstream_is_stream: false,
+                    request_query: None,
+                    kiro_api_region: None,
+                },
+            )
+            .as_deref(),
+            Some("https://ark.volces.example/api/v3/embeddings/multimodal")
+        );
+    }
+
+    #[test]
+    fn rerank_request_url_builds_provider_default_paths() {
+        let openai = sample_transport(
+            "openai",
+            "openai:rerank",
+            "https://api.openai.example/v1",
+            None,
+        );
+        let jina = sample_transport("jina", "jina:rerank", "https://api.jina.example", None);
+
+        assert_eq!(
+            build_transport_request_url(
+                &openai,
+                TransportRequestUrlParams {
+                    provider_api_format: "openai:rerank",
+                    mapped_model: Some("rerank-1"),
+                    upstream_is_stream: false,
+                    request_query: Some("tenant=demo"),
+                    kiro_api_region: None,
+                },
+            )
+            .as_deref(),
+            Some("https://api.openai.example/v1/rerank?tenant=demo")
+        );
+        assert_eq!(
+            build_transport_request_url(
+                &jina,
+                TransportRequestUrlParams {
+                    provider_api_format: "jina:rerank",
+                    mapped_model: Some("jina-reranker-v2-base-multilingual"),
+                    upstream_is_stream: false,
+                    request_query: None,
+                    kiro_api_region: None,
+                },
+            )
+            .as_deref(),
+            Some("https://api.jina.example/v1/rerank")
+        );
+    }
+
+    #[test]
+    fn embedding_request_url_handles_base_variants_and_queries() {
+        let openai_without_v1 = sample_transport(
+            "openai",
+            "openai:embedding",
+            "https://api.openai.example/root?tenant=base",
+            None,
+        );
+        let jina_with_v1 = sample_transport(
+            "jina",
+            "jina:embedding",
+            "https://api.jina.example/v1/",
+            None,
+        );
+        let gemini_model_base = sample_transport(
+            "gemini",
+            "gemini:embedding",
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001",
+            None,
+        );
+        let doubao_with_query = sample_transport(
+            "doubao",
+            "doubao:embedding",
+            "https://ark.volces.example/api/v3?tenant=base",
+            None,
+        );
+
+        assert_eq!(
+            build_transport_request_url(
+                &openai_without_v1,
+                TransportRequestUrlParams {
+                    provider_api_format: "OPENAI:EMBEDDING",
+                    mapped_model: Some("text-embedding-3-small"),
+                    upstream_is_stream: false,
+                    request_query: Some("tenant=request&trace=1"),
+                    kiro_api_region: None,
+                },
+            )
+            .as_deref(),
+            Some("https://api.openai.example/root/v1/embeddings?tenant=request&trace=1")
+        );
+        assert_eq!(
+            build_transport_request_url(
+                &jina_with_v1,
+                TransportRequestUrlParams {
+                    provider_api_format: "jina:embedding",
+                    mapped_model: Some("jina-embeddings-v3"),
+                    upstream_is_stream: false,
+                    request_query: Some("trace=2"),
+                    kiro_api_region: None,
+                },
+            )
+            .as_deref(),
+            Some("https://api.jina.example/v1/embeddings?trace=2")
+        );
+        assert_eq!(
+            build_transport_request_url(
+                &gemini_model_base,
+                TransportRequestUrlParams {
+                    provider_api_format: "gemini:embedding",
+                    mapped_model: Some("gemini-embedding-001"),
+                    upstream_is_stream: false,
+                    request_query: Some("key=client-key&trace=3"),
+                    kiro_api_region: None,
+                },
+            )
+            .as_deref(),
+            Some("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?trace=3")
+        );
+        assert_eq!(
+            build_transport_request_url(
+                &doubao_with_query,
+                TransportRequestUrlParams {
+                    provider_api_format: "doubao:embedding",
+                    mapped_model: Some("doubao-embedding-vision"),
+                    upstream_is_stream: false,
+                    request_query: Some("trace=4"),
+                    kiro_api_region: None,
+                },
+            )
+            .as_deref(),
+            Some("https://ark.volces.example/api/v3/embeddings/multimodal?tenant=base&trace=4")
+        );
+    }
+
+    #[test]
+    fn gemini_embedding_request_url_requires_mapped_model_without_custom_path() {
+        let transport = sample_transport(
+            "gemini",
+            "gemini:embedding",
+            "https://generativelanguage.googleapis.com/v1beta",
+            None,
+        );
+
+        assert!(build_transport_request_url(
+            &transport,
+            TransportRequestUrlParams {
+                provider_api_format: "gemini:embedding",
+                mapped_model: None,
+                upstream_is_stream: false,
+                request_query: None,
+                kiro_api_region: None,
+            },
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn embedding_request_url_expands_custom_gemini_embed_action() {
+        let transport = sample_transport(
+            "custom",
+            "gemini:embedding",
+            "https://generativelanguage.googleapis.com",
+            Some("/v1beta/models/{model}:{action}"),
+        );
+
+        let url = build_transport_request_url(
+            &transport,
+            TransportRequestUrlParams {
+                provider_api_format: "gemini:embedding",
+                mapped_model: Some("gemini-embedding-001"),
+                upstream_is_stream: true,
+                request_query: Some("key=client-key&foo=bar"),
+                kiro_api_region: None,
+            },
+        )
+        .expect("expanded custom embedding path url");
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?foo=bar"
+        );
     }
 }

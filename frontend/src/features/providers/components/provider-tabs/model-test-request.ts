@@ -4,7 +4,27 @@ const DEFAULT_MODEL_TEST_MESSAGE = 'Hello! This is a test message.'
 export const POOL_TEST_CONCURRENCY = 5
 export const SINGLE_TEST_CONCURRENCY = 1
 
-export function buildDefaultModelTestRequestBody(modelName: string): string {
+export function buildDefaultModelTestRequestBody(modelName: string, apiFormat?: string | null): string {
+  if (apiFormat?.trim().toLowerCase().endsWith(':embedding')) {
+    return JSON.stringify({
+      model: modelName,
+      input: 'This is a test embedding input.',
+    }, null, 2)
+  }
+
+  if (apiFormat?.trim().toLowerCase().endsWith(':rerank')) {
+    return JSON.stringify({
+      model: modelName,
+      query: 'This is a test rerank query.',
+      documents: [
+        'This document is relevant to the test query.',
+        'This document is unrelated.',
+      ],
+      top_n: 1,
+      return_documents: true,
+    }, null, 2)
+  }
+
   return JSON.stringify({
     model: modelName,
     messages: [

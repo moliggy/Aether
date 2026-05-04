@@ -16,6 +16,22 @@ pub(super) fn classify_ai_public_route(
             "openai:chat",
             true,
         ))
+    } else if method == http::Method::POST && normalized_path == "/v1/embeddings" {
+        Some(classified(
+            "ai_public",
+            "openai",
+            "embedding",
+            "openai:embedding",
+            true,
+        ))
+    } else if method == http::Method::POST && normalized_path == "/v1/rerank" {
+        Some(classified(
+            "ai_public",
+            "openai",
+            "rerank",
+            "openai:rerank",
+            true,
+        ))
     } else if method == http::Method::POST
         && matches!(normalized_path, "/v1/responses" | "/v1/responses/compact")
     {

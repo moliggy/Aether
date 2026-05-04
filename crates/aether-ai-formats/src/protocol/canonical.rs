@@ -222,6 +222,94 @@ pub struct CanonicalUsage {
     pub extensions: BTreeMap<String, Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CanonicalEmbeddingInput {
+    String(String),
+    StringArray(Vec<String>),
+    TokenArray(Vec<i64>),
+    TokenArrayArray(Vec<Vec<i64>>),
+}
+
+impl CanonicalEmbeddingInput {
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::String(value) => value.trim().is_empty(),
+            Self::StringArray(values) => {
+                values.is_empty() || values.iter().any(|value| value.trim().is_empty())
+            }
+            Self::TokenArray(values) => values.is_empty(),
+            Self::TokenArrayArray(values) => values.is_empty() || values.iter().any(Vec::is_empty),
+        }
+    }
+
+    fn as_string_items(&self) -> Option<Vec<&str>> {
+        match self {
+            Self::String(value) => Some(vec![value.as_str()]),
+            Self::StringArray(values) => Some(values.iter().map(String::as_str).collect()),
+            Self::TokenArray(_) | Self::TokenArrayArray(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CanonicalEmbeddingRequest {
+    pub input: CanonicalEmbeddingInput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding_format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dimensions: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CanonicalRerankRequest {
+    pub query: String,
+    #[serde(default)]
+    pub documents: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_n: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub return_documents: Option<bool>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+impl CanonicalRerankRequest {
+    fn is_empty(&self) -> bool {
+        self.query.trim().is_empty()
+            || self.documents.is_empty()
+            || self.documents.iter().any(rerank_document_is_empty)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CanonicalEmbedding {
+    #[serde(default)]
+    pub index: usize,
+    #[serde(default)]
+    pub embedding: Vec<f64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CanonicalEmbeddingResponse {
+    pub id: String,
+    pub model: String,
+    #[serde(default)]
+    pub embeddings: Vec<CanonicalEmbedding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<CanonicalUsage>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, Value>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CanonicalRequest {
     #[serde(default)]
@@ -232,6 +320,10 @@ pub struct CanonicalRequest {
     pub system: Option<String>,
     #[serde(default)]
     pub messages: Vec<CanonicalMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<CanonicalEmbeddingRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerank: Option<CanonicalRerankRequest>,
     #[serde(default)]
     pub generation: CanonicalGenerationConfig,
     #[serde(default)]
@@ -371,6 +463,47 @@ pub fn canonical_to_gemini_request(
         mapped_model,
         upstream_is_stream,
     )
+}
+
+pub(crate) fn from_embedding_to_canonical_request(
+    body_json: &Value,
+    namespace: &str,
+) -> Option<CanonicalRequest> {
+    embedding_request_from_raw(body_json, namespace)
+}
+
+pub(crate) fn canonical_to_embedding_request(
+    canonical: &CanonicalRequest,
+    mapped_model: &str,
+    namespace: &str,
+) -> Option<Value> {
+    match namespace {
+        "openai" => canonical_to_openai_embedding_request(canonical, mapped_model),
+        "jina" => canonical_to_jina_embedding_request(canonical, mapped_model),
+        "gemini" => canonical_to_gemini_embedding_request(canonical, mapped_model),
+        "doubao" => canonical_to_doubao_embedding_request(canonical, mapped_model),
+        _ => None,
+    }
+}
+
+pub(crate) fn from_rerank_to_canonical_request(
+    body_json: &Value,
+    namespace: &str,
+) -> Option<CanonicalRequest> {
+    rerank_request_from_raw(body_json, namespace)
+}
+
+pub(crate) fn canonical_to_rerank_request(
+    canonical: &CanonicalRequest,
+    mapped_model: &str,
+    namespace: &str,
+) -> Option<Value> {
+    match namespace {
+        "openai" | "jina" => {
+            canonical_to_openai_like_rerank_request(canonical, mapped_model, namespace)
+        }
+        _ => None,
+    }
 }
 
 pub fn from_openai_chat_to_canonical_response(body_json: &Value) -> Option<CanonicalResponse> {
@@ -554,6 +687,23 @@ pub fn canonical_to_gemini_response(
     report_context: &Value,
 ) -> Option<Value> {
     crate::protocol::formats::gemini_generate_content::response::to_raw(canonical, report_context)
+}
+
+pub fn from_embedding_to_canonical_response(
+    body_json: &Value,
+    namespace: &str,
+) -> Option<CanonicalEmbeddingResponse> {
+    embedding_response_from_raw(body_json, namespace)
+}
+
+pub fn canonical_to_embedding_response(
+    canonical: &CanonicalEmbeddingResponse,
+    namespace: &str,
+) -> Option<Value> {
+    match namespace {
+        "openai" | "jina" => Some(canonical_to_openai_embedding_response(canonical, namespace)),
+        _ => None,
+    }
 }
 
 pub fn canonical_unknown_block_count(blocks: &[CanonicalContentBlock]) -> usize {
@@ -4123,6 +4273,411 @@ pub(crate) fn strip_claude_billing_header(text: &str) -> String {
     remainder.trim_start_matches('\n').trim().to_string()
 }
 
+fn embedding_request_from_raw(body_json: &Value, namespace: &str) -> Option<CanonicalRequest> {
+    let request = body_json.as_object()?;
+    let model = request
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let input =
+        serde_json::from_value::<CanonicalEmbeddingInput>(request.get("input")?.clone()).ok()?;
+    if input.is_empty() {
+        return None;
+    }
+
+    let embedding = CanonicalEmbeddingRequest {
+        input,
+        encoding_format: request
+            .get("encoding_format")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        dimensions: request.get("dimensions").and_then(Value::as_u64),
+        task: request
+            .get("task")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        user: request
+            .get("user")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        extensions: namespace_extensions(
+            namespace,
+            request,
+            &[
+                "model",
+                "input",
+                "encoding_format",
+                "dimensions",
+                "task",
+                "user",
+            ],
+        ),
+    };
+
+    Some(CanonicalRequest {
+        model,
+        embedding: Some(embedding),
+        ..CanonicalRequest::default()
+    })
+}
+
+fn rerank_request_from_raw(body_json: &Value, namespace: &str) -> Option<CanonicalRequest> {
+    let request = body_json.as_object()?;
+    let model = request
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let query = request
+        .get("query")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let documents = request.get("documents").and_then(Value::as_array)?.to_vec();
+    let rerank = CanonicalRerankRequest {
+        query,
+        documents,
+        top_n: request
+            .get("top_n")
+            .or_else(|| request.get("topN"))
+            .and_then(Value::as_u64),
+        return_documents: request
+            .get("return_documents")
+            .or_else(|| request.get("returnDocuments"))
+            .and_then(Value::as_bool),
+        extensions: namespace_extensions(
+            namespace,
+            request,
+            &[
+                "model",
+                "query",
+                "documents",
+                "top_n",
+                "topN",
+                "return_documents",
+                "returnDocuments",
+            ],
+        ),
+    };
+    if rerank.is_empty() || rerank.top_n == Some(0) {
+        return None;
+    }
+
+    Some(CanonicalRequest {
+        model,
+        rerank: Some(rerank),
+        ..CanonicalRequest::default()
+    })
+}
+
+fn canonical_to_openai_like_rerank_request(
+    canonical: &CanonicalRequest,
+    mapped_model: &str,
+    namespace: &str,
+) -> Option<Value> {
+    let rerank = canonical.rerank.as_ref()?;
+    if rerank.is_empty() || rerank.top_n == Some(0) {
+        return None;
+    }
+    let mut output = Map::new();
+    output.insert(
+        "model".to_string(),
+        Value::String(mapped_rerank_model(canonical, mapped_model)),
+    );
+    output.insert("query".to_string(), Value::String(rerank.query.clone()));
+    output.insert(
+        "documents".to_string(),
+        Value::Array(rerank.documents.clone()),
+    );
+    if let Some(value) = rerank.top_n {
+        output.insert("top_n".to_string(), Value::from(value));
+    }
+    if let Some(value) = rerank.return_documents {
+        output.insert("return_documents".to_string(), Value::Bool(value));
+    }
+    output.extend(namespace_extension_object(
+        &rerank.extensions,
+        namespace,
+        &output,
+    ));
+    Some(Value::Object(output))
+}
+
+fn rerank_document_is_empty(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.trim().is_empty(),
+        Value::Object(object) => object
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.trim().is_empty()),
+        Value::Null => true,
+        _ => false,
+    }
+}
+
+fn mapped_rerank_model(canonical: &CanonicalRequest, mapped_model: &str) -> String {
+    mapped_model
+        .trim()
+        .chars()
+        .next()
+        .map(|_| mapped_model.trim().to_string())
+        .unwrap_or_else(|| canonical.model.clone())
+}
+
+fn canonical_to_openai_embedding_request(
+    canonical: &CanonicalRequest,
+    mapped_model: &str,
+) -> Option<Value> {
+    canonical_to_openai_like_embedding_request(canonical, mapped_model, "openai", false)
+}
+
+fn canonical_to_jina_embedding_request(
+    canonical: &CanonicalRequest,
+    mapped_model: &str,
+) -> Option<Value> {
+    canonical_to_openai_like_embedding_request(canonical, mapped_model, "jina", true)
+}
+
+fn canonical_to_openai_like_embedding_request(
+    canonical: &CanonicalRequest,
+    mapped_model: &str,
+    namespace: &str,
+    default_task: bool,
+) -> Option<Value> {
+    let embedding = canonical.embedding.as_ref()?;
+    if embedding.input.is_empty() {
+        return None;
+    }
+    let mut output = Map::new();
+    output.insert(
+        "model".to_string(),
+        Value::String(mapped_embedding_model(canonical, mapped_model)),
+    );
+    output.insert(
+        "input".to_string(),
+        serde_json::to_value(&embedding.input).ok()?,
+    );
+    if let Some(value) = &embedding.encoding_format {
+        output.insert("encoding_format".to_string(), Value::String(value.clone()));
+    }
+    if let Some(value) = embedding.dimensions {
+        output.insert("dimensions".to_string(), Value::from(value));
+    }
+    if let Some(value) = &embedding.user {
+        output.insert("user".to_string(), Value::String(value.clone()));
+    }
+    if let Some(task) = embedding
+        .task
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        output.insert("task".to_string(), Value::String(task.clone()));
+    } else if default_task {
+        output.insert(
+            "task".to_string(),
+            Value::String("text-matching".to_string()),
+        );
+    }
+    output.extend(namespace_extension_object(
+        &embedding.extensions,
+        namespace,
+        &output,
+    ));
+    Some(Value::Object(output))
+}
+
+fn canonical_to_gemini_embedding_request(
+    canonical: &CanonicalRequest,
+    mapped_model: &str,
+) -> Option<Value> {
+    let embedding = canonical.embedding.as_ref()?;
+    let items = embedding.input.as_string_items()?;
+    if items.is_empty() || items.iter().any(|value| value.trim().is_empty()) {
+        return None;
+    }
+    let model = mapped_embedding_model(canonical, mapped_model);
+    if items.len() == 1 {
+        return Some(json!({
+            "model": model,
+            "content": {
+                "parts": [{"text": items[0]}]
+            }
+        }));
+    }
+    Some(json!({
+        "model": model,
+        "requests": items.into_iter().map(|text| {
+            json!({
+                "model": model,
+                "content": {
+                    "parts": [{"text": text}]
+                }
+            })
+        }).collect::<Vec<_>>()
+    }))
+}
+
+fn canonical_to_doubao_embedding_request(
+    canonical: &CanonicalRequest,
+    mapped_model: &str,
+) -> Option<Value> {
+    let embedding = canonical.embedding.as_ref()?;
+    let items = embedding.input.as_string_items()?;
+    if items.is_empty() || items.iter().any(|value| value.trim().is_empty()) {
+        return None;
+    }
+    let mut output = Map::new();
+    output.insert(
+        "model".to_string(),
+        Value::String(mapped_embedding_model(canonical, mapped_model)),
+    );
+    output.insert(
+        "input".to_string(),
+        Value::Array(
+            items
+                .into_iter()
+                .map(|text| json!({"type": "text", "text": text}))
+                .collect(),
+        ),
+    );
+    if let Some(dimensions) = embedding.dimensions {
+        output.insert("dimensions".to_string(), Value::from(dimensions));
+    }
+    output.extend(namespace_extension_object(
+        &embedding.extensions,
+        "doubao",
+        &output,
+    ));
+    Some(Value::Object(output))
+}
+
+fn embedding_response_from_raw(
+    body_json: &Value,
+    namespace: &str,
+) -> Option<CanonicalEmbeddingResponse> {
+    let body = body_json.as_object()?;
+    if body.contains_key("error") {
+        return None;
+    }
+    let data = body.get("data")?.as_array()?;
+    let mut embeddings = Vec::new();
+    for (fallback_index, item) in data.iter().enumerate() {
+        let item_object = item.as_object()?;
+        let values = item_object.get("embedding")?.as_array()?;
+        let embedding = values
+            .iter()
+            .map(Value::as_f64)
+            .collect::<Option<Vec<_>>>()?;
+        embeddings.push(CanonicalEmbedding {
+            index: item_object
+                .get("index")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(fallback_index),
+            embedding,
+            extensions: namespace_extensions(
+                namespace,
+                item_object,
+                &["object", "index", "embedding"],
+            ),
+        });
+    }
+    Some(CanonicalEmbeddingResponse {
+        id: body
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("embd-unknown")
+            .to_string(),
+        model: body
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+        embeddings,
+        usage: openai_usage_to_canonical(body.get("usage")),
+        extensions: namespace_extensions(
+            namespace,
+            body,
+            &["id", "object", "model", "data", "usage"],
+        ),
+    })
+}
+
+fn canonical_to_openai_embedding_response(
+    canonical: &CanonicalEmbeddingResponse,
+    namespace: &str,
+) -> Value {
+    let mut response = Map::new();
+    response.insert("object".to_string(), Value::String("list".to_string()));
+    if !canonical.model.trim().is_empty() && canonical.model != "unknown" {
+        response.insert("model".to_string(), Value::String(canonical.model.clone()));
+    }
+    response.insert(
+        "data".to_string(),
+        Value::Array(
+            canonical
+                .embeddings
+                .iter()
+                .map(|embedding| {
+                    let mut item = Map::new();
+                    item.insert("object".to_string(), Value::String("embedding".to_string()));
+                    item.insert("index".to_string(), Value::from(embedding.index as u64));
+                    item.insert("embedding".to_string(), json!(embedding.embedding));
+                    item.extend(namespace_extension_object(
+                        &embedding.extensions,
+                        namespace,
+                        &item,
+                    ));
+                    Value::Object(item)
+                })
+                .collect(),
+        ),
+    );
+    if let Some(usage) = &canonical.usage {
+        response.insert("usage".to_string(), canonical_usage_to_openai(usage));
+    }
+    response.extend(namespace_extension_object(
+        &canonical.extensions,
+        namespace,
+        &response,
+    ));
+    Value::Object(response)
+}
+
+fn mapped_embedding_model(canonical: &CanonicalRequest, mapped_model: &str) -> String {
+    let mapped_model = mapped_model.trim();
+    if mapped_model.is_empty() {
+        canonical.model.clone()
+    } else {
+        mapped_model.to_string()
+    }
+}
+
+fn namespace_extensions(
+    namespace: &str,
+    object: &Map<String, Value>,
+    handled_keys: &[&str],
+) -> BTreeMap<String, Value> {
+    let handled = handled_keys
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let raw = object
+        .iter()
+        .filter(|(key, _)| !handled.contains(key.as_str()))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<Map<String, Value>>();
+    if raw.is_empty() {
+        BTreeMap::new()
+    } else {
+        BTreeMap::from([(namespace.to_string(), Value::Object(raw))])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -4135,9 +4690,327 @@ mod tests {
         from_gemini_to_canonical_request, from_gemini_to_canonical_response,
         from_openai_chat_to_canonical_request, from_openai_chat_to_canonical_response,
         from_openai_responses_to_canonical_request, from_openai_responses_to_canonical_response,
-        CanonicalContentBlock, CanonicalRole,
+        CanonicalContentBlock, CanonicalEmbedding, CanonicalEmbeddingInput,
+        CanonicalEmbeddingRequest, CanonicalRole, CanonicalUsage,
     };
     use serde_json::{json, Value};
+
+    #[test]
+    fn canonical_embedding_request_accepts_axonhub_input_shapes() {
+        for input in [
+            json!("hello"),
+            json!(["hello", "world"]),
+            json!([1, 2, 3]),
+            json!([[1, 2], [3, 4]]),
+        ] {
+            let request = json!({
+                "model": "text-embedding-3-small",
+                "embedding": {
+                    "input": input,
+                    "encoding_format": "float",
+                    "dimensions": 3
+                }
+            });
+            let canonical = serde_json::from_value::<super::CanonicalRequest>(request)
+                .expect("embedding request should deserialize");
+            assert!(canonical.embedding.is_some());
+            assert!(canonical.messages.is_empty());
+            let encoded = serde_json::to_value(&canonical).expect("serialize");
+            assert!(encoded.get("messages").is_some());
+            assert!(encoded.get("embedding").is_some());
+        }
+    }
+
+    #[test]
+    fn embedding_wire_request_accepts_all_axonhub_input_shapes() {
+        let cases = [
+            (
+                json!("hello"),
+                "single string",
+                CanonicalEmbeddingInput::String("hello".to_string()),
+            ),
+            (
+                json!(["hello", "world"]),
+                "string array",
+                CanonicalEmbeddingInput::StringArray(vec![
+                    "hello".to_string(),
+                    "world".to_string(),
+                ]),
+            ),
+            (
+                json!([1, 2, 3]),
+                "token array",
+                CanonicalEmbeddingInput::TokenArray(vec![1, 2, 3]),
+            ),
+            (
+                json!([[1, 2], [3, 4]]),
+                "nested token array",
+                CanonicalEmbeddingInput::TokenArrayArray(vec![vec![1, 2], vec![3, 4]]),
+            ),
+        ];
+
+        for (input, label, expected_input) in cases {
+            let body = json!({
+                "model": "text-embedding-3-small",
+                "input": input
+            });
+            let canonical = super::from_embedding_to_canonical_request(&body, "openai")
+                .unwrap_or_else(|| panic!("{label} should parse"));
+
+            assert_eq!(
+                canonical.embedding.expect("embedding request").input,
+                expected_input,
+                "{label} should preserve its canonical variant"
+            );
+            assert!(canonical.messages.is_empty());
+        }
+    }
+
+    #[test]
+    fn embedding_wire_request_rejects_empty_invalid_or_chat_payloads() {
+        for body in [
+            json!({"model": "text-embedding-3-small", "input": "   "}),
+            json!({"model": "text-embedding-3-small", "input": []}),
+            json!({"model": "text-embedding-3-small", "input": [1, "two"]}),
+            json!({"model": "text-embedding-3-small", "input": [[1], []]}),
+            json!({"model": "", "input": "hello"}),
+            json!({"input": "hello"}),
+            json!({"model": "text-embedding-3-small", "messages": []}),
+        ] {
+            assert!(
+                super::from_embedding_to_canonical_request(&body, "openai").is_none(),
+                "invalid embedding payload should be rejected: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn embedding_openai_request_response_roundtrip_stays_non_chat() {
+        let body = json!({
+            "model": "text-embedding-3-small",
+            "input": ["hello", "world"],
+            "encoding_format": "float",
+            "dimensions": 2,
+            "user": "user-1",
+            "extra": true
+        });
+        let canonical =
+            super::from_embedding_to_canonical_request(&body, "openai").expect("embedding request");
+        assert_eq!(canonical.model, "text-embedding-3-small");
+        assert!(canonical.messages.is_empty());
+        assert!(matches!(
+            canonical.embedding.as_ref().map(|embedding| &embedding.input),
+            Some(CanonicalEmbeddingInput::StringArray(values)) if values == &vec!["hello".to_string(), "world".to_string()]
+        ));
+
+        let rebuilt =
+            super::canonical_to_embedding_request(&canonical, "upstream-embedding", "openai")
+                .expect("openai embedding request");
+        assert_eq!(rebuilt["model"], "upstream-embedding");
+        assert_eq!(rebuilt["input"], json!(["hello", "world"]));
+        assert!(rebuilt.get("messages").is_none());
+
+        let response = json!({
+            "object": "list",
+            "model": "upstream-embedding",
+            "data": [
+                {"object": "embedding", "index": 0, "embedding": [0.1, 0.2]},
+                {"object": "embedding", "index": 1, "embedding": [0.3, 0.4]}
+            ],
+            "usage": {"prompt_tokens": 4, "total_tokens": 4}
+        });
+        let canonical_response = super::from_embedding_to_canonical_response(&response, "openai")
+            .expect("embedding response");
+        assert_eq!(canonical_response.embeddings.len(), 2);
+        let emitted = super::canonical_to_embedding_response(&canonical_response, "openai")
+            .expect("embedding response output");
+        assert_eq!(emitted["data"][0]["embedding"], json!([0.1, 0.2]));
+        assert!(emitted.get("choices").is_none());
+        assert!(emitted.get("messages").is_none());
+    }
+
+    #[test]
+    fn embedding_provider_request_emitters_preserve_provider_contracts() {
+        let canonical = super::CanonicalRequest {
+            model: "text-embedding-3-small".to_string(),
+            embedding: Some(CanonicalEmbeddingRequest {
+                input: CanonicalEmbeddingInput::StringArray(vec![
+                    "alpha".to_string(),
+                    "beta".to_string(),
+                ]),
+                encoding_format: Some("float".to_string()),
+                dimensions: Some(2),
+                task: None,
+                user: None,
+                extensions: Default::default(),
+            }),
+            ..Default::default()
+        };
+
+        let jina = super::canonical_to_embedding_request(&canonical, "jina-embeddings-v3", "jina")
+            .expect("jina embedding request");
+        assert_eq!(jina["task"], "text-matching");
+        assert_eq!(jina["input"], json!(["alpha", "beta"]));
+
+        let gemini =
+            super::canonical_to_embedding_request(&canonical, "gemini-embedding-001", "gemini")
+                .expect("gemini embedding request");
+        assert_eq!(
+            gemini["requests"][0]["content"]["parts"][0]["text"],
+            "alpha"
+        );
+        assert!(gemini.get("messages").is_none());
+
+        let doubao =
+            super::canonical_to_embedding_request(&canonical, "doubao-embedding-vision", "doubao")
+                .expect("doubao embedding request");
+        assert_eq!(doubao["input"][0], json!({"type": "text", "text": "alpha"}));
+        assert!(doubao.get("messages").is_none());
+    }
+
+    #[test]
+    fn embedding_provider_request_emitters_cover_golden_payload_variants() {
+        let single = super::CanonicalRequest {
+            model: "text-embedding-3-small".to_string(),
+            embedding: Some(CanonicalEmbeddingRequest {
+                input: CanonicalEmbeddingInput::String("alpha".to_string()),
+                encoding_format: Some("float".to_string()),
+                dimensions: Some(1536),
+                task: Some("retrieval.passage".to_string()),
+                user: Some("user-1".to_string()),
+                extensions: Default::default(),
+            }),
+            ..Default::default()
+        };
+
+        let openai =
+            super::canonical_to_embedding_request(&single, "text-embedding-3-large", "openai")
+                .expect("openai embedding request");
+        assert_eq!(openai["model"], "text-embedding-3-large");
+        assert_eq!(openai["input"], "alpha");
+        assert_eq!(openai["encoding_format"], "float");
+        assert_eq!(openai["dimensions"], 1536);
+        assert_eq!(openai["user"], "user-1");
+        assert_eq!(openai["task"], "retrieval.passage");
+
+        let jina = super::canonical_to_embedding_request(&single, "jina-embeddings-v3", "jina")
+            .expect("jina embedding request");
+        assert_eq!(jina["task"], "retrieval.passage");
+        assert_eq!(jina["input"], "alpha");
+
+        let gemini =
+            super::canonical_to_embedding_request(&single, "gemini-embedding-001", "gemini")
+                .expect("gemini single embedding request");
+        assert_eq!(gemini["model"], "gemini-embedding-001");
+        assert_eq!(gemini["content"]["parts"][0]["text"], "alpha");
+        assert!(gemini.get("requests").is_none());
+
+        let doubao =
+            super::canonical_to_embedding_request(&single, "doubao-embedding-vision", "doubao")
+                .expect("doubao embedding request");
+        assert_eq!(doubao["model"], "doubao-embedding-vision");
+        assert_eq!(doubao["input"], json!([{"type": "text", "text": "alpha"}]));
+        assert_eq!(doubao["dimensions"], 1536);
+    }
+
+    #[test]
+    fn gemini_and_doubao_embedding_emitters_reject_token_inputs() {
+        for input in [
+            CanonicalEmbeddingInput::TokenArray(vec![1, 2, 3]),
+            CanonicalEmbeddingInput::TokenArrayArray(vec![vec![1, 2], vec![3, 4]]),
+        ] {
+            let canonical = super::CanonicalRequest {
+                model: "token-model".to_string(),
+                embedding: Some(CanonicalEmbeddingRequest {
+                    input,
+                    encoding_format: None,
+                    dimensions: None,
+                    task: None,
+                    user: None,
+                    extensions: Default::default(),
+                }),
+                ..Default::default()
+            };
+
+            assert!(super::canonical_to_embedding_request(
+                &canonical,
+                "gemini-embedding-001",
+                "gemini"
+            )
+            .is_none());
+            assert!(super::canonical_to_embedding_request(
+                &canonical,
+                "doubao-embedding",
+                "doubao"
+            )
+            .is_none());
+        }
+    }
+
+    #[test]
+    fn embedding_response_parser_rejects_error_and_malformed_vectors() {
+        for body in [
+            json!({"error": {"message": "bad"}}),
+            json!({"object": "list"}),
+            json!({"data": [{"object": "embedding", "embedding": [0.1, "bad"]}]}),
+            json!({"data": [{"object": "embedding"}]}),
+        ] {
+            assert!(
+                super::from_embedding_to_canonical_response(&body, "openai").is_none(),
+                "malformed embedding response should be rejected: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn embedding_response_parser_uses_openai_fallback_fields() {
+        let body = json!({
+            "object": "list",
+            "data": [
+                {"object": "embedding", "embedding": [0.1, 0.2]},
+                {"object": "embedding", "index": 7, "embedding": [0.3, 0.4]}
+            ]
+        });
+
+        let canonical = super::from_embedding_to_canonical_response(&body, "openai")
+            .expect("fallback embedding response");
+        assert_eq!(canonical.id, "embd-unknown");
+        assert_eq!(canonical.model, "unknown");
+        assert_eq!(canonical.embeddings[0].index, 0);
+        assert_eq!(canonical.embeddings[1].index, 7);
+        assert!(super::canonical_to_embedding_response(&canonical, "jina").is_some());
+        assert!(super::canonical_to_embedding_response(&canonical, "gemini").is_none());
+        assert!(super::canonical_to_embedding_response(&canonical, "doubao").is_none());
+    }
+
+    #[test]
+    fn embedding_response_contract_serializes_vectors_without_chat_outputs() {
+        let response = super::CanonicalEmbeddingResponse {
+            id: "embd-1".to_string(),
+            model: "text-embedding-3-small".to_string(),
+            embeddings: vec![CanonicalEmbedding {
+                index: 0,
+                embedding: vec![0.1, 0.2, 0.3],
+                extensions: Default::default(),
+            }],
+            usage: Some(CanonicalUsage {
+                input_tokens: 3,
+                total_tokens: 3,
+                ..Default::default()
+            }),
+            extensions: Default::default(),
+        };
+
+        let encoded = serde_json::to_value(&response).expect("serialize");
+        assert_eq!(
+            encoded["embeddings"][0]["embedding"],
+            json!([0.1, 0.2, 0.3])
+        );
+        assert!(encoded.get("choices").is_none());
+        let decoded = serde_json::from_value::<super::CanonicalEmbeddingResponse>(encoded)
+            .expect("deserialize");
+        assert_eq!(decoded, response);
+    }
 
     #[test]
     fn canonical_request_preserves_openai_multimodal_tools_and_extensions() {

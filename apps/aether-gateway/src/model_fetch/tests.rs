@@ -161,6 +161,7 @@ fn sample_provider_model(
         Some(global_model_name.to_string()),
         None,
         None,
+        None,
         Some(json!({ "model_mappings": mappings })),
     )
     .expect("provider model should build")

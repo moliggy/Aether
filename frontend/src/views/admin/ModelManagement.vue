@@ -692,6 +692,7 @@ interface ModelProviderDisplay {
   supports_function_calling?: boolean | null
   supports_streaming?: boolean | null
   supports_extended_thinking?: boolean | null
+  supports_embedding?: boolean | null
 }
 
 const { success, error: showError } = useToast()
@@ -766,6 +767,7 @@ const editingProviderModel = computed<Model | null>(() => {
     supports_vision: p.supports_vision,
     supports_function_calling: p.supports_function_calling,
     supports_extended_thinking: p.supports_extended_thinking,
+    supports_embedding: p.supports_embedding,
     is_active: p.is_active,
     global_model_display_name: selectedModel.value?.display_name,
   } as Model
@@ -1180,7 +1182,8 @@ async function loadModelProviders(_globalModelId: string) {
       // 能力信息
       supports_vision: p.supports_vision,
       supports_function_calling: p.supports_function_calling,
-      supports_streaming: p.supports_streaming
+      supports_streaming: p.supports_streaming,
+      supports_embedding: p.supports_embedding
     }))
   } catch (err: unknown) {
     if (requestId !== modelProvidersRequestId) return

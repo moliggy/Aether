@@ -52,6 +52,7 @@ pub struct SameFormatProviderRequestBehavior {
 pub struct SameFormatProviderRequestBodyInput<'a> {
     pub body_json: &'a Value,
     pub mapped_model: &'a str,
+    pub client_api_format: &'a str,
     pub provider_api_format: &'a str,
     pub source_model: Option<&'a str>,
     pub family: SameFormatProviderFamily,
@@ -133,12 +134,27 @@ pub fn build_same_format_provider_request_body(
         );
     }
 
-    let request_body_object = input.body_json.as_object()?;
-    let mut provider_request_body = serde_json::Map::from_iter(
-        request_body_object
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone())),
-    );
+    let mut provider_request_body = if aether_ai_formats::api_format_alias_matches(
+        input.client_api_format,
+        input.provider_api_format,
+    ) {
+        let request_body_object = input.body_json.as_object()?;
+        serde_json::Map::from_iter(
+            request_body_object
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        )
+    } else {
+        aether_ai_formats::convert_request(
+            input.client_api_format,
+            input.provider_api_format,
+            input.body_json,
+            &aether_ai_formats::FormatContext::default().with_mapped_model(input.mapped_model),
+        )
+        .ok()?
+        .as_object()?
+        .clone()
+    };
     match input.family {
         SameFormatProviderFamily::Standard => {
             provider_request_body.insert(
@@ -488,6 +504,7 @@ mod tests {
                 "messages": [{"role": "user", "content": "hello"}]
             }),
             mapped_model: "upstream-model",
+            client_api_format: "openai:chat",
             provider_api_format: "openai:chat",
             source_model: Some("client-model"),
             family: SameFormatProviderFamily::Standard,
@@ -512,6 +529,7 @@ mod tests {
                 "reasoning_effort": "low"
             }),
             mapped_model: "upstream-model",
+            client_api_format: "openai:chat",
             provider_api_format: "openai:chat",
             source_model: Some("gpt-5.4-high"),
             family: SameFormatProviderFamily::Standard,

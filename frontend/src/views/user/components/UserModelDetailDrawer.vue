@@ -97,6 +97,23 @@
                   </Badge>
                 </div>
                 <div class="flex items-center gap-2 p-3 rounded-lg border">
+                  <Database class="w-5 h-5 text-muted-foreground" />
+                  <div class="flex-1">
+                    <p class="text-sm font-medium">
+                      Embedding
+                    </p>
+                    <p class="text-xs text-muted-foreground">
+                      向量嵌入
+                    </p>
+                  </div>
+                  <Badge
+                    :variant="supportsEmbedding(model) ? 'default' : 'secondary'"
+                    class="text-xs"
+                  >
+                    {{ supportsEmbedding(model) ? '支持' : '不支持' }}
+                  </Badge>
+                </div>
+                <div class="flex items-center gap-2 p-3 rounded-lg border">
                   <Eye class="w-5 h-5 text-muted-foreground" />
                   <div class="flex-1">
                     <p class="text-sm font-medium">
@@ -303,6 +320,7 @@ import {
   Zap,
   Copy,
   Layers,
+  Database,
   Image as ImageIcon
 } from 'lucide-vue-next'
 import { useEscapeKey } from '@/composables/useEscapeKey'
@@ -374,6 +392,14 @@ function get1hCachePrice(tier: PricingTier): string {
 function getFirst1hCachePrice(tieredPricing: TieredPricingConfig | undefined | null): string {
   if (!tieredPricing?.tiers?.length) return '-'
   return get1hCachePrice(tieredPricing.tiers[0])
+}
+
+function supportsEmbedding(model: PublicGlobalModel): boolean {
+  return model.supports_embedding === true
+    || model.supported_capabilities?.includes('embedding') === true
+    || model.config?.embedding === true
+    || model.config?.model_type === 'embedding'
+    || (Array.isArray(model.config?.api_formats) && model.config.api_formats.some((format) => String(format).endsWith(':embedding')))
 }
 
 // 添加 ESC 键监听

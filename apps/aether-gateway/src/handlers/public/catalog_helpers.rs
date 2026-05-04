@@ -210,6 +210,7 @@ fn serialize_public_catalog_model(model: StoredPublicCatalogModel) -> serde_json
         "supports_vision": model.supports_vision,
         "supports_function_calling": model.supports_function_calling,
         "supports_streaming": model.supports_streaming,
+        "supports_embedding": model.supports_embedding,
         "is_active": model.is_active,
     })
 }
