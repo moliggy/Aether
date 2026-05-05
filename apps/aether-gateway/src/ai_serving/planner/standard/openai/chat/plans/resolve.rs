@@ -7,10 +7,12 @@ use crate::ai_serving::planner::decision_input::{
     build_local_requested_model_decision_input, resolve_local_authenticated_decision_input,
 };
 use crate::ai_serving::resolve_local_decision_execution_runtime_auth_context;
+use crate::client_session_affinity::client_session_affinity_from_parts;
 use crate::AppState;
 
 pub(crate) async fn resolve_local_openai_chat_decision_input(
     state: &AppState,
+    parts: &http::request::Parts,
     trace_id: &str,
     decision: &GatewayControlDecision,
     body_json: &serde_json::Value,
@@ -106,5 +108,6 @@ pub(crate) async fn resolve_local_openai_chat_decision_input(
 
     let mut input = build_local_requested_model_decision_input(resolved_input, requested_model);
     input.request_auth_channel = decision.request_auth_channel.clone();
+    input.client_session_affinity = client_session_affinity_from_parts(parts, Some(body_json));
     Some(input)
 }
