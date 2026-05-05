@@ -886,67 +886,6 @@ fn decode_usage_audit_summary_row(row: &PgRow) -> Result<StoredUsageAuditSummary
     })
 }
 
-fn decode_usage_audit_aggregation_row(
-    row: &PgRow,
-) -> Result<StoredUsageAuditAggregation, DataLayerError> {
-    Ok(StoredUsageAuditAggregation {
-        group_key: row.try_get::<String, _>("group_key").map_postgres_err()?,
-        display_name: row
-            .try_get::<Option<String>, _>("display_name")
-            .map_postgres_err()?,
-        secondary_name: row
-            .try_get::<Option<String>, _>("secondary_name")
-            .map_postgres_err()?,
-        request_count: row
-            .try_get::<i64, _>("request_count")
-            .map_postgres_err()?
-            .max(0) as u64,
-        total_tokens: row
-            .try_get::<i64, _>("total_tokens")
-            .map_postgres_err()?
-            .max(0) as u64,
-        output_tokens: row
-            .try_get::<i64, _>("output_tokens")
-            .map_postgres_err()?
-            .max(0) as u64,
-        effective_input_tokens: row
-            .try_get::<i64, _>("effective_input_tokens")
-            .map_postgres_err()?
-            .max(0) as u64,
-        total_input_context: row
-            .try_get::<i64, _>("total_input_context")
-            .map_postgres_err()?
-            .max(0) as u64,
-        cache_creation_tokens: row
-            .try_get::<i64, _>("cache_creation_tokens")
-            .map_postgres_err()?
-            .max(0) as u64,
-        cache_creation_ephemeral_5m_tokens: row
-            .try_get::<i64, _>("cache_creation_ephemeral_5m_tokens")
-            .map_postgres_err()?
-            .max(0) as u64,
-        cache_creation_ephemeral_1h_tokens: row
-            .try_get::<i64, _>("cache_creation_ephemeral_1h_tokens")
-            .map_postgres_err()?
-            .max(0) as u64,
-        cache_read_tokens: row
-            .try_get::<i64, _>("cache_read_tokens")
-            .map_postgres_err()?
-            .max(0) as u64,
-        total_cost_usd: row.try_get::<f64, _>("total_cost_usd").map_postgres_err()?,
-        actual_total_cost_usd: row
-            .try_get::<f64, _>("actual_total_cost_usd")
-            .map_postgres_err()?,
-        avg_response_time_ms: row
-            .try_get::<Option<f64>, _>("avg_response_time_ms")
-            .map_postgres_err()?,
-        success_count: row
-            .try_get::<Option<i64>, _>("success_count")
-            .map_postgres_err()?
-            .map(|value| value.max(0) as u64),
-    })
-}
-
 fn decode_usage_error_distribution_row(
     row: &PgRow,
 ) -> Result<StoredUsageErrorDistributionRow, DataLayerError> {
