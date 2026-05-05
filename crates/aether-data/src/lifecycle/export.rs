@@ -126,6 +126,16 @@ pub struct ExportRow {
     pub payload: Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PostgresImportColumn {
+    data_type: String,
+    udt_name: String,
+    is_nullable: bool,
+    has_default: bool,
+}
+
+type PostgresImportColumns = BTreeMap<String, PostgresImportColumn>;
+
 pub fn encode_jsonl(records: &[DataExportRecord]) -> Result<String, DataLayerError> {
     validate_export_records(records)?;
 
@@ -469,24 +479,31 @@ pub async fn import_postgres_plan(
     plan: &DataImportPlan,
 ) -> Result<usize, DataLayerError> {
     let mut imported = 0usize;
+    let mut column_cache = BTreeMap::<String, PostgresImportColumns>::new();
     for domain in &plan.manifest.domains {
         if *domain == ExportDomain::Billing {
             for row in plan.rows(*domain) {
-                import_postgres_billing_row(pool, row).await?;
+                import_postgres_billing_row(pool, row, &mut column_cache).await?;
                 imported = imported.saturating_add(1);
             }
             continue;
         }
         if *domain == ExportDomain::Wallets {
             for row in plan.rows(*domain) {
-                import_postgres_wallet_row(pool, row).await?;
+                import_postgres_wallet_row(pool, row, &mut column_cache).await?;
                 imported = imported.saturating_add(1);
             }
             continue;
         }
         let (table_name, id_column) = postgres_domain_table(*domain)?;
-        for row in plan.rows(*domain) {
-            import_postgres_row(pool, table_name, id_column, *domain, row).await?;
+        let rows = plan.rows(*domain);
+        if rows.is_empty() {
+            continue;
+        }
+        let target_columns =
+            postgres_import_columns_cached(pool, &mut column_cache, table_name).await?;
+        for row in rows {
+            import_postgres_row(pool, table_name, id_column, *domain, row, &target_columns).await?;
             imported = imported.saturating_add(1);
         }
     }
@@ -858,6 +875,84 @@ fn postgres_domain_table(
     }
 }
 
+async fn postgres_import_columns_cached(
+    pool: &crate::driver::postgres::PostgresPool,
+    cache: &mut BTreeMap<String, PostgresImportColumns>,
+    table_name: &str,
+) -> Result<PostgresImportColumns, DataLayerError> {
+    if let Some(columns) = cache.get(table_name) {
+        return Ok(columns.clone());
+    }
+
+    let columns = load_postgres_import_columns(pool, table_name).await?;
+    cache.insert(table_name.to_string(), columns.clone());
+    Ok(columns)
+}
+
+async fn load_postgres_import_columns(
+    pool: &crate::driver::postgres::PostgresPool,
+    table_name: &str,
+) -> Result<PostgresImportColumns, DataLayerError> {
+    let (schema_name, relation_name) = postgres_table_parts(table_name)?;
+    let rows = sqlx::query(
+        r#"
+SELECT column_name, data_type, udt_name, is_nullable, column_default IS NOT NULL AS has_default
+FROM information_schema.columns
+WHERE table_schema = $1
+  AND table_name = $2
+"#,
+    )
+    .bind(schema_name)
+    .bind(relation_name)
+    .fetch_all(pool)
+    .await
+    .map_sql_err()?;
+
+    let mut columns = PostgresImportColumns::new();
+    for row in rows {
+        let column_name = row.try_get::<String, _>("column_name").map_sql_err()?;
+        let data_type = row
+            .try_get::<String, _>("data_type")
+            .map_sql_err()?
+            .to_ascii_lowercase();
+        let udt_name = row
+            .try_get::<String, _>("udt_name")
+            .map_sql_err()?
+            .to_ascii_lowercase();
+        let is_nullable = row.try_get::<String, _>("is_nullable").map_sql_err()? == "YES";
+        let has_default = row.try_get::<bool, _>("has_default").map_sql_err()?;
+        columns.insert(
+            column_name,
+            PostgresImportColumn {
+                data_type,
+                udt_name,
+                is_nullable,
+                has_default,
+            },
+        );
+    }
+
+    if columns.is_empty() {
+        return Err(DataLayerError::UnexpectedValue(format!(
+            "postgres import target table '{table_name}' has no visible columns"
+        )));
+    }
+
+    Ok(columns)
+}
+
+fn postgres_table_parts(table_name: &str) -> Result<(&str, &str), DataLayerError> {
+    let Some((schema_name, relation_name)) = table_name.split_once('.') else {
+        return Err(DataLayerError::InvalidInput(format!(
+            "postgres import target table '{table_name}' must include a schema"
+        )));
+    };
+    Ok((
+        schema_name.trim_matches('"'),
+        relation_name.trim_matches('"'),
+    ))
+}
+
 async fn export_postgres_billing_records(
     pool: &crate::driver::postgres::PostgresPool,
     records: &mut Vec<DataExportRecord>,
@@ -916,21 +1011,9 @@ async fn import_postgres_row(
     id_column: &str,
     domain: ExportDomain,
     row: &ExportRow,
+    target_columns: &PostgresImportColumns,
 ) -> Result<(), DataLayerError> {
-    let object = row.payload.as_object().ok_or_else(|| {
-        DataLayerError::InvalidInput(format!(
-            "{} export row '{}' payload must be a JSON object",
-            domain.as_str(),
-            row.id
-        ))
-    })?;
-    if object.is_empty() {
-        return Err(DataLayerError::InvalidInput(format!(
-            "{} export row '{}' payload cannot be empty",
-            domain.as_str(),
-            row.id
-        )));
-    }
+    let object = normalize_postgres_import_payload(table_name, domain, row, target_columns)?;
 
     let columns = object.keys().map(String::as_str).collect::<Vec<_>>();
     let column_sql = columns
@@ -961,29 +1044,208 @@ async fn import_postgres_row(
     let sql = format!(
         "INSERT INTO {table_name} ({column_sql}) SELECT {column_sql} FROM jsonb_populate_record(NULL::{table_name}, $1::jsonb) {conflict_sql}"
     );
+    let payload = Value::Object(object);
 
     sqlx::query(&sql)
-        .bind(&row.payload)
+        .bind(&payload)
         .execute(pool)
         .await
         .map_sql_err()?;
     Ok(())
 }
 
+fn normalize_postgres_import_payload(
+    table_name: &str,
+    domain: ExportDomain,
+    row: &ExportRow,
+    target_columns: &PostgresImportColumns,
+) -> Result<serde_json::Map<String, Value>, DataLayerError> {
+    let object = row.payload.as_object().ok_or_else(|| {
+        DataLayerError::InvalidInput(format!(
+            "{} export row '{}' payload must be a JSON object",
+            domain.as_str(),
+            row.id
+        ))
+    })?;
+    if object.is_empty() {
+        return Err(DataLayerError::InvalidInput(format!(
+            "{} export row '{}' payload cannot be empty",
+            domain.as_str(),
+            row.id
+        )));
+    }
+
+    let mut normalized = serde_json::Map::new();
+    for (column_name, value) in object {
+        if let Some(target_column) = target_columns.get(column_name) {
+            if value.is_null() && !target_column.is_nullable && target_column.has_default {
+                continue;
+            }
+            normalized.insert(
+                column_name.clone(),
+                normalize_postgres_import_value(column_name, target_column, value)?,
+            );
+            continue;
+        }
+        if value.is_null() {
+            continue;
+        }
+        return Err(DataLayerError::InvalidInput(format!(
+            "{} export row '{}' contains column '{}' that does not exist in postgres table '{}'",
+            domain.as_str(),
+            row.id,
+            column_name,
+            table_name
+        )));
+    }
+
+    if normalized.is_empty() {
+        return Err(DataLayerError::InvalidInput(format!(
+            "{} export row '{}' has no columns supported by postgres table '{}'",
+            domain.as_str(),
+            row.id,
+            table_name
+        )));
+    }
+
+    Ok(normalized)
+}
+
+fn normalize_postgres_import_value(
+    column_name: &str,
+    target_column: &PostgresImportColumn,
+    value: &Value,
+) -> Result<Value, DataLayerError> {
+    if value.is_null() {
+        return Ok(Value::Null);
+    }
+
+    if is_postgres_boolean_column(target_column) {
+        return normalize_postgres_boolean_value(column_name, value);
+    }
+    if is_postgres_timestamp_column(target_column) {
+        return normalize_postgres_timestamp_value(column_name, value);
+    }
+    if is_postgres_json_column(target_column) {
+        return normalize_postgres_json_value(value);
+    }
+
+    Ok(value.clone())
+}
+
+fn is_postgres_boolean_column(target_column: &PostgresImportColumn) -> bool {
+    target_column.data_type == "boolean" || target_column.udt_name == "bool"
+}
+
+fn is_postgres_timestamp_column(target_column: &PostgresImportColumn) -> bool {
+    matches!(
+        target_column.data_type.as_str(),
+        "timestamp with time zone" | "timestamp without time zone"
+    ) || matches!(target_column.udt_name.as_str(), "timestamptz" | "timestamp")
+}
+
+fn is_postgres_json_column(target_column: &PostgresImportColumn) -> bool {
+    matches!(target_column.data_type.as_str(), "json" | "jsonb")
+        || matches!(target_column.udt_name.as_str(), "json" | "jsonb")
+}
+
+fn normalize_postgres_boolean_value(
+    column_name: &str,
+    value: &Value,
+) -> Result<Value, DataLayerError> {
+    match value {
+        Value::Bool(_) => Ok(value.clone()),
+        Value::Number(number) => {
+            let Some(value) = number
+                .as_i64()
+                .or_else(|| number.as_u64().and_then(|value| i64::try_from(value).ok()))
+            else {
+                return Err(DataLayerError::InvalidInput(format!(
+                    "postgres boolean import column '{column_name}' has non-integer value {number}"
+                )));
+            };
+            match value {
+                0 => Ok(Value::Bool(false)),
+                1 => Ok(Value::Bool(true)),
+                other => Err(DataLayerError::InvalidInput(format!(
+                    "postgres boolean import column '{column_name}' has unsupported integer value {other}"
+                ))),
+            }
+        }
+        Value::String(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "0" | "false" => Ok(Value::Bool(false)),
+            "1" | "true" => Ok(Value::Bool(true)),
+            _ => Ok(Value::String(value.clone())),
+        },
+        _ => Ok(value.clone()),
+    }
+}
+
+fn normalize_postgres_timestamp_value(
+    column_name: &str,
+    value: &Value,
+) -> Result<Value, DataLayerError> {
+    let Value::Number(number) = value else {
+        return Ok(value.clone());
+    };
+    let Some(timestamp) = number
+        .as_i64()
+        .or_else(|| number.as_u64().and_then(|value| i64::try_from(value).ok()))
+    else {
+        return Err(DataLayerError::InvalidInput(format!(
+            "postgres timestamp import column '{column_name}' has non-integer value {number}"
+        )));
+    };
+
+    let datetime = if column_name.ends_with("_unix_ms")
+        || timestamp >= 100_000_000_000
+        || timestamp <= -100_000_000_000
+    {
+        chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp)
+    } else {
+        chrono::DateTime::<chrono::Utc>::from_timestamp(timestamp, 0)
+    }
+    .ok_or_else(|| {
+        DataLayerError::InvalidInput(format!(
+            "postgres timestamp import column '{column_name}' has out-of-range unix value {timestamp}"
+        ))
+    })?;
+
+    Ok(Value::String(datetime.to_rfc3339()))
+}
+
+fn normalize_postgres_json_value(value: &Value) -> Result<Value, DataLayerError> {
+    let Value::String(raw) = value else {
+        return Ok(value.clone());
+    };
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(value.clone());
+    }
+    match serde_json::from_str::<Value>(raw) {
+        Ok(parsed) => Ok(parsed),
+        Err(_) => Ok(value.clone()),
+    }
+}
+
 async fn import_postgres_billing_row(
     pool: &crate::driver::postgres::PostgresPool,
     row: &ExportRow,
+    column_cache: &mut BTreeMap<String, PostgresImportColumns>,
 ) -> Result<(), DataLayerError> {
-    let (table_name, payload) = billing_payload_table(row)?;
+    let (export_table_name, payload) = billing_payload_table(row)?;
+    let table_name = postgres_billing_table_name(&export_table_name)?;
+    let target_columns = postgres_import_columns_cached(pool, column_cache, table_name).await?;
     import_postgres_row(
         pool,
-        postgres_billing_table_name(&table_name)?,
+        table_name,
         "id",
         ExportDomain::Billing,
         &ExportRow {
             id: row.id.clone(),
             payload,
         },
+        &target_columns,
     )
     .await
 }
@@ -1002,9 +1264,11 @@ fn postgres_billing_table_name(table_name: &str) -> Result<&'static str, DataLay
 async fn import_postgres_wallet_row(
     pool: &crate::driver::postgres::PostgresPool,
     row: &ExportRow,
+    column_cache: &mut BTreeMap<String, PostgresImportColumns>,
 ) -> Result<(), DataLayerError> {
-    let (table_name, payload) = domain_payload_table(row, "wallet", Some("wallets"))?;
-    let (table_name, id_column) = postgres_wallet_table_name(&table_name)?;
+    let (export_table_name, payload) = domain_payload_table(row, "wallet", Some("wallets"))?;
+    let (table_name, id_column) = postgres_wallet_table_name(&export_table_name)?;
+    let target_columns = postgres_import_columns_cached(pool, column_cache, table_name).await?;
     import_postgres_row(
         pool,
         table_name,
@@ -1014,6 +1278,7 @@ async fn import_postgres_wallet_row(
             id: row.id.clone(),
             payload,
         },
+        &target_columns,
     )
     .await
 }
@@ -1476,14 +1741,17 @@ fn mysql_value_to_json(row: &sqlx::mysql::MySqlRow, index: usize) -> Result<Valu
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use serde_json::json;
 
     use super::{
         build_import_plan, decode_jsonl, encode_jsonl, export_mysql_core_jsonl, export_mysql_jsonl,
         export_postgres_core_jsonl, export_sqlite_core_jsonl, import_mysql_jsonl,
         import_postgres_jsonl, import_sqlite_jsonl, mysql_core_export_domains,
-        postgres_core_export_domains, sqlite_core_export_domains, DataExportManifest,
-        DataExportRecord, ExportDomain,
+        normalize_postgres_import_payload, postgres_core_export_domains,
+        sqlite_core_export_domains, DataExportManifest, DataExportRecord, ExportDomain, ExportRow,
+        PostgresImportColumn,
     };
     use crate::driver::postgres::{PostgresPoolConfig, PostgresPoolFactory};
     use crate::lifecycle::migrate::{
@@ -1594,6 +1862,101 @@ not-json"#,
 
         let err = encode_jsonl(&records).expect_err("duplicate id should fail");
         assert!(err.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    fn postgres_import_payload_normalizes_sqlite_values_for_target_columns() {
+        let target_columns = BTreeMap::from([
+            (
+                "id".to_string(),
+                postgres_column("character varying", "varchar"),
+            ),
+            (
+                "email_verified".to_string(),
+                postgres_column("boolean", "bool"),
+            ),
+            (
+                "created_at".to_string(),
+                postgres_column("timestamp with time zone", "timestamptz"),
+            ),
+            (
+                "allowed_models".to_string(),
+                postgres_column("json", "json"),
+            ),
+            (
+                "role".to_string(),
+                postgres_not_null_default_column("USER-DEFINED", "userrole"),
+            ),
+        ]);
+        let row = ExportRow {
+            id: "user-1".to_string(),
+            payload: json!({
+                "id": "user-1",
+                "email_verified": 1,
+                "created_at": 1,
+                "allowed_models": "[\"gpt-test\"]",
+                "role": null,
+                "legacy_nullable": null
+            }),
+        };
+
+        let normalized = normalize_postgres_import_payload(
+            "public.users",
+            ExportDomain::Users,
+            &row,
+            &target_columns,
+        )
+        .expect("postgres payload should normalize");
+
+        assert_eq!(normalized["email_verified"], json!(true));
+        assert_eq!(normalized["created_at"], json!("1970-01-01T00:00:01+00:00"));
+        assert_eq!(normalized["allowed_models"], json!(["gpt-test"]));
+        assert!(!normalized.contains_key("role"));
+        assert!(!normalized.contains_key("legacy_nullable"));
+    }
+
+    #[test]
+    fn postgres_import_payload_rejects_non_null_unknown_columns() {
+        let target_columns = BTreeMap::from([(
+            "id".to_string(),
+            postgres_column("character varying", "varchar"),
+        )]);
+        let row = ExportRow {
+            id: "user-1".to_string(),
+            payload: json!({
+                "id": "user-1",
+                "unexpected_column": "value"
+            }),
+        };
+
+        let err = normalize_postgres_import_payload(
+            "public.users",
+            ExportDomain::Users,
+            &row,
+            &target_columns,
+        )
+        .expect_err("non-null unknown columns should fail");
+
+        assert!(err.to_string().contains("unexpected_column"));
+        assert!(err.to_string().contains("does not exist"));
+    }
+
+    fn postgres_column(data_type: &str, udt_name: &str) -> PostgresImportColumn {
+        PostgresImportColumn {
+            data_type: data_type.to_ascii_lowercase(),
+            udt_name: udt_name.to_ascii_lowercase(),
+            is_nullable: true,
+            has_default: false,
+        }
+    }
+
+    fn postgres_not_null_default_column(data_type: &str, udt_name: &str) -> PostgresImportColumn {
+        PostgresImportColumn {
+            data_type: data_type.to_ascii_lowercase(),
+            udt_name: udt_name.to_ascii_lowercase(),
+            is_nullable: false,
+            has_default: true,
+        }
     }
 
     #[tokio::test]
