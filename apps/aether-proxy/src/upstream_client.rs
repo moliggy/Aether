@@ -1,12 +1,18 @@
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::future::Future;
 use std::io;
 use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use aether_contracts::{
+    ResolvedTransportProfile, TRANSPORT_BACKEND_HYPER_RUSTLS, TRANSPORT_BACKEND_REQWEST_RUSTLS,
+    TRANSPORT_HTTP_MODE_HTTP1_ONLY,
+};
 use bytes::Bytes;
 use futures_util::Stream;
 use http_body_util::combinators::UnsyncBoxBody;
@@ -36,6 +42,115 @@ type TlsStream = TokioIo<tokio_rustls::client::TlsStream<TcpStream>>;
 
 pub type UpstreamRequestBody = UnsyncBoxBody<Bytes, io::Error>;
 pub type UpstreamClient = Client<InstrumentedConnector, UpstreamRequestBody>;
+
+const DEFAULT_PROFILE_ID: &str = "default";
+const DEFAULT_BACKEND: &str = TRANSPORT_BACKEND_HYPER_RUSTLS;
+const DEFAULT_HTTP_MODE: &str = "auto";
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct UpstreamClientPoolKey {
+    pub provider_id: String,
+    pub endpoint_id: String,
+    pub key_id: String,
+    pub profile_id: String,
+    pub backend: String,
+    pub http_mode: String,
+}
+
+#[derive(Clone)]
+pub struct UpstreamClientPool {
+    config: Arc<Config>,
+    dns_cache: Arc<DnsCache>,
+    clients: Arc<Mutex<HashMap<UpstreamClientPoolKey, UpstreamClient>>>,
+}
+
+impl UpstreamClientPool {
+    pub fn new(config: Arc<Config>, dns_cache: Arc<DnsCache>) -> Self {
+        Self {
+            config,
+            dns_cache,
+            clients: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub fn get_or_build(&self, key: UpstreamClientPoolKey) -> Result<UpstreamClient, String> {
+        if let Some(client) = self
+            .clients
+            .lock()
+            .expect("client pool lock")
+            .get(&key)
+            .cloned()
+        {
+            return Ok(client);
+        }
+
+        validate_proxy_transport_backend(&key.backend)?;
+        let http1_only = key
+            .http_mode
+            .eq_ignore_ascii_case(TRANSPORT_HTTP_MODE_HTTP1_ONLY);
+        let client = build_upstream_client_with_protocol(
+            &self.config,
+            Arc::clone(&self.dns_cache),
+            http1_only,
+        );
+        self.clients
+            .lock()
+            .expect("client pool lock")
+            .insert(key, client.clone());
+        Ok(client)
+    }
+}
+
+pub fn upstream_client_pool_key(
+    provider_id: Option<&str>,
+    endpoint_id: Option<&str>,
+    key_id: Option<&str>,
+    profile: Option<&ResolvedTransportProfile>,
+    http1_only: bool,
+) -> UpstreamClientPoolKey {
+    let profile_http_mode = profile
+        .map(|profile| profile.http_mode.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_HTTP_MODE);
+    let http_mode = if http1_only {
+        TRANSPORT_HTTP_MODE_HTTP1_ONLY
+    } else {
+        profile_http_mode
+    };
+    UpstreamClientPoolKey {
+        provider_id: normalized_pool_key_part(provider_id),
+        endpoint_id: normalized_pool_key_part(endpoint_id),
+        key_id: normalized_pool_key_part(key_id),
+        profile_id: profile
+            .map(|profile| profile.profile_id.trim())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(DEFAULT_PROFILE_ID)
+            .to_string(),
+        backend: profile
+            .map(|profile| profile.backend.trim())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(DEFAULT_BACKEND)
+            .to_string(),
+        http_mode: http_mode.to_string(),
+    }
+}
+
+fn normalized_pool_key_part(value: Option<&str>) -> String {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("-")
+        .to_string()
+}
+
+fn validate_proxy_transport_backend(backend: &str) -> Result<(), String> {
+    if backend.eq_ignore_ascii_case(TRANSPORT_BACKEND_HYPER_RUSTLS)
+        || backend.eq_ignore_ascii_case(TRANSPORT_BACKEND_REQWEST_RUSTLS)
+    {
+        return Ok(());
+    }
+    Err(format!("unsupported transport profile backend: {backend}"))
+}
 
 pub fn stream_request_body<S>(stream: S) -> UpstreamRequestBody
 where
@@ -179,17 +294,6 @@ impl Service<Uri> for InstrumentedConnector {
             }
         })
     }
-}
-
-pub fn build_upstream_client(config: &Config, dns_cache: Arc<DnsCache>) -> UpstreamClient {
-    build_upstream_client_with_protocol(config, dns_cache, false)
-}
-
-pub fn build_http1_only_upstream_client(
-    config: &Config,
-    dns_cache: Arc<DnsCache>,
-) -> UpstreamClient {
-    build_upstream_client_with_protocol(config, dns_cache, true)
 }
 
 fn build_upstream_client_with_protocol(
@@ -424,6 +528,7 @@ impl rt::Write for MaybeHttpsStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aether_contracts::ResolvedTransportProfile;
     use hyper::Response;
 
     #[test]
@@ -475,5 +580,37 @@ mod tests {
         assert_eq!(timing.tls_ms, 25);
         assert_eq!(timing.response_wait_ms, 320);
         assert!(!timing.connection_reused);
+    }
+
+    #[test]
+    fn upstream_client_pool_key_includes_profile_identity() {
+        let profile = ResolvedTransportProfile {
+            profile_id: "profile-a".to_string(),
+            backend: TRANSPORT_BACKEND_REQWEST_RUSTLS.to_string(),
+            http_mode: "auto".to_string(),
+            pool_scope: "key".to_string(),
+            extra: None,
+        };
+        let pool_key = upstream_client_pool_key(
+            Some("provider-1"),
+            Some("endpoint-1"),
+            Some("key-1"),
+            Some(&profile),
+            false,
+        );
+
+        assert_eq!(pool_key.provider_id, "provider-1");
+        assert_eq!(pool_key.endpoint_id, "endpoint-1");
+        assert_eq!(pool_key.key_id, "key-1");
+        assert_eq!(pool_key.profile_id, "profile-a");
+        assert_eq!(pool_key.backend, TRANSPORT_BACKEND_REQWEST_RUSTLS);
+        assert_eq!(pool_key.http_mode, "auto");
+    }
+
+    #[test]
+    fn upstream_client_pool_rejects_unsupported_backend() {
+        let error = validate_proxy_transport_backend("utls").unwrap_err();
+
+        assert!(error.contains("unsupported transport profile backend"));
     }
 }

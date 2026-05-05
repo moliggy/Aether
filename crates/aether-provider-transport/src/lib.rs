@@ -46,10 +46,10 @@ pub use generic_oauth::{
 };
 pub use headers::{should_skip_request_header, should_skip_upstream_passthrough_header};
 pub use network::{
-    resolve_transport_execution_timeouts, resolve_transport_proxy_snapshot,
-    resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
-    transport_proxy_is_locally_supported, TransportTunnelAffinityLookup,
-    TransportTunnelAttachmentOwner,
+    resolve_transport_execution_timeouts, resolve_transport_profile,
+    resolve_transport_proxy_snapshot, resolve_transport_proxy_snapshot_with_tunnel_affinity,
+    resolve_transport_tls_profile, transport_proxy_is_locally_supported,
+    TransportTunnelAffinityLookup, TransportTunnelAttachmentOwner,
 };
 pub use oauth_refresh::{
     supports_local_oauth_request_auth_resolution, CachedOAuthEntry, LocalOAuthHttpExecutor,

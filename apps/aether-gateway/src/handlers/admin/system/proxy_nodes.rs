@@ -1261,12 +1261,16 @@ fn build_tunnel_probe_relay_envelope(
     timeout_secs: u64,
 ) -> Result<Vec<u8>, String> {
     let meta = crate::tunnel::tunnel_protocol::RequestMeta {
+        provider_id: None,
+        endpoint_id: None,
+        key_id: None,
         method: "GET".to_string(),
         url: probe_url.trim().to_string(),
         headers: std::collections::HashMap::new(),
         timeout: timeout_secs,
         follow_redirects: Some(false),
         http1_only: false,
+        transport_profile: None,
     };
     let meta_bytes = serde_json::to_vec(&meta)
         .map_err(|error| format!("encode tunnel probe metadata failed: {error}"))?;

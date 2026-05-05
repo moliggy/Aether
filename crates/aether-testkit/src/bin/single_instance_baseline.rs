@@ -257,7 +257,7 @@ fn execution_plan(url: String, stream: bool) -> ExecutionPlan {
         provider_api_format: "openai:chat".to_string(),
         model_name: Some("gpt-5".to_string()),
         proxy: None,
-        tls_profile: None,
+        transport_profile: None,
         timeouts: Some(ExecutionTimeouts {
             connect_ms: Some(2_000),
             read_ms: Some(10_000),

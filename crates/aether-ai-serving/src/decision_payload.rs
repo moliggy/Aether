@@ -4,7 +4,7 @@ use aether_ai_formats::api::{
     ExecutionRuntimeAuthContext, EXECUTION_RUNTIME_STREAM_DECISION_ACTION,
     EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
 };
-use aether_contracts::{ExecutionTimeouts, ProxySnapshot};
+use aether_contracts::{ExecutionTimeouts, ProxySnapshot, ResolvedTransportProfile};
 
 use crate::{AiExecutionDecision, ConversionMode, ExecutionStrategy};
 
@@ -34,7 +34,7 @@ pub struct AiExecutionDecisionResponseParts {
     pub provider_request_body_base64: Option<String>,
     pub content_type: Option<String>,
     pub proxy: Option<ProxySnapshot>,
-    pub tls_profile: Option<String>,
+    pub transport_profile: Option<ResolvedTransportProfile>,
     pub timeouts: Option<ExecutionTimeouts>,
     pub upstream_is_stream: bool,
     pub report_kind: Option<String>,
@@ -74,7 +74,7 @@ pub fn build_ai_execution_decision_response(
         provider_request_body_base64: parts.provider_request_body_base64,
         content_type: parts.content_type,
         proxy: parts.proxy,
-        tls_profile: parts.tls_profile,
+        transport_profile: parts.transport_profile,
         timeouts: parts.timeouts,
         upstream_is_stream: parts.upstream_is_stream,
         report_kind: parts.report_kind,

@@ -2504,7 +2504,7 @@ mod tests {
             provider_api_format: "openai:responses".into(),
             model_name: Some("gpt-5.4".into()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: Some(ExecutionTimeouts {
                 connect_ms: Some(5_000),
                 total_ms: Some(5_000),
@@ -2625,7 +2625,7 @@ mod tests {
             provider_api_format: "openai:responses".into(),
             model_name: Some("gpt-5.4".into()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: Some(ExecutionTimeouts {
                 connect_ms: Some(5_000),
                 total_ms: Some(5_000),
@@ -2733,7 +2733,7 @@ mod tests {
             provider_api_format: "openai:image".into(),
             model_name: Some("gpt-image-1".into()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: Some(ExecutionTimeouts {
                 connect_ms: Some(5_000),
                 total_ms: Some(5_000),
@@ -2822,7 +2822,7 @@ mod tests {
             provider_api_format: "openai:chat".into(),
             model_name: Some("gpt-5".into()),
             proxy: Some(tunnel_proxy_snapshot("http://127.0.0.1:1".to_string())),
-            tls_profile: None,
+            transport_profile: None,
             timeouts: Some(ExecutionTimeouts {
                 connect_ms: Some(5_000),
                 total_ms: Some(5_000),
@@ -2951,7 +2951,7 @@ mod tests {
             provider_api_format: "openai:chat".into(),
             model_name: Some("gpt-5".into()),
             proxy: Some(tunnel_proxy_snapshot("http://127.0.0.1:1".to_string())),
-            tls_profile: None,
+            transport_profile: None,
             timeouts: Some(ExecutionTimeouts {
                 connect_ms: Some(5_000),
                 total_ms: Some(5_000),

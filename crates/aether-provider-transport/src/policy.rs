@@ -6,7 +6,7 @@ use super::provider_types::{
 use super::snapshot::GatewayProviderTransportSnapshot;
 use super::{
     body_rules_are_locally_supported, header_rules_are_locally_supported,
-    resolve_transport_tls_profile, supports_local_oauth_request_auth_resolution,
+    resolve_transport_profile, supports_local_oauth_request_auth_resolution,
     transport_proxy_is_locally_supported,
 };
 
@@ -76,7 +76,7 @@ pub fn local_openai_chat_transport_unsupported_reason(
     if !transport_proxy_is_locally_supported(transport) {
         return Some("transport_proxy_unsupported");
     }
-    if transport.key.fingerprint.is_some() && resolve_transport_tls_profile(transport).is_none() {
+    if transport.key.fingerprint.is_some() && resolve_transport_profile(transport).is_none() {
         return Some("transport_tls_profile_unsupported");
     }
     if !provider_type_supports_local_openai_chat_transport(&transport.provider.provider_type) {
@@ -175,8 +175,7 @@ fn local_same_format_transport_unsupported_reason(
         if !transport_proxy_is_locally_supported(transport) {
             return Some("transport_proxy_unsupported");
         }
-        if transport.key.fingerprint.is_some() && resolve_transport_tls_profile(transport).is_none()
-        {
+        if transport.key.fingerprint.is_some() && resolve_transport_profile(transport).is_none() {
             return Some("transport_tls_profile_unsupported");
         }
     } else if transport.provider.proxy.is_some()

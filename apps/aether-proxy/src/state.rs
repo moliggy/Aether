@@ -13,17 +13,15 @@ use crate::config::Config;
 use crate::registration::client::AetherClient;
 use crate::runtime::SharedDynamicConfig;
 use crate::target_filter::DnsCache;
-use crate::upstream_client::UpstreamClient;
+use crate::upstream_client::UpstreamClientPool;
 
 /// Central application state shared across all servers/tunnels.
 pub struct AppState {
     pub config: Arc<Config>,
     /// DNS cache for upstream target resolution (shared).
     pub dns_cache: Arc<DnsCache>,
-    /// Hyper client for tunnel upstream requests with validated DNS and connection timing.
-    pub upstream_client: UpstreamClient,
-    /// Dedicated Hyper client that forces HTTP/1.1 for upstreams that break on H2/ALPN.
-    pub upstream_http1_client: UpstreamClient,
+    /// Profile-keyed upstream client pool used by tunnel requests.
+    pub upstream_client_pool: UpstreamClientPool,
     /// Shared TLS config for tunnel WebSocket connections (avoids re-parsing root CAs on each reconnect).
     pub tunnel_tls_config: Arc<rustls::ClientConfig>,
     /// Optional per-process stream admission gate.

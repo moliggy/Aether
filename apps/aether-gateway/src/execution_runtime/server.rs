@@ -352,6 +352,7 @@ impl IntoResponse for ExecutionRuntimeAppError {
                 | ExecutionRuntimeTransportError::InvalidHeaderName(_)
                 | ExecutionRuntimeTransportError::InvalidHeaderValue(_)
                 | ExecutionRuntimeTransportError::InvalidProxy(_)
+                | ExecutionRuntimeTransportError::UnsupportedTransportProfile(_)
                 | ExecutionRuntimeTransportError::BodyEncode(_),
             ) => StatusCode::BAD_REQUEST,
             ExecutionRuntimeServerError::Transport(
@@ -422,7 +423,7 @@ mod tests {
             provider_api_format: "openai:chat".into(),
             model_name: Some("gpt-4.1".into()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: Some(ExecutionTimeouts {
                 connect_ms: Some(5_000),
                 total_ms: Some(30_000),

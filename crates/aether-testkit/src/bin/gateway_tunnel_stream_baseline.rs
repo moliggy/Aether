@@ -100,6 +100,10 @@ fn relay_envelope() -> Vec<u8> {
         timeout: 30,
         follow_redirects: None,
         http1_only: false,
+        provider_id: None,
+        endpoint_id: None,
+        key_id: None,
+        transport_profile: None,
     };
     let meta_json = serde_json::to_vec(&meta).expect("tunnel relay metadata should serialize");
     let body = br#"{"model":"gpt-5","messages":[{"role":"user","content":"hello"}]}"#;

@@ -64,7 +64,7 @@ fn missing_exact_provider_request_payload(decision_kind: &str) -> AiExecutionDec
         provider_request_body_base64: None,
         content_type: Some("application/json".to_string()),
         proxy: None,
-        tls_profile: None,
+        transport_profile: None,
         timeouts: None,
         upstream_is_stream: false,
         report_kind: Some("openai_chat_sync_success".to_string()),
@@ -806,7 +806,7 @@ fn bypasses_execution_runtime_for_codex_plan_variant() {
         provider_api_format: "openai:responses".to_string(),
         model_name: Some("gpt-5.4".to_string()),
         proxy: None,
-        tls_profile: None,
+        transport_profile: None,
         timeouts: None,
     };
 

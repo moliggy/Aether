@@ -59,6 +59,47 @@ pub struct ProxySnapshot {
     pub extra: Option<Value>,
 }
 
+pub const TRANSPORT_BACKEND_REQWEST_RUSTLS: &str = "reqwest_rustls";
+pub const TRANSPORT_BACKEND_HYPER_RUSTLS: &str = "hyper_rustls";
+pub const TRANSPORT_HTTP_MODE_AUTO: &str = "auto";
+pub const TRANSPORT_HTTP_MODE_HTTP1_ONLY: &str = "http1_only";
+pub const TRANSPORT_POOL_SCOPE_KEY: &str = "key";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ResolvedTransportProfile {
+    pub profile_id: String,
+    pub backend: String,
+    pub http_mode: String,
+    pub pool_scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra: Option<Value>,
+}
+
+impl Default for ResolvedTransportProfile {
+    fn default() -> Self {
+        Self {
+            profile_id: String::new(),
+            backend: TRANSPORT_BACKEND_REQWEST_RUSTLS.to_string(),
+            http_mode: TRANSPORT_HTTP_MODE_AUTO.to_string(),
+            pool_scope: TRANSPORT_POOL_SCOPE_KEY.to_string(),
+            extra: None,
+        }
+    }
+}
+
+impl ResolvedTransportProfile {
+    pub fn from_legacy_tls_profile(profile_id: impl Into<String>) -> Self {
+        Self {
+            profile_id: profile_id.into(),
+            backend: TRANSPORT_BACKEND_REQWEST_RUSTLS.to_string(),
+            http_mode: TRANSPORT_HTTP_MODE_AUTO.to_string(),
+            pool_scope: TRANSPORT_POOL_SCOPE_KEY.to_string(),
+            extra: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExecutionPlan {
     pub request_id: String,
@@ -88,7 +129,7 @@ pub struct ExecutionPlan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy: Option<ProxySnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tls_profile: Option<String>,
+    pub transport_profile: Option<ResolvedTransportProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeouts: Option<ExecutionTimeouts>,
 }
@@ -117,7 +158,7 @@ mod tests {
             provider_api_format: "openai:chat".into(),
             model_name: Some("gpt-test".into()),
             proxy: None,
-            tls_profile: Some("chrome".into()),
+            transport_profile: None,
             timeouts: Some(ExecutionTimeouts {
                 connect_ms: Some(30_000),
                 read_ms: Some(3_600_000),

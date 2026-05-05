@@ -103,7 +103,7 @@ pub(super) async fn execute_kiro_quota_plan(
         provider_api_format: "kiro:usage".to_string(),
         model_name: Some("kiro-usage-limits".to_string()),
         proxy,
-        tls_profile: state.resolve_transport_tls_profile(transport),
+        transport_profile: state.resolve_transport_profile(transport),
         timeouts,
     };
 

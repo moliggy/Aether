@@ -61,7 +61,7 @@ async fn gateway_executes_claude_code_cli_sync_via_local_decision_gate_with_loca
         metadata_source: String,
         assistant_content: serde_json::Value,
         proxy_node_id: String,
-        tls_profile: String,
+        transport_profile_id: String,
     }
 
     fn hash_api_key(value: &str) -> String {
@@ -393,8 +393,9 @@ async fn gateway_executes_claude_code_cli_sync_via_local_decision_gate_with_loca
                         .and_then(|value| value.as_str())
                         .unwrap_or_default()
                         .to_string(),
-                    tls_profile: payload
-                        .get("tls_profile")
+                    transport_profile_id: payload
+                        .get("transport_profile")
+                        .and_then(|value| value.get("profile_id"))
                         .and_then(|value| value.as_str())
                         .unwrap_or_default()
                         .to_string(),
@@ -559,7 +560,7 @@ async fn gateway_executes_claude_code_cli_sync_via_local_decision_gate_with_loca
         "proxy-node-claude-code-cli-local"
     );
     assert_eq!(
-        seen_execution_runtime_request.tls_profile,
+        seen_execution_runtime_request.transport_profile_id,
         "claude_code_nodejs"
     );
 

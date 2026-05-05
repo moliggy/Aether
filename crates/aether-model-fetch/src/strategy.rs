@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use aether_contracts::{ExecutionPlan, ExecutionResult, RequestBody};
 use aether_provider_transport::{
     is_vertex_api_key_transport_context, resolve_transport_execution_timeouts,
-    resolve_transport_tls_profile, GatewayProviderTransportSnapshot,
+    resolve_transport_profile, GatewayProviderTransportSnapshot,
 };
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine as _;
@@ -499,6 +499,8 @@ async fn exchange_vertex_service_account_token(
     let body = format!(
         "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion={assertion}"
     );
+    let transport_profile = resolve_transport_profile(transport);
+
     let plan = ExecutionPlan {
         request_id: format!("req-model-fetch-{}-vertex-sa-token", transport.key.id),
         candidate_id: None,
@@ -524,7 +526,7 @@ async fn exchange_vertex_service_account_token(
         provider_api_format: "vertex_ai:service_account_token".to_string(),
         model_name: Some("token".to_string()),
         proxy: runtime.resolve_model_fetch_proxy(transport).await,
-        tls_profile: resolve_transport_tls_profile(transport),
+        transport_profile,
         timeouts: resolve_transport_execution_timeouts(transport),
     };
     let result = runtime.execute_model_fetch_execution_plan(&plan).await?;

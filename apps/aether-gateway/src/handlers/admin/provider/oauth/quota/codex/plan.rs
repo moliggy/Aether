@@ -97,7 +97,7 @@ pub(super) async fn execute_codex_quota_plan(
         provider_api_format: "openai:responses".to_string(),
         model_name: Some("codex-wham-usage".to_string()),
         proxy,
-        tls_profile: state.resolve_transport_tls_profile(transport),
+        transport_profile: state.resolve_transport_profile(transport),
         timeouts,
     };
     execute_provider_quota_plan(state, transport, plan, "codex").await

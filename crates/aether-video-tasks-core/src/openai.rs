@@ -235,7 +235,7 @@ impl OpenAiVideoTaskSeed {
                     .clone()
                     .or_else(|| self.transport.model_name.clone()),
                 proxy: self.transport.proxy.clone(),
-                tls_profile: self.transport.tls_profile.clone(),
+                transport_profile: None,
                 timeouts: self.transport.timeouts.clone(),
             },
         )))
@@ -340,7 +340,7 @@ impl OpenAiVideoTaskSeed {
                 provider_api_format: "openai:video".to_string(),
                 model_name: model_name.clone(),
                 proxy: self.transport.proxy.clone(),
-                tls_profile: self.transport.tls_profile.clone(),
+                transport_profile: None,
                 timeouts: self.transport.timeouts.clone(),
             },
             report_kind: Some("openai_video_delete_sync_finalize".to_string()),
@@ -405,7 +405,7 @@ impl OpenAiVideoTaskSeed {
                 .clone()
                 .or_else(|| self.transport.model_name.clone()),
             proxy: self.transport.proxy.clone(),
-            tls_profile: self.transport.tls_profile.clone(),
+            transport_profile: None,
             timeouts: self.transport.timeouts.clone(),
         })
     }
@@ -466,7 +466,7 @@ impl OpenAiVideoTaskSeed {
                 provider_api_format: "openai:video".to_string(),
                 model_name: model_name.clone(),
                 proxy: self.transport.proxy.clone(),
-                tls_profile: self.transport.tls_profile.clone(),
+                transport_profile: None,
                 timeouts: self.transport.timeouts.clone(),
             },
             report_kind: Some("openai_video_cancel_sync_finalize".to_string()),
@@ -561,7 +561,7 @@ impl OpenAiVideoTaskSeed {
                 provider_api_format: "openai:video".to_string(),
                 model_name,
                 proxy: self.transport.proxy.clone(),
-                tls_profile: self.transport.tls_profile.clone(),
+                transport_profile: None,
                 timeouts: self.transport.timeouts.clone(),
             },
             report_kind: Some("openai_video_remix_sync_finalize".to_string()),

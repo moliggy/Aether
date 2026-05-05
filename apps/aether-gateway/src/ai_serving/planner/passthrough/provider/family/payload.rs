@@ -18,7 +18,7 @@ use crate::ai_serving::planner::{
     build_ai_execution_decision_response, AiExecutionDecisionResponseParts,
 };
 use crate::ai_serving::transport::{
-    resolve_transport_execution_timeouts, resolve_transport_tls_profile,
+    resolve_transport_execution_timeouts, resolve_transport_profile,
 };
 use crate::{
     append_execution_contract_fields_to_value, append_local_failover_policy_to_value,
@@ -66,7 +66,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
     let proxy = state
         .resolve_transport_proxy_snapshot_with_tunnel_affinity(&resolved.transport)
         .await;
-    let tls_profile = resolve_transport_tls_profile(&resolved.transport);
+    let transport_profile = resolve_transport_profile(&resolved.transport);
     let mut extra_fields = serde_json::Map::new();
     if let Some(proxy_value) =
         build_request_trace_proxy_value(Some(&resolved.transport), proxy.as_ref())
@@ -173,7 +173,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
             provider_request_body_base64: None,
             content_type: Some("application/json".to_string()),
             proxy,
-            tls_profile,
+            transport_profile,
             timeouts: resolve_transport_execution_timeouts(&transport),
             upstream_is_stream,
             report_kind: Some(report_kind.to_string()),

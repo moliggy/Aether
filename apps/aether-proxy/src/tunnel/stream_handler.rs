@@ -726,6 +726,7 @@ fn resolve_redirect<B>(
 async fn execute_upstream_request(
     state: &AppState,
     server: &ServerContext,
+    meta: &RequestMeta,
     current_url: &url::Url,
     method: hyper::Method,
     headers: &[(String, String)],
@@ -756,11 +757,14 @@ async fn execute_upstream_request(
     }
     let dns_ms = dns_start.elapsed().as_millis() as u64;
 
-    let client = if http1_only {
-        &state.upstream_http1_client
-    } else {
-        &state.upstream_client
-    };
+    let client_key = upstream_client::upstream_client_pool_key(
+        meta.provider_id.as_deref(),
+        meta.endpoint_id.as_deref(),
+        meta.key_id.as_deref(),
+        meta.transport_profile.as_ref(),
+        http1_only,
+    );
+    let client = state.upstream_client_pool.get_or_build(client_key)?;
 
     let mut request = hyper::Request::builder()
         .method(method)
@@ -1026,15 +1030,16 @@ async fn relay_upstream_response(
 }
 
 #[cfg(test)]
-fn upstream_client_for_request<'a>(
-    state: &'a AppState,
+fn upstream_client_pool_key_for_request(
     meta: &RequestMeta,
-) -> &'a upstream_client::UpstreamClient {
-    if meta.http1_only {
-        &state.upstream_http1_client
-    } else {
-        &state.upstream_client
-    }
+) -> upstream_client::UpstreamClientPoolKey {
+    upstream_client::upstream_client_pool_key(
+        meta.provider_id.as_deref(),
+        meta.endpoint_id.as_deref(),
+        meta.key_id.as_deref(),
+        meta.transport_profile.as_ref(),
+        meta.http1_only,
+    )
 }
 
 /// Handle a single stream: receive body, execute upstream, send response.
@@ -1235,6 +1240,7 @@ async fn handle_stream_inner(
         let response_ctx = match execute_upstream_request(
             state,
             server,
+            &meta,
             &current_url,
             current_method.clone(),
             &current_headers,
@@ -1671,19 +1677,40 @@ mod tests {
 
     #[test]
     fn selects_http1_only_client_when_request_metadata_requires_it() {
-        let state = sample_state(None, None);
         let default_meta = sample_request_meta();
-        assert!(std::ptr::eq(
-            upstream_client_for_request(state.as_ref(), &default_meta),
-            &state.upstream_client
-        ));
+        assert_eq!(
+            upstream_client_pool_key_for_request(&default_meta).http_mode,
+            "auto"
+        );
 
         let mut http1_meta = sample_request_meta();
         http1_meta.http1_only = true;
-        assert!(std::ptr::eq(
-            upstream_client_for_request(state.as_ref(), &http1_meta),
-            &state.upstream_http1_client
-        ));
+        assert_eq!(
+            upstream_client_pool_key_for_request(&http1_meta).http_mode,
+            "http1_only"
+        );
+    }
+
+    #[test]
+    fn upstream_client_pool_key_isolates_accounts() {
+        let mut first = sample_request_meta();
+        first.provider_id = Some("provider-1".to_string());
+        first.endpoint_id = Some("endpoint-1".to_string());
+        first.key_id = Some("key-1".to_string());
+        first.transport_profile = Some(aether_contracts::ResolvedTransportProfile {
+            profile_id: "profile-a".to_string(),
+            backend: "reqwest_rustls".to_string(),
+            http_mode: "auto".to_string(),
+            pool_scope: "key".to_string(),
+            extra: None,
+        });
+        let mut second = first.clone();
+        second.key_id = Some("key-2".to_string());
+
+        assert_ne!(
+            upstream_client_pool_key_for_request(&first),
+            upstream_client_pool_key_for_request(&second)
+        );
     }
 
     #[test]
@@ -2210,12 +2237,16 @@ mod tests {
 
     fn sample_request_meta() -> RequestMeta {
         RequestMeta {
+            provider_id: None,
+            endpoint_id: None,
+            key_id: None,
             method: "GET".to_string(),
             url: "https://example.com/ok".to_string(),
             headers: HashMap::new(),
             timeout: 30,
             follow_redirects: None,
             http1_only: false,
+            transport_profile: None,
         }
     }
 
@@ -2226,15 +2257,12 @@ mod tests {
         ensure_rustls_provider();
         let config = Arc::new(sample_config());
         let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(60), 128));
-        let upstream_client =
-            upstream_client::build_upstream_client(&config, Arc::clone(&dns_cache));
-        let upstream_http1_client =
-            upstream_client::build_http1_only_upstream_client(&config, Arc::clone(&dns_cache));
+        let upstream_client_pool =
+            upstream_client::UpstreamClientPool::new(Arc::clone(&config), Arc::clone(&dns_cache));
         Arc::new(AppState {
             config,
             dns_cache,
-            upstream_client,
-            upstream_http1_client,
+            upstream_client_pool,
             tunnel_tls_config: Arc::new(build_tls_config()),
             stream_gate,
             distributed_stream_gate,
@@ -2259,15 +2287,12 @@ mod tests {
     fn sample_state_with_config(config: Config) -> Arc<AppState> {
         let config = Arc::new(config);
         let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(60), 128));
-        let upstream_client =
-            upstream_client::build_upstream_client(&config, Arc::clone(&dns_cache));
-        let upstream_http1_client =
-            upstream_client::build_http1_only_upstream_client(&config, Arc::clone(&dns_cache));
+        let upstream_client_pool =
+            upstream_client::UpstreamClientPool::new(Arc::clone(&config), Arc::clone(&dns_cache));
         Arc::new(AppState {
             config,
             dns_cache,
-            upstream_client,
-            upstream_http1_client,
+            upstream_client_pool,
             tunnel_tls_config: Arc::new(build_tls_config()),
             stream_gate: None,
             distributed_stream_gate: None,

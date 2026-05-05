@@ -1,7 +1,7 @@
 use super::super::snapshot::GatewayProviderTransportSnapshot;
 use super::super::{
     body_rules_are_locally_supported, header_rules_are_locally_supported,
-    resolve_transport_tls_profile, supports_local_oauth_request_auth_resolution,
+    resolve_transport_profile, supports_local_oauth_request_auth_resolution,
     transport_proxy_is_locally_supported,
 };
 use super::auth::supports_local_claude_code_auth;
@@ -52,7 +52,7 @@ pub fn local_claude_code_transport_unsupported_reason_with_network(
     if !transport_proxy_is_locally_supported(transport) {
         return Some("transport_proxy_unsupported");
     }
-    if transport.key.fingerprint.is_some() && resolve_transport_tls_profile(transport).is_none() {
+    if transport.key.fingerprint.is_some() && resolve_transport_profile(transport).is_none() {
         return Some("transport_tls_profile_unsupported");
     }
 

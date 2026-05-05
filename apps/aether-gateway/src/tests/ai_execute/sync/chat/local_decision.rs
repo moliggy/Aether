@@ -2605,7 +2605,7 @@ async fn gateway_executes_openai_chat_sync_with_custom_path_via_local_decision_g
         metadata_source: String,
         temperature_present: bool,
         proxy_node_id: String,
-        tls_profile: String,
+        transport_profile_id: String,
     }
 
     fn hash_api_key(value: &str) -> String {
@@ -2890,8 +2890,9 @@ async fn gateway_executes_openai_chat_sync_with_custom_path_via_local_decision_g
                         .and_then(|value| value.as_str())
                         .unwrap_or_default()
                         .to_string(),
-                    tls_profile: payload
-                        .get("tls_profile")
+                    transport_profile_id: payload
+                        .get("transport_profile")
+                        .and_then(|value| value.get("profile_id"))
                         .and_then(|value| value.as_str())
                         .unwrap_or_default()
                         .to_string(),
@@ -3018,7 +3019,10 @@ async fn gateway_executes_openai_chat_sync_with_custom_path_via_local_decision_g
         seen_execution_runtime_request.proxy_node_id,
         "proxy-node-openai-custom-path"
     );
-    assert_eq!(seen_execution_runtime_request.tls_profile, "chrome_136");
+    assert_eq!(
+        seen_execution_runtime_request.transport_profile_id,
+        "chrome_136"
+    );
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert!(

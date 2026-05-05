@@ -37,7 +37,7 @@ async fn gateway_executes_kiro_claude_cli_stream_via_local_provider_catalog_cand
         current_content: String,
         debug_tag: String,
         proxy_node_id: String,
-        tls_profile: String,
+        transport_profile_id: String,
     }
 
     fn crc32(data: &[u8]) -> u32 {
@@ -404,8 +404,8 @@ async fn gateway_executes_kiro_claude_cli_stream_via_local_provider_catalog_cand
                             .and_then(|value| value.as_str())
                             .unwrap_or_default()
                             .to_string(),
-                        tls_profile: payload
-                            .get("tls_profile")
+                        transport_profile_id: payload
+                            .get("transport_profile").and_then(|value| value.get("profile_id"))
                             .and_then(|value| value.as_str())
                             .unwrap_or_default()
                             .to_string(),
@@ -549,7 +549,10 @@ async fn gateway_executes_kiro_claude_cli_stream_via_local_provider_catalog_cand
         seen_execution_runtime_request.proxy_node_id,
         "proxy-node-kiro-cli-local-stream"
     );
-    assert_eq!(seen_execution_runtime_request.tls_profile, "chrome_136");
+    assert_eq!(
+        seen_execution_runtime_request.transport_profile_id,
+        "chrome_136"
+    );
 
     let stored_candidates = request_candidate_repository
         .list_by_request_id("trace-kiro-cli-local-stream-123")
@@ -588,7 +591,7 @@ async fn gateway_executes_claude_cli_stream_via_local_decision_gate_without_wait
         metadata_mode: String,
         metadata_source: String,
         proxy_node_id: String,
-        tls_profile: String,
+        transport_profile_id: String,
     }
 
     fn hash_api_key(value: &str) -> String {
@@ -866,8 +869,8 @@ async fn gateway_executes_claude_cli_stream_via_local_decision_gate_without_wait
                             .and_then(|value| value.as_str())
                             .unwrap_or_default()
                             .to_string(),
-                        tls_profile: payload
-                            .get("tls_profile")
+                        transport_profile_id: payload
+                            .get("transport_profile").and_then(|value| value.get("profile_id"))
                             .and_then(|value| value.as_str())
                             .unwrap_or_default()
                             .to_string(),
@@ -992,7 +995,10 @@ async fn gateway_executes_claude_cli_stream_via_local_decision_gate_without_wait
         seen_execution_runtime_request.proxy_node_id,
         "proxy-node-claude-cli-local"
     );
-    assert_eq!(seen_execution_runtime_request.tls_profile, "chrome_136");
+    assert_eq!(
+        seen_execution_runtime_request.transport_profile_id,
+        "chrome_136"
+    );
 
     let stored_candidates = request_candidate_repository
         .list_by_request_id("trace-claude-cli-local-stream-123")
@@ -1037,7 +1043,7 @@ async fn gateway_executes_claude_code_cli_stream_via_local_decision_gate_with_lo
         metadata_source: String,
         assistant_content: serde_json::Value,
         proxy_node_id: String,
-        tls_profile: String,
+        transport_profile_id: String,
     }
 
     fn hash_api_key(value: &str) -> String {
@@ -1365,8 +1371,8 @@ async fn gateway_executes_claude_code_cli_stream_via_local_decision_gate_with_lo
                             .and_then(|value| value.as_str())
                             .unwrap_or_default()
                             .to_string(),
-                        tls_profile: payload
-                            .get("tls_profile")
+                        transport_profile_id: payload
+                            .get("transport_profile").and_then(|value| value.get("profile_id"))
                             .and_then(|value| value.as_str())
                             .unwrap_or_default()
                             .to_string(),
@@ -1517,7 +1523,7 @@ async fn gateway_executes_claude_code_cli_stream_via_local_decision_gate_with_lo
         "proxy-node-claude-code-cli-local"
     );
     assert_eq!(
-        seen_execution_runtime_request.tls_profile,
+        seen_execution_runtime_request.transport_profile_id,
         "claude_code_nodejs"
     );
 
@@ -1557,7 +1563,7 @@ async fn gateway_executes_claude_chat_stream_via_local_decision_gate_with_local_
         metadata_mode: String,
         metadata_source: String,
         proxy_node_id: String,
-        tls_profile: String,
+        transport_profile_id: String,
     }
 
     fn hash_api_key(value: &str) -> String {
@@ -1838,8 +1844,8 @@ async fn gateway_executes_claude_chat_stream_via_local_decision_gate_with_local_
                             .and_then(|value| value.as_str())
                             .unwrap_or_default()
                             .to_string(),
-                        tls_profile: payload
-                            .get("tls_profile")
+                        transport_profile_id: payload
+                            .get("transport_profile").and_then(|value| value.get("profile_id"))
                             .and_then(|value| value.as_str())
                             .unwrap_or_default()
                             .to_string(),
@@ -1950,7 +1956,10 @@ async fn gateway_executes_claude_chat_stream_via_local_decision_gate_with_local_
         seen_execution_runtime_request.proxy_node_id,
         "proxy-node-claude-chat-stream"
     );
-    assert_eq!(seen_execution_runtime_request.tls_profile, "chrome_136");
+    assert_eq!(
+        seen_execution_runtime_request.transport_profile_id,
+        "chrome_136"
+    );
 
     let stored_candidates = request_candidate_repository
         .list_by_request_id("trace-claude-chat-local-stream-123")

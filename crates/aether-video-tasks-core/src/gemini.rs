@@ -168,7 +168,7 @@ impl GeminiVideoTaskSeed {
             provider_api_format: "gemini:video".to_string(),
             model_name: Some(self.model.clone()),
             proxy: self.transport.proxy.clone(),
-            tls_profile: self.transport.tls_profile.clone(),
+            transport_profile: None,
             timeouts: self.transport.timeouts.clone(),
         })
     }
@@ -228,7 +228,7 @@ impl GeminiVideoTaskSeed {
                 provider_api_format: "gemini:video".to_string(),
                 model_name: Some(self.model.clone()),
                 proxy: self.transport.proxy.clone(),
-                tls_profile: self.transport.tls_profile.clone(),
+                transport_profile: None,
                 timeouts: self.transport.timeouts.clone(),
             },
             report_kind: Some("gemini_video_cancel_sync_finalize".to_string()),

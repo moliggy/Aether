@@ -364,7 +364,7 @@ mod tests {
             provider_api_format: "openai:chat".to_string(),
             model_name: Some("gpt-5".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         }
     }

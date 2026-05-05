@@ -2483,7 +2483,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.4".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
 
@@ -2550,7 +2550,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.4".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
 
@@ -2595,7 +2595,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.4".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
 
@@ -2652,7 +2652,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.4".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
         let payload = GatewaySyncReportRequest {
@@ -2715,7 +2715,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.4".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
         let payload = GatewayStreamReportRequest {
@@ -2810,7 +2810,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.4".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
         let mut standardized_usage = StandardizedUsage::new();
@@ -2881,7 +2881,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.5".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
         let mut partial_summary_usage = StandardizedUsage::new();
@@ -2987,7 +2987,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.4".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
         let sse_body = concat!(
@@ -3111,7 +3111,7 @@ mod tests {
             provider_api_format: "gemini:generate_content".to_string(),
             model_name: Some("gpt-5".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
         let payload = GatewaySyncReportRequest {
@@ -3218,7 +3218,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.4".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
         let payload = GatewaySyncReportRequest {
@@ -3326,7 +3326,7 @@ mod tests {
             provider_api_format: "gemini:generate_content".to_string(),
             model_name: Some("gpt-5".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
         let payload = GatewaySyncReportRequest {
@@ -3398,7 +3398,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.4".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
         let payload = GatewaySyncReportRequest {
@@ -3461,7 +3461,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.4".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
         let payload = GatewayStreamReportRequest {
@@ -3547,7 +3547,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.4".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
         let payload = GatewayStreamReportRequest {
@@ -3613,7 +3613,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.4".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
         let payload = GatewaySyncReportRequest {
@@ -3667,7 +3667,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             model_name: Some("gpt-5.4".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
         let payload = GatewaySyncReportRequest {
@@ -3915,7 +3915,7 @@ mod tests {
             provider_api_format: "openai:chat".to_string(),
             model_name: Some("gpt-5".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
 

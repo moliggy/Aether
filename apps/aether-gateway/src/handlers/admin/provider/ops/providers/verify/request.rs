@@ -179,7 +179,7 @@ async fn admin_provider_ops_execute_request(
         provider_api_format: "provider_ops:verify".to_string(),
         model_name: Some("verify-auth".to_string()),
         proxy: proxy_snapshot.cloned(),
-        tls_profile: None,
+        transport_profile: None,
         timeouts: Some(ExecutionTimeouts {
             connect_ms: Some(ADMIN_PROVIDER_OPS_VERIFY_TIMEOUT_MS),
             read_ms: Some(ADMIN_PROVIDER_OPS_VERIFY_TIMEOUT_MS),

@@ -1,4 +1,7 @@
-use aether_contracts::{ExecutionTimeouts, ProxySnapshot};
+use aether_contracts::{
+    ExecutionTimeouts, ProxySnapshot, ResolvedTransportProfile, TRANSPORT_BACKEND_REQWEST_RUSTLS,
+    TRANSPORT_HTTP_MODE_AUTO, TRANSPORT_POOL_SCOPE_KEY,
+};
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use tracing::warn;
@@ -141,15 +144,83 @@ pub fn transport_proxy_is_locally_supported(transport: &GatewayProviderTransport
 pub fn resolve_transport_tls_profile(
     transport: &GatewayProviderTransportSnapshot,
 ) -> Option<String> {
-    transport
-        .key
-        .fingerprint
-        .as_ref()
-        .and_then(|value| value.get("tls_profile"))
+    resolve_transport_profile(transport).map(|profile| profile.profile_id)
+}
+
+pub fn resolve_transport_profile(
+    transport: &GatewayProviderTransportSnapshot,
+) -> Option<ResolvedTransportProfile> {
+    resolve_transport_profile_from_fingerprint(transport.key.fingerprint.as_ref()).or_else(|| {
+        resolve_transport_profile_from_provider_config(transport.provider.config.as_ref())
+    })
+}
+
+fn resolve_transport_profile_from_provider_config(
+    config: Option<&Value>,
+) -> Option<ResolvedTransportProfile> {
+    let fingerprint = config?.get("fingerprint");
+    resolve_transport_profile_from_fingerprint(fingerprint)
+}
+
+fn resolve_transport_profile_from_fingerprint(
+    fingerprint: Option<&Value>,
+) -> Option<ResolvedTransportProfile> {
+    let fingerprint = fingerprint?;
+    if let Some(profile) = fingerprint.get("transport_profile") {
+        if let Some(resolved) = parse_transport_profile_value(profile) {
+            return Some(resolved);
+        }
+    }
+
+    fingerprint
+        .get("tls_profile")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+        .map(ResolvedTransportProfile::from_legacy_tls_profile)
+}
+
+fn parse_transport_profile_value(value: &Value) -> Option<ResolvedTransportProfile> {
+    if let Some(profile_id) = value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(ResolvedTransportProfile {
+            profile_id: profile_id.to_string(),
+            backend: TRANSPORT_BACKEND_REQWEST_RUSTLS.to_string(),
+            http_mode: TRANSPORT_HTTP_MODE_AUTO.to_string(),
+            pool_scope: TRANSPORT_POOL_SCOPE_KEY.to_string(),
+            extra: None,
+        });
+    }
+
+    let object = value.as_object()?;
+    let profile_id = json_string_field(object, "profile_id")
+        .or_else(|| json_string_field(object, "id"))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())?;
+    let backend = json_string_field(object, "backend")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| TRANSPORT_BACKEND_REQWEST_RUSTLS.to_string());
+    let http_mode = json_string_field(object, "http_mode")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| TRANSPORT_HTTP_MODE_AUTO.to_string());
+    let pool_scope = json_string_field(object, "pool_scope")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| TRANSPORT_POOL_SCOPE_KEY.to_string());
+    let extra = object.get("extra").cloned();
+
+    Some(ResolvedTransportProfile {
+        profile_id,
+        backend,
+        http_mode,
+        pool_scope,
+        extra,
+    })
 }
 
 fn effective_proxy_config(transport: &GatewayProviderTransportSnapshot) -> Option<&Value> {
@@ -225,9 +296,10 @@ mod tests {
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
     };
     use super::{
-        resolve_transport_proxy_snapshot, resolve_transport_proxy_snapshot_with_tunnel_affinity,
-        resolve_transport_tls_profile, transport_proxy_is_locally_supported,
-        TransportTunnelAffinityLookup, TransportTunnelAttachmentOwner,
+        resolve_transport_profile, resolve_transport_proxy_snapshot,
+        resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
+        transport_proxy_is_locally_supported, TransportTunnelAffinityLookup,
+        TransportTunnelAttachmentOwner,
     };
 
     #[derive(Default)]
@@ -390,5 +462,61 @@ mod tests {
             Some("chrome_136")
         );
         assert!(transport_proxy_is_locally_supported(&sample_transport()));
+    }
+
+    #[test]
+    fn resolves_transport_profile_from_key_fingerprint_before_provider_default() {
+        let mut transport = sample_transport();
+        transport.provider.config = Some(json!({
+            "fingerprint": {"transport_profile": "provider_profile"}
+        }));
+        transport.key.fingerprint = Some(json!({
+            "transport_profile": {
+                "profile_id": "key_profile",
+                "backend": "reqwest_rustls",
+                "http_mode": "http1_only"
+            }
+        }));
+
+        let profile = resolve_transport_profile(&transport).expect("profile");
+
+        assert_eq!(profile.profile_id, "key_profile");
+        assert_eq!(profile.backend, "reqwest_rustls");
+        assert_eq!(profile.http_mode, "http1_only");
+        assert_eq!(profile.pool_scope, "key");
+    }
+
+    #[test]
+    fn resolves_transport_profile_from_provider_default() {
+        let mut transport = sample_transport();
+        transport.key.fingerprint = None;
+        transport.provider.config = Some(json!({
+            "fingerprint": {"transport_profile": "provider_profile"}
+        }));
+
+        let profile = resolve_transport_profile(&transport).expect("profile");
+
+        assert_eq!(profile.profile_id, "provider_profile");
+        assert_eq!(profile.backend, "reqwest_rustls");
+    }
+
+    #[test]
+    fn maps_legacy_tls_profile_to_transport_profile() {
+        let profile = resolve_transport_profile(&sample_transport()).expect("profile");
+
+        assert_eq!(profile.profile_id, "chrome_136");
+        assert_eq!(profile.backend, "reqwest_rustls");
+        assert_eq!(profile.http_mode, "auto");
+        assert_eq!(profile.pool_scope, "key");
+    }
+
+    #[test]
+    fn resolves_no_transport_profile_without_fingerprint_configuration() {
+        let mut transport = sample_transport();
+        transport.key.fingerprint = None;
+        transport.provider.config = None;
+
+        assert!(resolve_transport_profile(&transport).is_none());
+        assert!(resolve_transport_tls_profile(&transport).is_none());
     }
 }

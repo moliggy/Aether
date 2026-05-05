@@ -278,7 +278,7 @@ pub fn build_internal_finalize_video_plan(
             url: None,
             extra: None,
         }),
-        tls_profile: None,
+        transport_profile: None,
         timeouts: None,
     })
 }

@@ -632,12 +632,16 @@ mod tests {
         )));
 
         let meta = protocol::RequestMeta {
+            provider_id: None,
+            endpoint_id: None,
+            key_id: None,
             method: "GET".to_string(),
             url: "https://example.com/health".to_string(),
             headers: HashMap::new(),
             timeout: 30,
             follow_redirects: None,
             http1_only: false,
+            transport_profile: None,
         };
         let request = Request::builder()
             .body(Body::from(encode_relay_envelope(&meta, &[])))
@@ -742,12 +746,16 @@ mod tests {
         )));
 
         let meta = protocol::RequestMeta {
+            provider_id: None,
+            endpoint_id: None,
+            key_id: None,
             method: "GET".to_string(),
             url: "https://example.com/headers".to_string(),
             headers: HashMap::new(),
             timeout: 30,
             follow_redirects: None,
             http1_only: false,
+            transport_profile: None,
         };
         let request = Request::builder()
             .body(Body::from(encode_relay_envelope(&meta, &[])))

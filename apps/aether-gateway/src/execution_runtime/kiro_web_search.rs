@@ -307,7 +307,7 @@ async fn execute_mcp_request(
         provider_api_format: plan.provider_api_format.clone(),
         model_name: plan.model_name.clone(),
         proxy: plan.proxy.clone(),
-        tls_profile: plan.tls_profile.clone(),
+        transport_profile: plan.transport_profile.clone(),
         timeouts: plan.timeouts.clone(),
     };
     let result = DirectSyncExecutionRuntime::new()
@@ -538,7 +538,7 @@ async fn discover_kiro_profile_arn_in_region(
             provider_api_format: "kiro:profiles".to_string(),
             model_name: Some("kiro-list-available-profiles".to_string()),
             proxy: plan.proxy.clone(),
-            tls_profile: plan.tls_profile.clone(),
+            transport_profile: plan.transport_profile.clone(),
             timeouts: plan.timeouts.clone(),
         };
         let result = DirectSyncExecutionRuntime::new()
@@ -1208,7 +1208,7 @@ mod tests {
             provider_api_format: "claude:messages".to_string(),
             model_name: Some("claude-sonnet-4.6".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         }
     }

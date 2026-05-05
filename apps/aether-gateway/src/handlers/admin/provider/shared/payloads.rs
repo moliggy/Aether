@@ -44,6 +44,8 @@ pub(crate) struct AdminProviderKeyCreateRequest {
     pub(crate) model_include_patterns: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) model_exclude_patterns: Option<Vec<String>>,
+    #[serde(default)]
+    pub(crate) fingerprint: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]

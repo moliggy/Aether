@@ -379,12 +379,16 @@ mod tests {
 
     fn relay_probe_envelope() -> Vec<u8> {
         let meta = protocol::RequestMeta {
+            provider_id: None,
+            endpoint_id: None,
+            key_id: None,
             method: "GET".to_string(),
             url: "http://127.0.0.1:80/blocked".to_string(),
             headers: std::collections::HashMap::new(),
             timeout: 5,
             follow_redirects: None,
             http1_only: false,
+            transport_profile: None,
         };
         let meta_json =
             serde_json::to_vec(&meta).expect("tunnel relay probe metadata should serialize");
@@ -446,15 +450,12 @@ mod tests {
     fn sample_state(config: Config) -> Arc<ProxyAppState> {
         let config = Arc::new(config);
         let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(60), 128));
-        let upstream_client =
-            upstream_client::build_upstream_client(&config, Arc::clone(&dns_cache));
-        let upstream_http1_client =
-            upstream_client::build_http1_only_upstream_client(&config, Arc::clone(&dns_cache));
+        let upstream_client_pool =
+            upstream_client::UpstreamClientPool::new(Arc::clone(&config), Arc::clone(&dns_cache));
         Arc::new(ProxyAppState {
             config,
             dns_cache,
-            upstream_client,
-            upstream_http1_client,
+            upstream_client_pool,
             tunnel_tls_config: Arc::new(crate::tunnel::client::build_tls_config()),
             stream_gate: None,
             distributed_stream_gate: None,

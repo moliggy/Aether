@@ -11,7 +11,7 @@ use aether_provider_transport::auth::{
 };
 use aether_provider_transport::vertex::resolve_local_vertex_api_key_query_auth;
 use aether_provider_transport::{
-    apply_local_header_rules, resolve_transport_execution_timeouts, resolve_transport_tls_profile,
+    apply_local_header_rules, resolve_transport_execution_timeouts, resolve_transport_profile,
     GatewayProviderTransportSnapshot, LocalResolvedOAuthRequestAuth,
 };
 use async_trait::async_trait;
@@ -295,6 +295,8 @@ async fn build_execution_plan(
         model_name,
     } = request;
 
+    let transport_profile = resolve_transport_profile(transport);
+
     Ok(ExecutionPlan {
         request_id: format!(
             "req-model-fetch-{}-{}",
@@ -317,7 +319,7 @@ async fn build_execution_plan(
         provider_api_format,
         model_name,
         proxy: runtime.resolve_model_fetch_proxy(transport).await,
-        tls_profile: resolve_transport_tls_profile(transport),
+        transport_profile,
         timeouts: resolve_transport_execution_timeouts(transport),
     })
 }

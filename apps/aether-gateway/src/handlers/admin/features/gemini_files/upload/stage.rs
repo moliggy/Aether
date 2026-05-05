@@ -210,7 +210,7 @@ async fn admin_gemini_files_upload_single_key(
         proxy: state
             .resolve_transport_proxy_snapshot_with_tunnel_affinity(&transport)
             .await,
-        tls_profile: state.resolve_transport_tls_profile(&transport),
+        transport_profile: state.resolve_transport_profile(&transport),
         timeouts: state.resolve_transport_execution_timeouts(&transport),
     };
 

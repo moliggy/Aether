@@ -481,12 +481,16 @@ impl EmbeddedTunnelState {
     ) -> Result<TunnelProbeResponse, String> {
         let timeout_secs = timeout_secs.clamp(5, 60);
         let meta = tunnel_protocol::RequestMeta {
+            provider_id: None,
+            endpoint_id: None,
+            key_id: None,
             method: "GET".to_string(),
             url: url.trim().to_string(),
             headers: HashMap::new(),
             timeout: timeout_secs,
             follow_redirects: Some(false),
             http1_only: false,
+            transport_profile: None,
         };
         let stream = self.inner.hub.open_local_stream(node_id, &meta)?;
         let stream_id = stream.id;

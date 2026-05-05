@@ -221,6 +221,13 @@ impl<'a> AdminAppState<'a> {
         crate::provider_transport::resolve_transport_tls_profile(transport)
     }
 
+    pub(crate) fn resolve_transport_profile(
+        &self,
+        transport: &AdminGatewayProviderTransportSnapshot,
+    ) -> Option<aether_contracts::ResolvedTransportProfile> {
+        crate::provider_transport::resolve_transport_profile(transport)
+    }
+
     pub(crate) fn resolve_transport_execution_timeouts(
         &self,
         transport: &AdminGatewayProviderTransportSnapshot,

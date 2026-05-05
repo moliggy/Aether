@@ -568,7 +568,7 @@ async fn gateway_executes_kiro_claude_cli_sync_upstream_stream_via_local_finaliz
         profile_arn: String,
         debug_tag: String,
         proxy_node_id: String,
-        tls_profile: String,
+        transport_profile_id: String,
     }
 
     fn hash_api_key(value: &str) -> String {
@@ -900,8 +900,8 @@ async fn gateway_executes_kiro_claude_cli_sync_upstream_stream_via_local_finaliz
                         .and_then(|value| value.as_str())
                         .unwrap_or_default()
                         .to_string(),
-                    tls_profile: payload
-                        .get("tls_profile")
+                    transport_profile_id: payload
+                        .get("transport_profile").and_then(|value| value.get("profile_id"))
                         .and_then(|value| value.as_str())
                         .unwrap_or_default()
                         .to_string(),
@@ -1089,7 +1089,7 @@ async fn gateway_executes_kiro_claude_cli_sync_upstream_stream_via_local_finaliz
         "proxy-node-kiro-cli-finalize-local"
     );
     assert_eq!(
-        seen_remote_execution_runtime_request.tls_profile,
+        seen_remote_execution_runtime_request.transport_profile_id,
         "chrome_136"
     );
 

@@ -98,7 +98,7 @@ pub(super) fn sample_plan(url: &str, provider_api_format: &str) -> ExecutionPlan
             url: None,
             extra: None,
         }),
-        tls_profile: Some("chrome".to_string()),
+        transport_profile: None,
         timeouts: Some(ExecutionTimeouts {
             connect_ms: Some(10_000),
             read_ms: Some(30_000),

@@ -134,12 +134,11 @@ pub async fn run(mut config: Config, servers: Vec<ServerEntry>) -> anyhow::Resul
         config.dns_cache_capacity,
     ));
 
-    // Build Hyper client for tunnel upstream requests (shared).
-    // DNS still flows through validated addresses from DnsCache, while the
-    // custom connector exposes per-request connect/TLS timing when available.
-    let upstream_client = upstream_client::build_upstream_client(&config, Arc::clone(&dns_cache));
-    let upstream_http1_client =
-        upstream_client::build_http1_only_upstream_client(&config, Arc::clone(&dns_cache));
+    let config = Arc::new(config);
+
+    // Build a profile-keyed Hyper client pool for tunnel upstream requests.
+    let upstream_client_pool =
+        upstream_client::UpstreamClientPool::new(Arc::clone(&config), Arc::clone(&dns_cache));
 
     // Register with each Aether server and build per-server contexts.
     // Wrapped in Arc<Mutex> so retry_failed_registrations can append later.
@@ -196,10 +195,9 @@ pub async fn run(mut config: Config, servers: Vec<ServerEntry>) -> anyhow::Resul
     // Build shared application state
     let tunnel_tls_config = Arc::new(crate::tunnel::client::build_tls_config());
     let mut state = AppState {
-        config: Arc::new(config),
+        config,
         dns_cache,
-        upstream_client,
-        upstream_http1_client,
+        upstream_client_pool,
         tunnel_tls_config,
         stream_gate: None,
         distributed_stream_gate: None,
@@ -916,15 +914,12 @@ mod tests {
     fn sample_state(config: Config) -> Arc<ProxyAppState> {
         let config = Arc::new(config);
         let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(60), 128));
-        let upstream_client =
-            upstream_client::build_upstream_client(&config, Arc::clone(&dns_cache));
-        let upstream_http1_client =
-            upstream_client::build_http1_only_upstream_client(&config, Arc::clone(&dns_cache));
+        let upstream_client_pool =
+            upstream_client::UpstreamClientPool::new(Arc::clone(&config), Arc::clone(&dns_cache));
         Arc::new(ProxyAppState {
             config,
             dns_cache,
-            upstream_client,
-            upstream_http1_client,
+            upstream_client_pool,
             tunnel_tls_config: Arc::new(crate::tunnel::client::build_tls_config()),
             stream_gate: None,
             distributed_stream_gate: None,

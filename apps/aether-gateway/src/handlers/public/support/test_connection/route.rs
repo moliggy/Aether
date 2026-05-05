@@ -163,7 +163,7 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
     if transport.provider.proxy.is_some()
         || transport.endpoint.proxy.is_some()
         || transport.key.proxy.is_some()
-        || crate::provider_transport::resolve_transport_tls_profile(&transport).is_some()
+        || crate::provider_transport::resolve_transport_profile(&transport).is_some()
     {
         return None;
     }

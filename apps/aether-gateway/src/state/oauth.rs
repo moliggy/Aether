@@ -1313,7 +1313,7 @@ impl AppState {
             provider_api_format: "provider_oauth:local_refresh".to_string(),
             model_name: Some(provider_type.to_string()),
             proxy: proxy_snapshot,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: Some(ExecutionTimeouts {
                 connect_ms: Some(LOCAL_OAUTH_HTTP_TIMEOUT_MS),
                 read_ms: Some(LOCAL_OAUTH_HTTP_TIMEOUT_MS),

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use aether_ai_formats::api::ExecutionRuntimeAuthContext;
-use aether_contracts::{ExecutionPlan, ExecutionTimeouts, ProxySnapshot};
+use aether_contracts::{ExecutionPlan, ExecutionTimeouts, ProxySnapshot, ResolvedTransportProfile};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,7 +117,7 @@ pub struct AiExecutionDecision {
     #[serde(default)]
     pub proxy: Option<ProxySnapshot>,
     #[serde(default)]
-    pub tls_profile: Option<String>,
+    pub transport_profile: Option<ResolvedTransportProfile>,
     #[serde(default)]
     pub timeouts: Option<ExecutionTimeouts>,
     #[serde(default)]
@@ -217,7 +217,7 @@ mod tests {
             provider_request_body_base64: None,
             content_type: None,
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
             upstream_is_stream: false,
             report_kind: None,

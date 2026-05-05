@@ -130,7 +130,7 @@ pub fn build_ai_execution_plan_from_decision(
         provider_api_format: parts.core.provider_api_format,
         model_name: payload.model_name.take(),
         proxy: payload.proxy.take(),
-        tls_profile: payload.tls_profile.take(),
+        transport_profile: payload.transport_profile.take(),
         timeouts: payload.timeouts.take(),
     }
 }
@@ -156,7 +156,7 @@ pub fn build_ai_execution_decision_from_plan(
         provider_api_format,
         model_name,
         proxy,
-        tls_profile,
+        transport_profile,
         timeouts,
     } = parts.plan;
     let auth_pair = parts
@@ -209,7 +209,7 @@ pub fn build_ai_execution_decision_from_plan(
         provider_request_body_base64: body_bytes_b64,
         content_type,
         proxy,
-        tls_profile,
+        transport_profile,
         timeouts,
         upstream_is_stream: stream,
         report_kind: parts.report_kind,
@@ -451,7 +451,7 @@ mod tests {
             provider_api_format: "claude:messages".to_string(),
             model_name: Some("mapped".to_string()),
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
         };
 
@@ -512,7 +512,7 @@ mod tests {
             provider_request_body_base64: None,
             content_type: None,
             proxy: None,
-            tls_profile: None,
+            transport_profile: None,
             timeouts: None,
             upstream_is_stream: false,
             report_kind: None,

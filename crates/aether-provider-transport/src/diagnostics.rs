@@ -8,7 +8,9 @@ use crate::conversion::{
     request_conversion_enabled_for_transport, request_conversion_transport_unsupported_reason,
     request_pair_allowed_for_transport,
 };
-use crate::network::{resolve_transport_tls_profile, transport_proxy_is_locally_supported};
+use crate::network::{
+    resolve_transport_profile, resolve_transport_tls_profile, transport_proxy_is_locally_supported,
+};
 use crate::policy::{
     local_gemini_transport_unsupported_reason_with_network,
     local_openai_chat_transport_unsupported_reason,
@@ -67,12 +69,32 @@ pub fn build_transport_diagnostics(
     provider_api_format: &str,
 ) -> Value {
     let resolved_tls_profile = resolve_transport_tls_profile(transport);
+    let resolved_transport_profile = resolve_transport_profile(transport)
+        .and_then(|profile| serde_json::to_value(profile).ok())
+        .unwrap_or(Value::Null);
     let configured_tls_profile = transport
         .key
         .fingerprint
         .as_ref()
         .and_then(Value::as_object)
         .and_then(|value| value.get("tls_profile"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let configured_key_transport_profile = transport
+        .key
+        .fingerprint
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("transport_profile"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let configured_provider_transport_profile = transport
+        .provider
+        .config
+        .as_ref()
+        .and_then(|value| value.get("fingerprint"))
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("transport_profile"))
         .cloned()
         .unwrap_or(Value::Null);
     let has_oauth_config = transport.key.decrypted_auth_config.is_some();
@@ -111,7 +133,10 @@ pub fn build_transport_diagnostics(
         },
         "fingerprint": transport.key.fingerprint,
         "configured_tls_profile": configured_tls_profile,
+        "configured_key_transport_profile": configured_key_transport_profile,
+        "configured_provider_transport_profile": configured_provider_transport_profile,
         "resolved_tls_profile": resolved_tls_profile,
+        "resolved_transport_profile": resolved_transport_profile,
         "request_pair": {
             "client_api_format": client_api_format,
             "provider_api_format": provider_api_format,

@@ -72,7 +72,7 @@ async fn execute_antigravity_quota_plan(
         provider_api_format: "antigravity:fetch_available_models".to_string(),
         model_name: Some("fetchAvailableModels".to_string()),
         proxy,
-        tls_profile: state.resolve_transport_tls_profile(transport),
+        transport_profile: state.resolve_transport_profile(transport),
         timeouts,
     };
 

@@ -170,7 +170,7 @@ pub(crate) async fn build_admin_create_provider_key_record(
         normalize_string_list(payload.allowed_models).map(|value| json!(value)),
         None,
         None,
-        None,
+        normalize_json_object(payload.fingerprint, "fingerprint")?,
     )
     .map_err(|err| err.to_string())?;
     key.note = payload

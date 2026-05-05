@@ -1224,12 +1224,16 @@ mod tests {
 
     fn build_meta() -> protocol::RequestMeta {
         protocol::RequestMeta {
+            provider_id: None,
+            endpoint_id: None,
+            key_id: None,
             method: "GET".to_string(),
             url: "https://example.com".to_string(),
             headers: HashMap::new(),
             timeout: 30,
             follow_redirects: None,
             http1_only: false,
+            transport_profile: None,
         }
     }
 

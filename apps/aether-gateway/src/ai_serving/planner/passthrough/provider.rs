@@ -46,8 +46,7 @@ use crate::ai_serving::transport::vertex::{
 use crate::ai_serving::transport::{
     apply_local_body_rules, apply_local_header_rules, build_passthrough_headers,
     ensure_upstream_auth_header, resolve_transport_execution_timeouts,
-    resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
-    LocalResolvedOAuthRequestAuth,
+    resolve_transport_proxy_snapshot_with_tunnel_affinity, LocalResolvedOAuthRequestAuth,
 };
 use crate::ai_serving::{
     collect_control_headers, ConversionMode, ExecutionStrategy, GatewayControlDecision,

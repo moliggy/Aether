@@ -194,7 +194,6 @@ pub(super) async fn execute_provider_quota_plan(
                 key_id = %transport.key.id,
                 endpoint_id = %transport.endpoint.id,
                 url = %plan.url,
-                tls_profile = ?plan.tls_profile.as_deref(),
                 proxy_source = ?proxy_source,
                 proxy_node_id = ?proxy_node_id,
                 proxy_url_present,

@@ -171,6 +171,12 @@ pub enum ProtocolError {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RequestMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
     pub method: String,
     pub url: String,
     pub headers: std::collections::HashMap<String, String>,
@@ -180,6 +186,8 @@ pub struct RequestMeta {
     pub follow_redirects: Option<bool>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub http1_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_profile: Option<crate::ResolvedTransportProfile>,
 }
 
 fn default_timeout() -> u64 {
