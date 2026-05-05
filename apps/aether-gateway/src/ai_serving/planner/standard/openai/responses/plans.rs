@@ -57,6 +57,7 @@ pub(super) async fn build_local_sync_attempt_source<'a>(
     let spec_metadata = local_openai_responses_spec_metadata(spec);
     let Some(input) = resolve_local_openai_responses_decision_input(
         state,
+        parts,
         trace_id,
         decision,
         body_json,
@@ -108,6 +109,7 @@ pub(super) async fn build_local_stream_attempt_source<'a>(
     let spec_metadata = local_openai_responses_spec_metadata(spec);
     let Some(input) = resolve_local_openai_responses_decision_input(
         state,
+        parts,
         trace_id,
         decision,
         body_json,
@@ -291,6 +293,7 @@ pub(super) async fn build_local_sync_plan_and_reports(
     let spec_metadata = local_openai_responses_spec_metadata(spec);
     let Some(input) = resolve_local_openai_responses_decision_input(
         state,
+        parts,
         trace_id,
         decision,
         body_json,
@@ -362,6 +365,7 @@ pub(super) async fn build_local_stream_plan_and_reports(
     let spec_metadata = local_openai_responses_spec_metadata(spec);
     let Some(input) = resolve_local_openai_responses_decision_input(
         state,
+        parts,
         trace_id,
         decision,
         body_json,

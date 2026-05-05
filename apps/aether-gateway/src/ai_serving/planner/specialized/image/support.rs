@@ -23,6 +23,7 @@ use crate::ai_serving::{
     CandidateFailureDiagnostic, ExecutionRuntimeAuthContext, GatewayControlDecision,
     PlannerAppState,
 };
+use crate::client_session_affinity::client_session_affinity_from_parts;
 use crate::clock::current_unix_secs;
 use crate::{AppState, GatewayError};
 use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
@@ -69,6 +70,7 @@ pub(super) async fn resolve_local_openai_image_decision_input(
 
     let mut input = build_local_requested_model_decision_input(resolved_input, requested_model);
     input.request_auth_channel = decision.request_auth_channel.clone();
+    input.client_session_affinity = client_session_affinity_from_parts(parts, Some(body_json));
     Some(input)
 }
 
@@ -94,6 +96,7 @@ pub(super) async fn list_local_openai_image_candidate_attempts(
             false,
             input.required_capabilities.as_ref(),
             Some(&input.auth_snapshot),
+            input.client_session_affinity.as_ref(),
             current_unix_secs(),
         )
         .await
@@ -149,6 +152,7 @@ pub(super) async fn build_local_openai_image_candidate_attempt_source<'a>(
             false,
             input.required_capabilities.as_ref(),
             Some(&input.auth_snapshot),
+            input.client_session_affinity.as_ref(),
             current_unix_secs(),
         )
         .await
@@ -178,6 +182,7 @@ pub(super) async fn build_local_openai_image_candidate_attempt_source<'a>(
         api_format,
         Some(&input.requested_model),
         Some(&input.auth_snapshot),
+        input.client_session_affinity.as_ref(),
         input.required_capabilities.as_ref(),
         sticky_session_token.as_deref(),
         input.request_auth_channel.as_deref(),
@@ -242,6 +247,7 @@ async fn materialize_local_openai_image_candidate_attempts(
         api_format,
         Some(&input.requested_model),
         Some(&input.auth_snapshot),
+        input.client_session_affinity.as_ref(),
         input.required_capabilities.as_ref(),
         sticky_session_token.as_deref(),
         input.request_auth_channel.as_deref(),

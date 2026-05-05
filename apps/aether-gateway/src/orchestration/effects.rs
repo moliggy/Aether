@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use aether_admin::provider::quota as admin_provider_quota_pure;
 use aether_contracts::{ExecutionPlan, ExecutionTelemetry};
 use aether_scheduler_core::{
-    build_scheduler_affinity_cache_key_for_api_key_id, count_recent_rpm_requests_for_provider_key,
-    SchedulerAffinityTarget,
+    build_scheduler_affinity_cache_key_for_api_key_id_with_client_session,
+    count_recent_rpm_requests_for_provider_key, ClientSessionAffinity, SchedulerAffinityTarget,
 };
 use aether_usage_runtime::{
     build_stream_terminal_usage_outcome, build_sync_terminal_usage_outcome,
@@ -19,6 +19,9 @@ use super::{
     project_local_key_circuit_open, project_local_success_health, LocalFailoverClassification,
 };
 use crate::ai_serving::extract_pool_sticky_session_token;
+use crate::client_session_affinity::{
+    client_session_affinity_from_report_context_value, CLIENT_SESSION_AFFINITY_REPORT_CONTEXT_FIELD,
+};
 use crate::clock::current_unix_secs;
 use crate::handlers::shared::provider_pool::admin_provider_pool_config_from_config_value;
 use crate::handlers::shared::provider_pool::{
@@ -152,11 +155,51 @@ fn report_context_string_field<'a>(
 }
 
 fn local_scheduler_affinity_cache_key(report_context: Option<&Value>) -> Option<String> {
-    build_scheduler_affinity_cache_key_for_api_key_id(
+    let client_session_affinity = local_client_session_affinity(report_context);
+    build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
         report_context_string_field(report_context, "api_key_id")?,
         report_context_string_field(report_context, "client_api_format")?,
         report_context_string_field(report_context, "model")?,
+        client_session_affinity.as_ref(),
     )
+}
+
+fn local_client_session_affinity(report_context: Option<&Value>) -> Option<ClientSessionAffinity> {
+    let report_context = report_context?;
+    if let Some(affinity) = client_session_affinity_from_report_context_value(
+        report_context.get(CLIENT_SESSION_AFFINITY_REPORT_CONTEXT_FIELD),
+    ) {
+        return Some(affinity);
+    }
+
+    let headers = header_map_from_report_context(report_context.get("original_headers"));
+    let body_json = report_context
+        .get("original_request_body")
+        .filter(|value| !value.is_null());
+
+    crate::client_session_affinity::client_session_affinity_from_request(&headers, body_json)
+}
+
+fn header_map_from_report_context(headers: Option<&Value>) -> http::HeaderMap {
+    let mut header_map = http::HeaderMap::new();
+    let Some(headers) = headers.and_then(Value::as_object) else {
+        return header_map;
+    };
+
+    for (name, value) in headers {
+        let Some(value) = value.as_str() else {
+            continue;
+        };
+        let Ok(name) = http::header::HeaderName::from_bytes(name.as_bytes()) else {
+            continue;
+        };
+        let Ok(value) = http::HeaderValue::from_str(value) else {
+            continue;
+        };
+        header_map.insert(name, value);
+    }
+
+    header_map
 }
 
 fn local_scheduler_affinity_target(plan: &ExecutionPlan) -> Option<SchedulerAffinityTarget> {
@@ -737,7 +780,9 @@ mod tests {
     use crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL;
     use crate::AppState;
     use aether_scheduler_core::{
-        build_scheduler_affinity_cache_key_for_api_key_id, SchedulerAffinityTarget,
+        build_scheduler_affinity_cache_key_for_api_key_id,
+        build_scheduler_affinity_cache_key_for_api_key_id_with_client_session,
+        ClientSessionAffinity, SchedulerAffinityTarget,
     };
 
     async fn start_managed_redis_or_skip() -> Option<ManagedRedisServer> {
@@ -773,6 +818,42 @@ mod tests {
             transport_profile: None,
             timeouts: None,
         }
+    }
+
+    fn session_affinity() -> ClientSessionAffinity {
+        ClientSessionAffinity::new(
+            Some("generic".to_string()),
+            Some("session=session-1;agent=coder".to_string()),
+        )
+    }
+
+    fn session_report_context() -> Value {
+        json!({
+            "api_key_id": "api-key-1",
+            "client_api_format": "openai:chat",
+            "model": "gpt-5",
+            "client_session_affinity": {
+                "client_family": "generic",
+                "session_key": "session=session-1;agent=coder"
+            },
+            "original_headers": {
+                "x-aether-session-id": "raw-session",
+                "x-aether-agent-id": "raw-agent"
+            },
+            "original_request_body": {
+                "model": "gpt-5"
+            }
+        })
+    }
+
+    fn session_scheduler_affinity_cache_key() -> String {
+        build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
+            "api-key-1",
+            "openai:chat",
+            "gpt-5",
+            Some(&session_affinity()),
+        )
+        .expect("session scheduler affinity cache key should build")
     }
 
     fn sample_codex_plan() -> ExecutionPlan {
@@ -1097,6 +1178,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn attempt_failure_invalidates_session_scoped_scheduler_affinity_cache() {
+        let state = AppState::new().expect("gateway state should build");
+        let plan = sample_plan();
+        let report_context = session_report_context();
+        let session_cache_key = session_scheduler_affinity_cache_key();
+        let legacy_cache_key =
+            build_scheduler_affinity_cache_key_for_api_key_id("api-key-1", "openai:chat", "gpt-5")
+                .expect("legacy scheduler affinity cache key should build");
+
+        for cache_key in [&session_cache_key, &legacy_cache_key] {
+            state.scheduler_affinity_cache.insert(
+                cache_key.to_string(),
+                SchedulerAffinityTarget {
+                    provider_id: "prov-1".to_string(),
+                    endpoint_id: "ep-1".to_string(),
+                    key_id: "key-1".to_string(),
+                },
+                SCHEDULER_AFFINITY_TTL,
+                16,
+            );
+        }
+
+        apply_local_execution_effect(
+            &state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: Some(&report_context),
+            },
+            LocalExecutionEffect::AttemptFailure(LocalAttemptFailureEffect {
+                status_code: 429,
+                classification: LocalFailoverClassification::RetryUpstreamFailure,
+            }),
+        )
+        .await;
+
+        assert!(state
+            .read_scheduler_affinity_target(session_cache_key.as_str(), SCHEDULER_AFFINITY_TTL)
+            .is_none());
+        assert!(state
+            .read_scheduler_affinity_target(legacy_cache_key.as_str(), SCHEDULER_AFFINITY_TTL)
+            .is_some());
+    }
+
+    #[tokio::test]
     async fn attempt_failure_keeps_scheduler_affinity_for_non_failure_status() {
         let state = AppState::new().expect("gateway state should build");
         let plan = sample_plan();
@@ -1211,6 +1336,40 @@ mod tests {
                 key_id: "key-1".to_string(),
             })
         );
+    }
+
+    #[tokio::test]
+    async fn success_remembers_session_scoped_scheduler_affinity_cache() {
+        let state = AppState::new().expect("gateway state should build");
+        let plan = sample_plan();
+        let report_context = session_report_context();
+        let session_cache_key = session_scheduler_affinity_cache_key();
+        let legacy_cache_key =
+            build_scheduler_affinity_cache_key_for_api_key_id("api-key-1", "openai:chat", "gpt-5")
+                .expect("legacy scheduler affinity cache key should build");
+
+        apply_local_execution_effect(
+            &state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: Some(&report_context),
+            },
+            LocalExecutionEffect::HealthSuccess(LocalHealthSuccessEffect),
+        )
+        .await;
+
+        assert_eq!(
+            state
+                .read_scheduler_affinity_target(session_cache_key.as_str(), SCHEDULER_AFFINITY_TTL),
+            Some(SchedulerAffinityTarget {
+                provider_id: "prov-1".to_string(),
+                endpoint_id: "ep-1".to_string(),
+                key_id: "key-1".to_string(),
+            })
+        );
+        assert!(state
+            .read_scheduler_affinity_target(legacy_cache_key.as_str(), SCHEDULER_AFFINITY_TTL)
+            .is_none());
     }
 
     #[tokio::test]

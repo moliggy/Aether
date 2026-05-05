@@ -7,10 +7,14 @@ use aether_data::repository::quota::InMemoryProviderQuotaRepository;
 use aether_data_contracts::repository::candidates::{
     RequestCandidateStatus, StoredRequestCandidate,
 };
+use aether_scheduler_core::ClientSessionAffinity;
 
+use crate::cache::SchedulerAffinityTarget;
 use crate::data::GatewayDataState;
+use crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL;
 use crate::AppState;
 
+use super::super::affinity::build_scheduler_affinity_cache_key;
 use super::super::{
     list_selectable_candidates_for_required_capability_without_requested_model,
     list_selectable_candidates_for_required_capability_without_requested_model_with_auth_limit_signal,
@@ -58,6 +62,7 @@ async fn compatible_required_capability_prefers_matching_keys_without_hard_filte
         "openai:chat",
         "cache_1h",
         false,
+        None,
         None,
         100,
     )
@@ -113,12 +118,89 @@ async fn exclusive_required_capability_keeps_hard_filtering_only_matching_keys()
         "gemini_files",
         false,
         None,
+        None,
         100,
     )
     .await
     .expect("selection should succeed");
 
     assert_eq!(selection.len(), 1);
+    assert_eq!(selection[0].provider_id, "provider-b");
+    assert_eq!(selection[0].key_id, "key-b");
+}
+
+#[tokio::test]
+async fn required_capability_without_model_uses_session_scoped_affinity() {
+    let mut fallback = sample_row();
+    fallback.provider_id = "provider-a".to_string();
+    fallback.provider_name = "provider-a".to_string();
+    fallback.endpoint_id = "endpoint-a".to_string();
+    fallback.endpoint_api_format = "gemini:generate_content".to_string();
+    fallback.endpoint_api_family = Some("gemini".to_string());
+    fallback.key_api_formats = Some(vec!["gemini:generate_content".to_string()]);
+    fallback.key_id = "key-a".to_string();
+    fallback.key_name = "alpha".to_string();
+    fallback.global_model_name = "gemini-2.5-pro".to_string();
+    fallback.key_capabilities = Some(serde_json::json!({"gemini_files": true}));
+    fallback.key_global_priority_by_format =
+        Some(serde_json::json!({"gemini:generate_content": 0}));
+
+    let mut session_target = fallback.clone();
+    session_target.provider_id = "provider-b".to_string();
+    session_target.provider_name = "provider-b".to_string();
+    session_target.endpoint_id = "endpoint-b".to_string();
+    session_target.key_id = "key-b".to_string();
+    session_target.key_name = "beta".to_string();
+    session_target.key_global_priority_by_format =
+        Some(serde_json::json!({"gemini:generate_content": 10}));
+
+    let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+        fallback,
+        session_target,
+    ]));
+    let quotas = Arc::new(InMemoryProviderQuotaRepository::seed(vec![]));
+    let state = AppState::new()
+        .expect("state should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_candidate_selection_and_quota_for_tests(candidates, quotas),
+        );
+    let auth_snapshot = sample_auth_snapshot("api-key-1");
+    let client_session_affinity = ClientSessionAffinity::new(
+        Some("generic".to_string()),
+        Some("session=conversation-1".to_string()),
+    );
+    let cache_key = build_scheduler_affinity_cache_key(
+        Some(&auth_snapshot),
+        "gemini:generate_content",
+        "gemini-2.5-pro",
+        Some(&client_session_affinity),
+    )
+    .expect("session affinity cache key should build");
+    state.scheduler_affinity_cache.insert(
+        cache_key,
+        SchedulerAffinityTarget {
+            provider_id: "provider-b".to_string(),
+            endpoint_id: "endpoint-b".to_string(),
+            key_id: "key-b".to_string(),
+        },
+        SCHEDULER_AFFINITY_TTL,
+        16,
+    );
+
+    let selection = list_selectable_candidates_for_required_capability_without_requested_model(
+        state.data.as_ref(),
+        &state,
+        "gemini:generate_content",
+        "gemini_files",
+        false,
+        Some(&auth_snapshot),
+        Some(&client_session_affinity),
+        100,
+    )
+    .await
+    .expect("selection should succeed");
+
+    assert_eq!(selection.len(), 2);
     assert_eq!(selection[0].provider_id, "provider-b");
     assert_eq!(selection[0].key_id, "key-b");
 }
@@ -189,6 +271,7 @@ async fn required_capability_reports_auth_limit_signal_when_every_model_is_block
             "cache_1h",
             false,
             Some(&auth_snapshot),
+            None,
             100,
         )
         .await

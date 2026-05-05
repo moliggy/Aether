@@ -32,6 +32,7 @@ use crate::ai_serving::{
     resolve_local_decision_execution_runtime_auth_context, ExecutionRuntimeAuthContext,
     GatewayControlDecision, PlannerAppState,
 };
+use crate::client_session_affinity::client_session_affinity_from_parts;
 use crate::{AppState, GatewayError};
 
 use super::LocalOpenAiResponsesSpec;
@@ -42,6 +43,7 @@ pub(crate) use crate::ai_serving::planner::decision_input::LocalRequestedModelDe
 
 pub(crate) async fn resolve_local_openai_responses_decision_input(
     state: &AppState,
+    parts: &http::request::Parts,
     trace_id: &str,
     decision: &GatewayControlDecision,
     body_json: &serde_json::Value,
@@ -128,6 +130,7 @@ pub(crate) async fn resolve_local_openai_responses_decision_input(
 
     let mut input = build_local_requested_model_decision_input(resolved_input, requested_model);
     input.request_auth_channel = decision.request_auth_channel.clone();
+    input.client_session_affinity = client_session_affinity_from_parts(parts, Some(body_json));
     Some(input)
 }
 
@@ -154,6 +157,7 @@ pub(crate) async fn materialize_local_openai_responses_candidate_attempts(
         spec_metadata.require_streaming,
         input.required_capabilities.as_ref(),
         &input.auth_snapshot,
+        input.client_session_affinity.as_ref(),
         true,
         LocalCandidatePreselectionKeyMode::ProviderEndpointKeyModelAndApiFormat,
     )
@@ -164,6 +168,7 @@ pub(crate) async fn materialize_local_openai_responses_candidate_attempts(
         spec_metadata.api_format,
         Some(&input.requested_model),
         Some(&input.auth_snapshot),
+        input.client_session_affinity.as_ref(),
         input.required_capabilities.as_ref(),
         sticky_session_token.as_deref(),
         input.request_auth_channel.as_deref(),
@@ -249,6 +254,7 @@ pub(crate) async fn build_local_openai_responses_candidate_attempt_source<'a>(
             &input.requested_model,
             spec_metadata.require_streaming,
             &input.auth_snapshot,
+            input.client_session_affinity.as_ref(),
             input.required_capabilities.as_ref(),
             sticky_session_token.as_deref(),
             input.request_auth_channel.as_deref(),

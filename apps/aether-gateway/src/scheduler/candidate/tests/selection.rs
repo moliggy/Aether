@@ -47,6 +47,7 @@ async fn select_candidate(
         require_streaming,
         None,
         auth_snapshot,
+        None,
         now_unix_secs,
         false,
     )
@@ -70,6 +71,7 @@ async fn collect_selectable_candidates(
         require_streaming,
         None,
         auth_snapshot,
+        None,
         now_unix_secs,
         false,
     )
@@ -99,6 +101,7 @@ async fn collect_selectable_candidates_with_skip_reasons(
         require_streaming,
         None,
         auth_snapshot,
+        None,
         now_unix_secs,
         false,
     )
@@ -405,6 +408,7 @@ async fn scheduler_selection_prefers_required_capability_matches_before_priority
         "gpt-4.1",
         false,
         Some(&required_capabilities),
+        None,
         None,
         100,
         false,

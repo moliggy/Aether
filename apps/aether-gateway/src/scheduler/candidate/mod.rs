@@ -24,7 +24,7 @@ use aether_data_contracts::repository::quota::StoredProviderQuotaSnapshot;
 use aether_scheduler_core::{
     candidate_model_names, candidate_supports_required_capability, matches_model_mapping,
     normalize_api_format, resolve_provider_model_name, select_provider_model_name,
-    SchedulerMinimalCandidateSelectionCandidate,
+    ClientSessionAffinity, SchedulerMinimalCandidateSelectionCandidate,
 };
 use aether_wallet::{ProviderBillingType, ProviderQuotaSnapshot};
 use regex::Regex;
@@ -57,6 +57,7 @@ pub(crate) async fn list_selectable_candidates(
     require_streaming: bool,
     required_capabilities: Option<&serde_json::Value>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     now_unix_secs: u64,
     enable_model_directives: bool,
 ) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, GatewayError> {
@@ -68,6 +69,7 @@ pub(crate) async fn list_selectable_candidates(
         require_streaming,
         required_capabilities,
         auth_snapshot,
+        client_session_affinity,
         now_unix_secs,
         enable_model_directives,
     )
@@ -89,6 +91,7 @@ pub(crate) async fn list_selectable_candidates_with_skip_reasons(
     require_streaming: bool,
     required_capabilities: Option<&serde_json::Value>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     now_unix_secs: u64,
     enable_model_directives: bool,
 ) -> Result<
@@ -106,6 +109,7 @@ pub(crate) async fn list_selectable_candidates_with_skip_reasons(
         require_streaming,
         required_capabilities,
         auth_snapshot,
+        client_session_affinity,
         now_unix_secs,
         enable_model_directives,
     )
@@ -120,6 +124,7 @@ pub(crate) async fn list_selectable_enumerated_candidates_with_skip_reasons(
     candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
     required_capabilities: Option<&serde_json::Value>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     now_unix_secs: u64,
 ) -> Result<
     (
@@ -138,6 +143,7 @@ pub(crate) async fn list_selectable_enumerated_candidates_with_skip_reasons(
         candidates,
         required_capabilities,
         auth_snapshot,
+        client_session_affinity,
         now_unix_secs,
         ordering_config,
         priority_affinity_key,
@@ -152,6 +158,7 @@ pub(crate) async fn list_selectable_candidates_for_required_capability_without_r
     required_capability: &str,
     require_streaming: bool,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     now_unix_secs: u64,
 ) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, GatewayError> {
     Ok(
@@ -162,6 +169,7 @@ pub(crate) async fn list_selectable_candidates_for_required_capability_without_r
             required_capability,
             require_streaming,
             auth_snapshot,
+            client_session_affinity,
             now_unix_secs,
         )
         .await?
@@ -176,6 +184,7 @@ pub(crate) async fn list_selectable_candidates_for_required_capability_without_r
     required_capability: &str,
     require_streaming: bool,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     now_unix_secs: u64,
 ) -> Result<(Vec<SchedulerMinimalCandidateSelectionCandidate>, bool), GatewayError> {
     let normalized_api_format = normalize_api_format(candidate_api_format);
@@ -218,6 +227,7 @@ pub(crate) async fn list_selectable_candidates_for_required_capability_without_r
             require_streaming,
             required_capabilities.as_ref(),
             auth_snapshot,
+            client_session_affinity,
             now_unix_secs,
             false,
         )

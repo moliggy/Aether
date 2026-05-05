@@ -8,7 +8,7 @@ use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKe
 use aether_scheduler_core::{
     auth_api_key_concurrency_limit_reached, build_provider_concurrent_limit_map,
     candidate_is_selectable_with_runtime_state, candidate_runtime_skip_reason_with_state,
-    CandidateRuntimeSelectabilityInput, SchedulerAffinityTarget,
+    CandidateRuntimeSelectabilityInput,
 };
 
 use crate::data::auth::GatewayAuthApiKeySnapshot;
@@ -100,7 +100,6 @@ pub(super) fn is_candidate_selectable(
     candidate: &SchedulerMinimalCandidateSelectionCandidate,
     snapshot: &CandidateRuntimeSelectionSnapshot,
     now_unix_secs: u64,
-    cached_affinity_target: Option<&SchedulerAffinityTarget>,
 ) -> bool {
     let pool_group = snapshot
         .pool_provider_ids
@@ -111,7 +110,6 @@ pub(super) fn is_candidate_selectable(
         provider_concurrent_limits: &snapshot.provider_concurrent_limits,
         provider_key_rpm_states: &snapshot.provider_key_rpm_states,
         now_unix_secs,
-        cached_affinity_target,
         provider_quota_blocks_requests: snapshot
             .provider_quota_blocks_requests
             .get(candidate.provider_id.as_str())
@@ -145,7 +143,6 @@ pub(super) fn current_candidate_runtime_skip_reason(
     candidate: &SchedulerMinimalCandidateSelectionCandidate,
     snapshot: &CandidateRuntimeSelectionSnapshot,
     now_unix_secs: u64,
-    cached_affinity_target: Option<&SchedulerAffinityTarget>,
 ) -> Option<&'static str> {
     let pool_group = snapshot
         .pool_provider_ids
@@ -171,7 +168,6 @@ pub(super) fn current_candidate_runtime_skip_reason(
         provider_concurrent_limits: &snapshot.provider_concurrent_limits,
         provider_key_rpm_states: &snapshot.provider_key_rpm_states,
         now_unix_secs,
-        cached_affinity_target,
         provider_quota_blocks_requests,
         account_quota_exhausted: !pool_group
             && snapshot

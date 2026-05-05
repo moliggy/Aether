@@ -142,7 +142,7 @@ SELECT
   api_formats,
   auth_type_by_format,
   allow_auth_channel_mismatch_formats,
-  api_key,
+  COALESCE(api_key, encrypted_key) AS api_key,
   auth_config,
   note,
   internal_priority,
@@ -201,7 +201,7 @@ SELECT
   api_formats,
   auth_type_by_format,
   allow_auth_channel_mismatch_formats,
-  api_key,
+  COALESCE(api_key, encrypted_key) AS api_key,
   auth_config,
   note,
   internal_priority,
@@ -602,7 +602,7 @@ SELECT
   api_formats,
   auth_type_by_format,
   allow_auth_channel_mismatch_formats,
-  api_key,
+  COALESCE(api_key, encrypted_key) AS api_key,
   auth_config,
   note,
   internal_priority,
@@ -2607,7 +2607,9 @@ mod tests {
         let source = include_str!("postgres.rs");
         assert!(
             source
-                .matches("auth_type_by_format,\n  allow_auth_channel_mismatch_formats,\n  api_key",)
+                .matches(
+                    "auth_type_by_format,\n  allow_auth_channel_mismatch_formats,\n  COALESCE(api_key, encrypted_key) AS api_key",
+                )
                 .count()
                 >= 3
         );

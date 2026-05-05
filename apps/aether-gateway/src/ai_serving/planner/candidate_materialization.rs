@@ -6,7 +6,7 @@ use aether_ai_serving::{
     AiCandidateMaterializationOutcome, AiCandidateMaterializationPort, AiCandidateResolutionMode,
     AiSkippedCandidatePersistencePort,
 };
-use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
+use aether_scheduler_core::{ClientSessionAffinity, SchedulerMinimalCandidateSelectionCandidate};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::VecDeque;
@@ -154,6 +154,7 @@ struct GatewayLocalCandidateMaterializationPort<'a, F, G> {
     client_api_format: &'a str,
     requested_model: Option<&'a str>,
     auth_snapshot: Option<&'a GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&'a ClientSessionAffinity>,
     required_capabilities: Option<&'a Value>,
     sticky_session_token: Option<&'a str>,
     request_auth_channel: Option<&'a str>,
@@ -209,6 +210,7 @@ where
                     self.client_api_format,
                     requested_model.as_deref().unwrap_or_default(),
                     self.auth_snapshot,
+                    self.client_session_affinity,
                     self.required_capabilities,
                     self.sticky_session_token,
                     self.request_auth_channel,
@@ -222,6 +224,7 @@ where
                     self.client_api_format,
                     requested_model.as_deref(),
                     self.auth_snapshot,
+                    self.client_session_affinity,
                     self.required_capabilities,
                     self.sticky_session_token,
                     self.request_auth_channel,
@@ -240,6 +243,7 @@ where
         remember_first_local_candidate_affinity(
             self.state,
             self.auth_snapshot,
+            self.client_session_affinity,
             self.client_api_format,
             self.requested_model,
             candidates,
@@ -402,6 +406,7 @@ pub(crate) async fn materialize_local_execution_candidates_with_serving<F, G>(
     client_api_format: &str,
     requested_model: Option<&str>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     required_capabilities: Option<&Value>,
     sticky_session_token: Option<&str>,
     request_auth_channel: Option<&str>,
@@ -422,6 +427,7 @@ where
         client_api_format,
         requested_model,
         auth_snapshot,
+        client_session_affinity,
         required_capabilities,
         sticky_session_token,
         request_auth_channel,
@@ -444,6 +450,7 @@ pub(crate) async fn build_local_execution_candidate_attempt_source_with_serving<
     client_api_format: &str,
     requested_model: Option<&str>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     required_capabilities: Option<&Value>,
     sticky_session_token: Option<&str>,
     request_auth_channel: Option<&str>,
@@ -464,6 +471,7 @@ where
         client_api_format,
         requested_model,
         auth_snapshot,
+        client_session_affinity,
         required_capabilities,
         sticky_session_token,
         request_auth_channel,
@@ -490,6 +498,7 @@ where
     remember_first_local_candidate_affinity(
         state,
         auth_snapshot,
+        client_session_affinity,
         client_api_format,
         requested_model,
         &candidates,
@@ -563,6 +572,7 @@ pub(crate) async fn build_lazy_requested_model_execution_candidate_attempt_sourc
     requested_model: &str,
     require_streaming: bool,
     auth_snapshot: &GatewayAuthApiKeySnapshot,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     required_capabilities: Option<&Value>,
     sticky_session_token: Option<&str>,
     request_auth_channel: Option<&str>,
@@ -587,6 +597,7 @@ where
         require_streaming,
         required_capabilities,
         auth_snapshot,
+        client_session_affinity,
         use_api_format_alias_match,
         key_mode,
     )
@@ -597,6 +608,7 @@ where
         client_api_format: client_api_format.to_string(),
         requested_model: requested_model.to_string(),
         auth_snapshot: auth_snapshot.clone(),
+        client_session_affinity: client_session_affinity.cloned(),
         required_capabilities: required_capabilities.cloned(),
         sticky_session_token: sticky_session_token.map(str::to_string),
         request_auth_channel: request_auth_channel.map(str::to_string),
@@ -631,6 +643,7 @@ struct RequestedModelAttemptPageCursor<'a> {
     client_api_format: String,
     requested_model: String,
     auth_snapshot: GatewayAuthApiKeySnapshot,
+    client_session_affinity: Option<ClientSessionAffinity>,
     required_capabilities: Option<Value>,
     sticky_session_token: Option<String>,
     request_auth_channel: Option<String>,
@@ -678,6 +691,7 @@ impl<'a> RequestedModelAttemptPageCursor<'a> {
                     &self.client_api_format,
                     Some(&self.requested_model),
                     Some(&self.auth_snapshot),
+                    self.client_session_affinity.as_ref(),
                     self.required_capabilities.as_ref(),
                     self.sticky_session_token.as_deref(),
                     self.request_auth_channel.as_deref(),
@@ -706,6 +720,7 @@ impl<'a> RequestedModelAttemptPageCursor<'a> {
                 remember_first_local_candidate_affinity(
                     self.state,
                     Some(&self.auth_snapshot),
+                    self.client_session_affinity.as_ref(),
                     &self.client_api_format,
                     Some(&self.requested_model),
                     &candidates,
@@ -773,6 +788,7 @@ async fn pop_attempt_from_items(
 pub(crate) fn remember_first_local_candidate_affinity(
     state: PlannerAppState<'_>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     client_api_format: &str,
     requested_model: Option<&str>,
     candidates: &[EligibleLocalExecutionCandidate],
@@ -787,6 +803,7 @@ pub(crate) fn remember_first_local_candidate_affinity(
     remember_scheduler_affinity_for_candidate(
         state,
         auth_snapshot,
+        client_session_affinity,
         client_api_format,
         affinity_requested_model,
         &first_candidate.candidate,

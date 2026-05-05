@@ -3,6 +3,7 @@ use crate::data::candidate_selection::MinimalCandidateSelectionRowSource;
 use crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL;
 use crate::scheduler::config::SchedulerSchedulingMode;
 use crate::GatewayError;
+use aether_scheduler_core::ClientSessionAffinity;
 
 use super::affinity::{build_scheduler_affinity_cache_key, remember_scheduler_affinity};
 use super::enumeration::enumerate_scheduler_candidates;
@@ -41,11 +42,16 @@ pub(super) async fn select_minimal_candidate(
     require_streaming: bool,
     required_capabilities: Option<&serde_json::Value>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     now_unix_secs: u64,
     enable_model_directives: bool,
 ) -> Result<Option<SchedulerMinimalCandidateSelectionCandidate>, GatewayError> {
-    let affinity_cache_key =
-        build_scheduler_affinity_cache_key(auth_snapshot, api_format, global_model_name);
+    let affinity_cache_key = build_scheduler_affinity_cache_key(
+        auth_snapshot,
+        api_format,
+        global_model_name,
+        client_session_affinity,
+    );
     let selected = collect_selectable_candidates(
         selection_row_source,
         runtime_state,
@@ -54,6 +60,7 @@ pub(super) async fn select_minimal_candidate(
         require_streaming,
         required_capabilities,
         auth_snapshot,
+        client_session_affinity,
         now_unix_secs,
         enable_model_directives,
     )
@@ -74,6 +81,7 @@ pub(super) async fn collect_selectable_candidates(
     require_streaming: bool,
     required_capabilities: Option<&serde_json::Value>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     now_unix_secs: u64,
     enable_model_directives: bool,
 ) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, GatewayError> {
@@ -85,6 +93,7 @@ pub(super) async fn collect_selectable_candidates(
         require_streaming,
         required_capabilities,
         auth_snapshot,
+        client_session_affinity,
         now_unix_secs,
         enable_model_directives,
     )
@@ -100,6 +109,7 @@ pub(super) async fn collect_selectable_candidates_with_skip_reasons(
     require_streaming: bool,
     required_capabilities: Option<&serde_json::Value>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     now_unix_secs: u64,
     enable_model_directives: bool,
 ) -> Result<
@@ -129,6 +139,7 @@ pub(super) async fn collect_selectable_candidates_with_skip_reasons(
         candidates,
         required_capabilities,
         auth_snapshot,
+        client_session_affinity,
         now_unix_secs,
         ordering_config,
         priority_affinity_key,
@@ -144,6 +155,7 @@ pub(super) async fn collect_selectable_enumerated_candidates_with_skip_reasons(
     mut candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
     required_capabilities: Option<&serde_json::Value>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     now_unix_secs: u64,
     ordering_config: crate::scheduler::config::SchedulerOrderingConfig,
     priority_affinity_key: Option<&str>,
@@ -157,8 +169,12 @@ pub(super) async fn collect_selectable_enumerated_candidates_with_skip_reasons(
     let runtime_snapshot =
         read_candidate_runtime_selection_snapshot(runtime_state, &candidates, now_unix_secs)
             .await?;
-    let affinity_cache_key =
-        build_scheduler_affinity_cache_key(auth_snapshot, api_format, global_model_name);
+    let affinity_cache_key = build_scheduler_affinity_cache_key(
+        auth_snapshot,
+        api_format,
+        global_model_name,
+        client_session_affinity,
+    );
     let cached_affinity_target = if ordering_config.scheduling_mode
         == SchedulerSchedulingMode::CacheAffinity
     {
@@ -191,12 +207,8 @@ pub(super) async fn collect_selectable_enumerated_candidates_with_skip_reasons(
         ));
     }
 
-    let (mut selected, skipped) = resolve_scheduler_candidate_selectability(
-        candidates,
-        &runtime_snapshot,
-        now_unix_secs,
-        cached_affinity_target.as_ref(),
-    );
+    let (mut selected, skipped) =
+        resolve_scheduler_candidate_selectability(candidates, &runtime_snapshot, now_unix_secs);
     rank_scheduler_candidates(
         &mut selected,
         &runtime_snapshot,

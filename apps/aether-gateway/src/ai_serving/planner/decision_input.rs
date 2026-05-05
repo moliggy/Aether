@@ -1,4 +1,5 @@
 use aether_ai_serving::{run_ai_authenticated_decision_input, AiAuthenticatedDecisionInputPort};
+use aether_scheduler_core::ClientSessionAffinity;
 use async_trait::async_trait;
 
 use crate::ai_serving::{ExecutionRuntimeAuthContext, GatewayAuthApiKeySnapshot, PlannerAppState};
@@ -19,6 +20,7 @@ pub(crate) struct LocalRequestedModelDecisionInput {
     pub(crate) auth_snapshot: GatewayAuthApiKeySnapshot,
     pub(crate) required_capabilities: Option<serde_json::Value>,
     pub(crate) request_auth_channel: Option<String>,
+    pub(crate) client_session_affinity: Option<ClientSessionAffinity>,
 }
 
 #[derive(Debug, Clone)]
@@ -26,6 +28,7 @@ pub(crate) struct LocalAuthenticatedDecisionInput {
     pub(crate) auth_context: ExecutionRuntimeAuthContext,
     pub(crate) auth_snapshot: GatewayAuthApiKeySnapshot,
     pub(crate) required_capabilities: Option<serde_json::Value>,
+    pub(crate) client_session_affinity: Option<ClientSessionAffinity>,
 }
 
 struct GatewayAuthenticatedDecisionInputPort<'a> {
@@ -95,6 +98,7 @@ pub(crate) fn build_local_requested_model_decision_input(
         auth_snapshot: resolved_input.auth_snapshot,
         required_capabilities: resolved_input.required_capabilities,
         request_auth_channel: None,
+        client_session_affinity: None,
     }
 }
 
@@ -105,6 +109,7 @@ pub(crate) fn build_local_authenticated_decision_input(
         auth_context: resolved_input.auth_context,
         auth_snapshot: resolved_input.auth_snapshot,
         required_capabilities: resolved_input.required_capabilities,
+        client_session_affinity: None,
     }
 }
 

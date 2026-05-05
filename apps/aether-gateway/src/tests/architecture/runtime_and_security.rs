@@ -311,8 +311,8 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
         "candidate/runtime.rs should depend on core selectable predicate helper"
     );
     assert!(
-        runtime.contains("SchedulerAffinityTarget"),
-        "candidate/runtime.rs should depend on core SchedulerAffinityTarget"
+        !runtime.contains("SchedulerAffinityTarget"),
+        "candidate/runtime.rs should keep affinity out of runtime eligibility checks"
     );
     assert!(
         runtime.contains("auth_api_key_concurrency_limit_reached"),

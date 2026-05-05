@@ -31,6 +31,7 @@ mod async_task;
 mod audit;
 mod auth;
 mod cache;
+mod client_session_affinity;
 mod clock;
 mod constants;
 mod control;

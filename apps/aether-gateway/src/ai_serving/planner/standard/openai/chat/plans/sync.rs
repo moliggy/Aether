@@ -52,7 +52,7 @@ pub(crate) async fn build_local_openai_chat_sync_attempt_source<'a>(
     }
 
     let Some(input) = resolve_local_openai_chat_decision_input(
-        state, trace_id, decision, body_json, plan_kind, true,
+        state, parts, trace_id, decision, body_json, plan_kind, true,
     )
     .await
     else {
@@ -176,7 +176,7 @@ pub(crate) async fn build_local_openai_chat_sync_plan_and_reports(
     }
 
     let Some(input) = resolve_local_openai_chat_decision_input(
-        state, trace_id, decision, body_json, plan_kind, true,
+        state, parts, trace_id, decision, body_json, plan_kind, true,
     )
     .await
     else {

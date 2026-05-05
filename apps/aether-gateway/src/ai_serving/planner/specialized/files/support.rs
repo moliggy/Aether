@@ -23,6 +23,7 @@ use crate::ai_serving::{
     resolve_local_decision_execution_runtime_auth_context, CandidateFailureDiagnostic,
     ExecutionRuntimeAuthContext, GatewayControlDecision, PlannerAppState,
 };
+use crate::client_session_affinity::client_session_affinity_from_parts;
 use crate::clock::current_unix_secs;
 use crate::{AppState, GatewayError};
 
@@ -36,6 +37,8 @@ pub(super) const GEMINI_FILES_REQUIRED_CAPABILITY: &str = "gemini_files";
 
 pub(super) async fn resolve_local_gemini_files_decision_input(
     state: &AppState,
+    parts: &http::request::Parts,
+    body_json: Option<&serde_json::Value>,
     trace_id: &str,
     decision: &GatewayControlDecision,
 ) -> Option<LocalGeminiFilesDecisionInput> {
@@ -64,7 +67,9 @@ pub(super) async fn resolve_local_gemini_files_decision_input(
         }
     };
 
-    Some(build_local_authenticated_decision_input(resolved_input))
+    let mut input = build_local_authenticated_decision_input(resolved_input);
+    input.client_session_affinity = client_session_affinity_from_parts(parts, body_json);
+    Some(input)
 }
 
 pub(super) async fn materialize_local_gemini_files_candidate_attempts(
@@ -84,6 +89,7 @@ pub(super) async fn materialize_local_gemini_files_candidate_attempts(
             GEMINI_FILES_REQUIRED_CAPABILITY,
             false,
             Some(&input.auth_snapshot),
+            input.client_session_affinity.as_ref(),
             current_unix_secs(),
         )
         .await?;
@@ -93,6 +99,7 @@ pub(super) async fn materialize_local_gemini_files_candidate_attempts(
         GEMINI_FILES_CLIENT_API_FORMAT,
         None,
         Some(&input.auth_snapshot),
+        input.client_session_affinity.as_ref(),
         input.required_capabilities.as_ref(),
         None,
         None,
@@ -154,6 +161,7 @@ pub(super) async fn build_local_gemini_files_candidate_attempt_source<'a>(
             GEMINI_FILES_REQUIRED_CAPABILITY,
             false,
             Some(&input.auth_snapshot),
+            input.client_session_affinity.as_ref(),
             current_unix_secs(),
         )
         .await?;
@@ -163,6 +171,7 @@ pub(super) async fn build_local_gemini_files_candidate_attempt_source<'a>(
         GEMINI_FILES_CLIENT_API_FORMAT,
         None,
         Some(&input.auth_snapshot),
+        input.client_session_affinity.as_ref(),
         input.required_capabilities.as_ref(),
         None,
         None,

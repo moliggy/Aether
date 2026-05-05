@@ -165,6 +165,8 @@ CREATE TABLE IF NOT EXISTS public.api_keys (
     key_hash character varying(64) NOT NULL,
     key_encrypted text,
     name character varying(100),
+    key_prefix character varying(64),
+    status character varying(64) DEFAULT 'active'::character varying NOT NULL,
     total_requests integer DEFAULT 0,
     total_cost_usd numeric(20,8) DEFAULT '0'::double precision,
     is_standalone boolean DEFAULT false NOT NULL,
@@ -178,6 +180,7 @@ CREATE TABLE IF NOT EXISTS public.api_keys (
     last_used_at timestamp with time zone,
     expires_at timestamp with time zone,
     auto_delete_on_expiry boolean DEFAULT false NOT NULL,
+    metadata json,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     is_locked boolean DEFAULT false NOT NULL,
@@ -276,15 +279,17 @@ CREATE TABLE IF NOT EXISTS public.gemini_file_mappings (
 CREATE TABLE IF NOT EXISTS public.global_models (
     id character varying(36) NOT NULL,
     name character varying(100) NOT NULL,
-    display_name character varying(100) NOT NULL,
+    display_name character varying(100),
+    enabled boolean DEFAULT true NOT NULL,
     default_price_per_request numeric(20,8),
-    default_tiered_pricing json NOT NULL,
+    default_tiered_pricing json,
     supported_capabilities json,
     is_active boolean DEFAULT true NOT NULL,
     usage_count integer DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    config jsonb
+    config jsonb,
+    metadata json
 );
 
 
@@ -366,8 +371,11 @@ CREATE TABLE IF NOT EXISTS public.management_tokens (
 CREATE TABLE IF NOT EXISTS public.models (
     id character varying(36) NOT NULL,
     provider_id character varying(36) NOT NULL,
-    global_model_id character varying(36) NOT NULL,
+    global_model_id character varying(36),
     provider_model_name character varying(200) NOT NULL,
+    global_model_name character varying(255),
+    api_format character varying(128),
+    enabled boolean DEFAULT true NOT NULL,
     price_per_request numeric(20,8),
     tiered_pricing json,
     supports_vision boolean,
@@ -380,7 +388,8 @@ CREATE TABLE IF NOT EXISTS public.models (
     config json,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    provider_model_mappings jsonb
+    provider_model_mappings jsonb,
+    metadata json
 );
 
 
@@ -465,6 +474,7 @@ CREATE TABLE IF NOT EXISTS public.payment_orders (
 CREATE TABLE IF NOT EXISTS public.provider_api_keys (
     id character varying(36) NOT NULL,
     api_key text,
+    encrypted_key text,
     name character varying(100) NOT NULL,
     note character varying(500),
     internal_priority integer DEFAULT 50,
@@ -515,7 +525,10 @@ CREATE TABLE IF NOT EXISTS public.provider_api_keys (
     fingerprint json,
     total_tokens bigint NOT NULL,
     total_cost_usd numeric(20,8) NOT NULL,
-    status_snapshot json
+    status_snapshot json,
+    status character varying(64) DEFAULT 'active'::character varying NOT NULL,
+    weight bigint DEFAULT 1 NOT NULL,
+    metadata json
 );
 
 
@@ -527,10 +540,13 @@ CREATE TABLE IF NOT EXISTS public.provider_api_keys (
 CREATE TABLE IF NOT EXISTS public.provider_endpoints (
     id character varying(36) NOT NULL,
     provider_id character varying(36) NOT NULL,
-    api_format character varying(50) NOT NULL,
+    name character varying(255),
+    api_format character varying(50),
     base_url character varying(500) NOT NULL,
     max_retries integer DEFAULT 3,
+    enabled boolean DEFAULT true NOT NULL,
     is_active boolean DEFAULT true NOT NULL,
+    weight bigint DEFAULT 1 NOT NULL,
     custom_path character varying(200),
     config json,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -541,7 +557,8 @@ CREATE TABLE IF NOT EXISTS public.provider_endpoints (
     api_family character varying(50),
     endpoint_kind character varying(50),
     body_rules json,
-    health_score double precision DEFAULT 1.0 NOT NULL
+    health_score double precision DEFAULT 1.0 NOT NULL,
+    metadata json
 );
 
 
@@ -582,6 +599,8 @@ CREATE TABLE IF NOT EXISTS public.providers (
     quota_reset_day integer DEFAULT 30,
     quota_last_reset_at timestamp with time zone,
     quota_expires_at timestamp with time zone,
+    enabled boolean DEFAULT true NOT NULL,
+    priority bigint DEFAULT 0 NOT NULL,
     provider_priority integer DEFAULT 100,
     is_active boolean DEFAULT true NOT NULL,
     concurrent_limit integer,
@@ -1002,6 +1021,22 @@ CREATE TABLE IF NOT EXISTS public.system_configs (
 );
 
 
+--
+-- Name: auth_modules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE IF NOT EXISTS public.auth_modules (
+    id character varying(36) NOT NULL,
+    module_type character varying(128) NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    config json NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT auth_modules_pkey PRIMARY KEY (id),
+    CONSTRAINT auth_modules_module_type_key UNIQUE (module_type)
+);
+
+
 
 --
 -- Name: usage; Type: TABLE; Schema: public; Owner: -
@@ -1075,6 +1110,8 @@ CREATE TABLE IF NOT EXISTS public.usage (
     provider_endpoint_kind character varying(50),
     cache_creation_input_tokens_5m integer DEFAULT 0 NOT NULL,
     cache_creation_input_tokens_1h integer DEFAULT 0 NOT NULL,
+    cache_creation_ephemeral_5m_input_tokens integer DEFAULT 0 NOT NULL,
+    cache_creation_ephemeral_1h_input_tokens integer DEFAULT 0 NOT NULL,
     wallet_id character varying(36),
     wallet_balance_before numeric(20,8),
     wallet_balance_after numeric(20,8),
@@ -1092,7 +1129,9 @@ CREATE TABLE IF NOT EXISTS public.usage (
     actual_cache_creation_cost_usd_1h numeric(20,8) DEFAULT '0'::numeric NOT NULL,
     actual_cache_cost_usd numeric(20,8) DEFAULT '0'::numeric NOT NULL,
     cache_creation_price_per_1m_5m numeric(20,8),
-    cache_creation_price_per_1m_1h numeric(20,8)
+    cache_creation_price_per_1m_1h numeric(20,8),
+    created_at_unix_ms bigint DEFAULT 0 NOT NULL,
+    updated_at_unix_secs bigint DEFAULT 0 NOT NULL
 );
 
 
@@ -1189,6 +1228,7 @@ CREATE TABLE IF NOT EXISTS public.user_sessions (
 
 CREATE TABLE IF NOT EXISTS public.users (
     id character varying(36) NOT NULL,
+    external_id character varying(255),
     email character varying(255),
     username character varying(100) NOT NULL,
     password_hash character varying(255),
@@ -1206,7 +1246,8 @@ CREATE TABLE IF NOT EXISTS public.users (
     ldap_dn character varying(512),
     ldap_username character varying(255),
     email_verified boolean NOT NULL,
-    rate_limit integer
+    rate_limit integer,
+    metadata json
 );
 
 

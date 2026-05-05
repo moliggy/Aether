@@ -26,7 +26,6 @@ pub struct CandidateRuntimeSelectabilityInput<'a> {
     pub provider_concurrent_limits: &'a BTreeMap<String, usize>,
     pub provider_key_rpm_states: &'a BTreeMap<String, StoredProviderCatalogKey>,
     pub now_unix_secs: u64,
-    pub cached_affinity_target: Option<&'a crate::SchedulerAffinityTarget>,
     pub provider_quota_blocks_requests: bool,
     pub account_quota_exhausted: bool,
     pub oauth_invalid: bool,
@@ -48,7 +47,6 @@ pub fn candidate_runtime_skip_reason_with_state(
         provider_concurrent_limits,
         provider_key_rpm_states,
         now_unix_secs,
-        cached_affinity_target,
         provider_quota_blocks_requests,
         account_quota_exhausted,
         oauth_invalid,
@@ -104,8 +102,6 @@ pub fn candidate_runtime_skip_reason_with_state(
         }
     }
 
-    let is_cached_user = cached_affinity_target
-        .is_some_and(|target| crate::matches_affinity_target(candidate, target));
     if let Some(provider_key) = provider_key {
         if crate::is_provider_key_circuit_open_at(
             provider_key,
@@ -123,7 +119,7 @@ pub fn candidate_runtime_skip_reason_with_state(
             provider_key,
             recent_candidates,
             now_unix_secs,
-            is_cached_user,
+            false,
             rpm_reset_at,
         ) {
             return Some("key_rpm_exhausted");

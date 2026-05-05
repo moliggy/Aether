@@ -115,6 +115,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
                 request_origin: Some(crate::ai_serving::request_origin_from_parts(parts)),
                 original_request_body_json: Some(body_json),
                 original_request_body_base64: None,
+                client_session_affinity: input.client_session_affinity.as_ref(),
                 client_requested_stream: body_json
                     .get("stream")
                     .and_then(serde_json::Value::as_bool)

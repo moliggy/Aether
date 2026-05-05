@@ -101,7 +101,7 @@ pub(crate) async fn maybe_build_sync_local_openai_responses_decision_payload(
     };
 
     let Some(input) = resolve_local_openai_responses_decision_input(
-        state, trace_id, decision, body_json, plan_kind,
+        state, parts, trace_id, decision, body_json, plan_kind,
     )
     .await
     else {
@@ -139,7 +139,7 @@ pub(crate) async fn maybe_build_stream_local_openai_responses_decision_payload(
     };
 
     let Some(input) = resolve_local_openai_responses_decision_input(
-        state, trace_id, decision, body_json, plan_kind,
+        state, parts, trace_id, decision, body_json, plan_kind,
     )
     .await
     else {

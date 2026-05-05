@@ -1,6 +1,6 @@
 use aether_scheduler_core::{
-    build_scheduler_affinity_cache_key_for_api_key_id, SchedulerAffinityTarget,
-    SchedulerMinimalCandidateSelectionCandidate,
+    build_scheduler_affinity_cache_key_for_api_key_id_with_client_session, ClientSessionAffinity,
+    SchedulerAffinityTarget, SchedulerMinimalCandidateSelectionCandidate,
 };
 
 use crate::ai_serving::{GatewayAuthApiKeySnapshot, PlannerAppState};
@@ -11,6 +11,7 @@ const PLANNER_SCHEDULER_AFFINITY_MAX_ENTRIES: usize = 10_000;
 pub(crate) fn read_cached_scheduler_affinity_target(
     state: PlannerAppState<'_>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     client_api_format: &str,
     requested_model: Option<&str>,
 ) -> Option<SchedulerAffinityTarget> {
@@ -20,10 +21,11 @@ pub(crate) fn read_cached_scheduler_affinity_target(
     let api_key_id = auth_snapshot
         .map(|snapshot| snapshot.api_key_id.trim())
         .filter(|value| !value.is_empty())?;
-    let cache_key = build_scheduler_affinity_cache_key_for_api_key_id(
+    let cache_key = build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
         api_key_id,
         client_api_format,
         requested_model,
+        client_session_affinity,
     )?;
 
     state
@@ -34,6 +36,7 @@ pub(crate) fn read_cached_scheduler_affinity_target(
 pub(crate) fn remember_scheduler_affinity_for_candidate(
     state: PlannerAppState<'_>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     client_api_format: &str,
     requested_model: &str,
     candidate: &SchedulerMinimalCandidateSelectionCandidate,
@@ -44,10 +47,11 @@ pub(crate) fn remember_scheduler_affinity_for_candidate(
     else {
         return;
     };
-    let Some(cache_key) = build_scheduler_affinity_cache_key_for_api_key_id(
+    let Some(cache_key) = build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
         api_key_id,
         client_api_format,
         requested_model,
+        client_session_affinity,
     ) else {
         return;
     };

@@ -25,6 +25,7 @@ use crate::ai_serving::{
     ai_local_execution_contract_for_formats, extract_pool_sticky_session_token,
     resolve_local_decision_execution_runtime_auth_context, GatewayControlDecision, PlannerAppState,
 };
+use crate::client_session_affinity::client_session_affinity_from_parts;
 use crate::{AppState, GatewayError};
 
 use super::{LocalStandardCandidateAttempt, LocalStandardDecisionInput, LocalStandardSpec};
@@ -73,6 +74,7 @@ pub(super) async fn resolve_local_standard_decision_input(
 
     let mut input = build_local_requested_model_decision_input(resolved_input, requested_model);
     input.request_auth_channel = decision.request_auth_channel.clone();
+    input.client_session_affinity = client_session_affinity_from_parts(parts, Some(body_json));
     Some(input)
 }
 
@@ -98,6 +100,7 @@ pub(super) async fn materialize_local_standard_candidate_attempts(
         spec_metadata.require_streaming,
         input.required_capabilities.as_ref(),
         &input.auth_snapshot,
+        input.client_session_affinity.as_ref(),
         false,
         LocalCandidatePreselectionKeyMode::ProviderEndpointKeyModelAndApiFormat,
     )
@@ -108,6 +111,7 @@ pub(super) async fn materialize_local_standard_candidate_attempts(
         spec_metadata.api_format,
         Some(&input.requested_model),
         Some(&input.auth_snapshot),
+        input.client_session_affinity.as_ref(),
         input.required_capabilities.as_ref(),
         sticky_session_token.as_deref(),
         input.request_auth_channel.as_deref(),
@@ -192,6 +196,7 @@ pub(super) async fn build_local_standard_candidate_attempt_source<'a>(
             &input.requested_model,
             spec_metadata.require_streaming,
             &input.auth_snapshot,
+            input.client_session_affinity.as_ref(),
             input.required_capabilities.as_ref(),
             sticky_session_token.as_deref(),
             input.request_auth_channel.as_deref(),

@@ -14,8 +14,9 @@ use crate::scheduler::config::{
     read_scheduler_ordering_config, SchedulerOrderingConfig, SchedulerSchedulingMode,
 };
 use aether_scheduler_core::{
-    matches_affinity_target, SchedulerAffinityTarget, SchedulerMinimalCandidateSelectionCandidate,
-    SchedulerRankableCandidate, SchedulerRankingContext, SchedulerRankingOutcome,
+    matches_affinity_target, ClientSessionAffinity, SchedulerAffinityTarget,
+    SchedulerMinimalCandidateSelectionCandidate, SchedulerRankableCandidate,
+    SchedulerRankingContext, SchedulerRankingOutcome,
 };
 
 use super::candidate_affinity_cache::read_cached_scheduler_affinity_target;
@@ -28,6 +29,7 @@ struct GatewayLocalCandidateRankingPort<'a> {
     state: PlannerAppState<'a>,
     requested_model: Option<&'a str>,
     auth_snapshot: Option<&'a GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&'a ClientSessionAffinity>,
     required_capabilities: Option<&'a serde_json::Value>,
     ordering_config: SchedulerOrderingConfig,
 }
@@ -58,6 +60,7 @@ impl AiCandidateRankingPort for GatewayLocalCandidateRankingPort<'_> {
         Ok(read_cached_scheduler_affinity_target(
             self.state,
             self.auth_snapshot,
+            self.client_session_affinity,
             normalized_client_api_format,
             affinity_requested_model,
         ))
@@ -116,6 +119,7 @@ pub(crate) async fn rank_eligible_local_execution_candidates(
     normalized_client_api_format: &str,
     requested_model: Option<&str>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     required_capabilities: Option<&serde_json::Value>,
 ) -> Vec<EligibleLocalExecutionCandidate> {
     let ordering_config = read_scheduler_ordering_config_or_default(state).await;
@@ -123,6 +127,7 @@ pub(crate) async fn rank_eligible_local_execution_candidates(
         state,
         requested_model,
         auth_snapshot,
+        client_session_affinity,
         required_capabilities,
         ordering_config,
     };
@@ -212,7 +217,9 @@ mod tests {
         StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
     };
     use aether_scheduler_core::{
-        apply_scheduler_candidate_ranking, RANKING_REASON_CACHED_AFFINITY,
+        apply_scheduler_candidate_ranking,
+        build_scheduler_affinity_cache_key_for_api_key_id_with_client_session,
+        ClientSessionAffinity, RANKING_REASON_CACHED_AFFINITY,
     };
     use serde_json::json;
 
@@ -1052,6 +1059,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await;
 
@@ -1130,6 +1138,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await;
 
@@ -1204,6 +1213,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await;
 
@@ -1265,6 +1275,7 @@ mod tests {
             ],
             "openai:chat",
             "gpt-4.1",
+            None,
             None,
             None,
             None,
@@ -1350,6 +1361,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await;
 
@@ -1398,6 +1410,7 @@ mod tests {
         remember_scheduler_affinity_for_candidate(
             PlannerAppState::new(&state),
             Some(&auth_snapshot),
+            None,
             "openai:chat",
             "gpt-4.1",
             &cached_candidate,
@@ -1419,6 +1432,7 @@ mod tests {
             "openai:chat",
             "gpt-4.1",
             Some(&auth_snapshot),
+            None,
             None,
             None,
             None,
@@ -1498,6 +1512,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await;
 
@@ -1567,6 +1582,7 @@ mod tests {
         remember_scheduler_affinity_for_candidate(
             PlannerAppState::new(&state),
             Some(&auth_snapshot),
+            None,
             "claude:messages",
             "gpt-4.1",
             &cached_cross_format,
@@ -1588,6 +1604,7 @@ mod tests {
             "claude:messages",
             "gpt-4.1",
             Some(&auth_snapshot),
+            None,
             None,
             None,
             None,
@@ -1660,6 +1677,7 @@ mod tests {
         remember_scheduler_affinity_for_candidate(
             PlannerAppState::new(&state),
             Some(&auth_snapshot),
+            None,
             "openai:chat",
             "gpt-4.1",
             &cached_candidate,
@@ -1689,6 +1707,7 @@ mod tests {
             "openai:chat",
             "gpt-4.1",
             Some(&auth_snapshot),
+            None,
             None,
             None,
             None,
@@ -1762,6 +1781,7 @@ mod tests {
         remember_scheduler_affinity_for_candidate(
             PlannerAppState::new(&state),
             Some(&auth_snapshot),
+            None,
             "openai:chat",
             "gpt-4.1",
             &cached_candidate,
@@ -1783,6 +1803,7 @@ mod tests {
             "openai:chat",
             Some("gpt-4.1"),
             Some(&auth_snapshot),
+            None,
             None,
             None,
             None,
@@ -1852,6 +1873,7 @@ mod tests {
         remember_scheduler_affinity_for_candidate(
             PlannerAppState::new(&state),
             Some(&auth_snapshot),
+            None,
             "openai:chat",
             "gpt-4.1",
             &cached_candidate,
@@ -1873,6 +1895,7 @@ mod tests {
             "openai:chat",
             Some("gpt-4.1"),
             Some(&auth_snapshot),
+            None,
             None,
             None,
             None,
@@ -1902,6 +1925,7 @@ mod tests {
         remember_scheduler_affinity_for_candidate(
             PlannerAppState::new(&state),
             Some(&auth_snapshot),
+            None,
             "openai:chat",
             "gpt-5",
             &candidate,
@@ -1916,5 +1940,45 @@ mod tests {
         assert_eq!(remembered.provider_id, "provider-1");
         assert_eq!(remembered.endpoint_id, "endpoint-1");
         assert_eq!(remembered.key_id, "key-1");
+    }
+
+    #[tokio::test]
+    async fn remembers_scheduler_affinity_for_client_session_scope() {
+        let state = AppState::new().expect("state should build");
+        let auth_snapshot = sample_auth_snapshot();
+        let client_session_affinity = ClientSessionAffinity::new(
+            Some("generic".to_string()),
+            Some("session=conversation-1;agent=coder".to_string()),
+        );
+        let candidate = sample_candidate("endpoint-session", "key-session");
+
+        remember_scheduler_affinity_for_candidate(
+            PlannerAppState::new(&state),
+            Some(&auth_snapshot),
+            Some(&client_session_affinity),
+            "openai:chat",
+            "gpt-5",
+            &candidate,
+        );
+
+        let session_key = build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
+            "api-key-1",
+            "openai:chat",
+            "gpt-5",
+            Some(&client_session_affinity),
+        )
+        .expect("session key should build");
+        let remembered = state
+            .read_scheduler_affinity_target(&session_key, SCHEDULER_AFFINITY_TTL)
+            .expect("session affinity target should be cached");
+        assert_eq!(remembered.provider_id, "provider-1");
+        assert_eq!(remembered.endpoint_id, "endpoint-session");
+        assert_eq!(remembered.key_id, "key-session");
+        assert!(state
+            .read_scheduler_affinity_target(
+                "scheduler_affinity:api-key-1:openai:chat:gpt-5",
+                SCHEDULER_AFFINITY_TTL,
+            )
+            .is_none());
     }
 }

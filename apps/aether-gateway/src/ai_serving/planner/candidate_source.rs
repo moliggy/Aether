@@ -3,7 +3,7 @@ use aether_ai_serving::{
 };
 use aether_scheduler_core::{
     enumerate_minimal_candidate_selection_with_model_directives, normalize_api_format,
-    resolve_requested_global_model_name_with_model_directives,
+    resolve_requested_global_model_name_with_model_directives, ClientSessionAffinity,
     EnumerateMinimalCandidateSelectionInput, SchedulerMinimalCandidateSelectionCandidate,
 };
 use async_trait::async_trait;
@@ -32,6 +32,7 @@ struct GatewayLocalCandidatePreselectionPort<'a> {
     require_streaming: bool,
     required_capabilities: Option<&'a serde_json::Value>,
     auth_snapshot: &'a GatewayAuthApiKeySnapshot,
+    client_session_affinity: Option<&'a ClientSessionAffinity>,
     use_api_format_alias_match: bool,
     key_mode: LocalCandidatePreselectionKeyMode,
     candidate_api_formats: Vec<String>,
@@ -73,6 +74,7 @@ impl AiCandidatePreselectionPort for GatewayLocalCandidatePreselectionPort<'_> {
                 self.require_streaming,
                 self.required_capabilities,
                 auth_snapshot,
+                self.client_session_affinity,
                 current_unix_secs(),
             )
             .await?;
@@ -139,6 +141,7 @@ pub(crate) async fn preselect_local_execution_candidates_with_serving(
     require_streaming: bool,
     required_capabilities: Option<&serde_json::Value>,
     auth_snapshot: &GatewayAuthApiKeySnapshot,
+    client_session_affinity: Option<&ClientSessionAffinity>,
     use_api_format_alias_match: bool,
     key_mode: LocalCandidatePreselectionKeyMode,
 ) -> Result<
@@ -173,6 +176,7 @@ pub(crate) async fn preselect_local_execution_candidates_with_serving(
         require_streaming,
         required_capabilities,
         auth_snapshot,
+        client_session_affinity,
         use_api_format_alias_match,
         key_mode,
         candidate_api_formats,
@@ -189,6 +193,7 @@ pub(crate) struct LocalCandidatePreselectionPageCursor<'a> {
     require_streaming: bool,
     required_capabilities: Option<serde_json::Value>,
     auth_snapshot: GatewayAuthApiKeySnapshot,
+    client_session_affinity: Option<ClientSessionAffinity>,
     use_api_format_alias_match: bool,
     key_mode: LocalCandidatePreselectionKeyMode,
     candidate_api_formats: Vec<String>,
@@ -210,6 +215,7 @@ impl<'a> LocalCandidatePreselectionPageCursor<'a> {
         require_streaming: bool,
         required_capabilities: Option<&serde_json::Value>,
         auth_snapshot: &GatewayAuthApiKeySnapshot,
+        client_session_affinity: Option<&ClientSessionAffinity>,
         use_api_format_alias_match: bool,
         key_mode: LocalCandidatePreselectionKeyMode,
     ) -> Self {
@@ -239,6 +245,7 @@ impl<'a> LocalCandidatePreselectionPageCursor<'a> {
             require_streaming,
             required_capabilities: required_capabilities.cloned(),
             auth_snapshot: auth_snapshot.clone(),
+            client_session_affinity: client_session_affinity.cloned(),
             use_api_format_alias_match,
             key_mode,
             candidate_api_formats,
@@ -449,6 +456,7 @@ impl<'a> LocalCandidatePreselectionPageCursor<'a> {
                     candidates,
                     self.required_capabilities.as_ref(),
                     auth_snapshot,
+                    self.client_session_affinity.as_ref(),
                     current_unix_secs(),
                 )
                 .await?;

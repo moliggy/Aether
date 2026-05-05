@@ -853,7 +853,7 @@ mod tests {
     fn merges_proxy_trace_info_into_existing_candidate_extra_data() {
         let mut existing = sample_candidate("cand-1", 1, 0);
         existing.extra_data = Some(json!({
-            "provider_name": "Codex"
+            "provider_name": "Provider One"
         }));
 
         let metadata = parse_request_candidate_report_context(Some(&json!({
@@ -896,7 +896,7 @@ mod tests {
             slot.extra_data
                 .as_ref()
                 .and_then(|value| value.get("provider_name")),
-            Some(&json!("Codex"))
+            Some(&json!("Provider One"))
         );
         assert_eq!(
             slot.extra_data

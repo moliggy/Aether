@@ -92,6 +92,7 @@ pub(super) async fn maybe_build_local_openai_image_decision_payload_for_candidat
         request_origin: Some(crate::ai_serving::request_origin_from_parts(parts)),
         original_request_body_json: Some(body_json),
         original_request_body_base64: body_base64,
+        client_session_affinity: input.client_session_affinity.as_ref(),
         client_requested_stream: spec_metadata.require_streaming,
         upstream_is_stream,
         has_envelope: false,

@@ -1,4 +1,4 @@
-use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
+use aether_scheduler_core::{ClientSessionAffinity, SchedulerMinimalCandidateSelectionCandidate};
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -18,6 +18,7 @@ impl<'a> PlannerAppState<'a> {
         require_streaming: bool,
         required_capabilities: Option<&serde_json::Value>,
         auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+        client_session_affinity: Option<&ClientSessionAffinity>,
         now_unix_secs: u64,
     ) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, GatewayError> {
         let enable_model_directives =
@@ -35,6 +36,7 @@ impl<'a> PlannerAppState<'a> {
             require_streaming,
             required_capabilities,
             auth_snapshot,
+            client_session_affinity,
             now_unix_secs,
             enable_model_directives,
         )
@@ -48,6 +50,7 @@ impl<'a> PlannerAppState<'a> {
         require_streaming: bool,
         required_capabilities: Option<&serde_json::Value>,
         auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+        client_session_affinity: Option<&ClientSessionAffinity>,
         now_unix_secs: u64,
     ) -> Result<
         (
@@ -77,6 +80,7 @@ impl<'a> PlannerAppState<'a> {
                 require_streaming,
                 required_capabilities,
                 auth_snapshot,
+                client_session_affinity,
                 attempt_now_unix_secs,
                 enable_model_directives,
             )
@@ -106,6 +110,7 @@ impl<'a> PlannerAppState<'a> {
         candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
         required_capabilities: Option<&serde_json::Value>,
         auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+        client_session_affinity: Option<&ClientSessionAffinity>,
         now_unix_secs: u64,
     ) -> Result<
         (
@@ -121,6 +126,7 @@ impl<'a> PlannerAppState<'a> {
             candidates,
             required_capabilities,
             auth_snapshot,
+            client_session_affinity,
             now_unix_secs,
         )
         .await
@@ -132,6 +138,7 @@ impl<'a> PlannerAppState<'a> {
         required_capability: &str,
         require_streaming: bool,
         auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+        client_session_affinity: Option<&ClientSessionAffinity>,
         now_unix_secs: u64,
     ) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, GatewayError> {
         let wait_timeout = Duration::from_millis(API_KEY_CONCURRENCY_WAIT_TIMEOUT_MS);
@@ -147,6 +154,7 @@ impl<'a> PlannerAppState<'a> {
                 required_capability,
                 require_streaming,
                 auth_snapshot,
+                client_session_affinity,
                 attempt_now_unix_secs,
             )
             .await?;
