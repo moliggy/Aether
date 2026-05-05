@@ -8,8 +8,9 @@ mod ranking;
 mod request_candidate;
 
 pub use affinity::{
-    build_scheduler_affinity_cache_key_for_api_key_id, candidate_affinity_hash, candidate_key,
-    matches_affinity_target, SchedulerAffinityTarget,
+    build_scheduler_affinity_cache_key_for_api_key_id,
+    build_scheduler_affinity_cache_key_for_api_key_id_with_client_session, candidate_affinity_hash,
+    candidate_key, matches_affinity_target, ClientSessionAffinity, SchedulerAffinityTarget,
 };
 pub use auth::{
     api_format_matches_allowed_value, auth_constraints_allow_api_format,

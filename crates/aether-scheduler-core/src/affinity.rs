@@ -9,10 +9,53 @@ pub struct SchedulerAffinityTarget {
     pub key_id: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClientSessionAffinity {
+    pub client_family: Option<String>,
+    pub session_key: Option<String>,
+}
+
+impl ClientSessionAffinity {
+    pub fn new(client_family: Option<String>, session_key: Option<String>) -> Self {
+        Self {
+            client_family,
+            session_key,
+        }
+    }
+
+    pub fn from_session_key(session_key: impl Into<String>) -> Self {
+        Self {
+            client_family: None,
+            session_key: Some(session_key.into()),
+        }
+    }
+
+    pub fn has_session_key(&self) -> bool {
+        self.session_key
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+    }
+}
+
 pub fn build_scheduler_affinity_cache_key_for_api_key_id(
     api_key_id: &str,
     api_format: &str,
     global_model_name: &str,
+) -> Option<String> {
+    build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
+        api_key_id,
+        api_format,
+        global_model_name,
+        None,
+    )
+}
+
+pub fn build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
+    api_key_id: &str,
+    api_format: &str,
+    global_model_name: &str,
+    client_session_affinity: Option<&ClientSessionAffinity>,
 ) -> Option<String> {
     let api_key_id = api_key_id.trim();
     if api_key_id.is_empty() {
@@ -24,9 +67,37 @@ pub fn build_scheduler_affinity_cache_key_for_api_key_id(
         return None;
     }
 
+    let legacy_key = format!("scheduler_affinity:{api_key_id}:{api_format}:{global_model_name}");
+    let Some(client_session_affinity) = client_session_affinity else {
+        return Some(legacy_key);
+    };
+    let Some(session_key) = client_session_affinity
+        .session_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Some(legacy_key);
+    };
+    let client_family = client_session_affinity
+        .client_family
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_else(|| "generic".to_string());
+    let session_hash = hash_session_key(session_key);
+
     Some(format!(
-        "scheduler_affinity:{api_key_id}:{api_format}:{global_model_name}"
+        "scheduler_affinity:v2:{api_key_id}:{api_format}:{global_model_name}:{client_family}:{session_hash}"
     ))
+}
+
+fn hash_session_key(session_key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(session_key.as_bytes());
+    let digest = hasher.finalize();
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 pub fn candidate_affinity_hash(
@@ -69,8 +140,10 @@ pub fn candidate_key(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_scheduler_affinity_cache_key_for_api_key_id, candidate_affinity_hash, candidate_key,
-        matches_affinity_target, SchedulerAffinityTarget,
+        build_scheduler_affinity_cache_key_for_api_key_id,
+        build_scheduler_affinity_cache_key_for_api_key_id_with_client_session,
+        candidate_affinity_hash, candidate_key, matches_affinity_target, ClientSessionAffinity,
+        SchedulerAffinityTarget,
     };
     use crate::SchedulerMinimalCandidateSelectionCandidate;
 
@@ -118,6 +191,74 @@ mod tests {
             build_scheduler_affinity_cache_key_for_api_key_id("api-key-1", "openai:chat", ""),
             None
         );
+    }
+
+    #[test]
+    fn builds_session_aware_scheduler_affinity_cache_key_without_raw_session() {
+        let affinity = ClientSessionAffinity::new(
+            Some(" Generic ".to_string()),
+            Some("conversation-123:agent-7".to_string()),
+        );
+
+        let cache_key = build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
+            "api-key-1",
+            "OPENAI:CHAT",
+            "gpt-5",
+            Some(&affinity),
+        )
+        .expect("cache key should build");
+
+        assert!(cache_key.starts_with("scheduler_affinity:v2:api-key-1:openai:chat:gpt-5:generic:"));
+        assert!(!cache_key.contains("conversation-123"));
+        assert!(!cache_key.contains("agent-7"));
+    }
+
+    #[test]
+    fn session_aware_scheduler_affinity_key_falls_back_without_session_key() {
+        let affinity = ClientSessionAffinity::new(Some("generic".to_string()), None);
+
+        assert_eq!(
+            build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
+                "api-key-1",
+                "openai:chat",
+                "gpt-5",
+                Some(&affinity),
+            ),
+            Some("scheduler_affinity:api-key-1:openai:chat:gpt-5".to_string())
+        );
+    }
+
+    #[test]
+    fn session_aware_scheduler_affinity_key_splits_sessions_and_clients() {
+        let left =
+            ClientSessionAffinity::new(Some("generic".to_string()), Some("session-a".to_string()));
+        let right =
+            ClientSessionAffinity::new(Some("generic".to_string()), Some("session-b".to_string()));
+        let other_client =
+            ClientSessionAffinity::new(Some("other".to_string()), Some("session-a".to_string()));
+
+        let left_key = build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
+            "api-key-1",
+            "openai:chat",
+            "gpt-5",
+            Some(&left),
+        );
+        let right_key = build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
+            "api-key-1",
+            "openai:chat",
+            "gpt-5",
+            Some(&right),
+        );
+        let other_client_key =
+            build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
+                "api-key-1",
+                "openai:chat",
+                "gpt-5",
+                Some(&other_client),
+            );
+
+        assert_ne!(left_key, right_key);
+        assert_ne!(left_key, other_client_key);
     }
 
     #[test]
