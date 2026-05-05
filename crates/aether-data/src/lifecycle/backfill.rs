@@ -306,7 +306,10 @@ mod tests {
             .into_iter()
             .map(|item| item.version)
             .collect::<Vec<_>>();
-        assert_eq!(versions, vec![20260422110000, 20260422120000]);
+        assert_eq!(
+            versions,
+            vec![20260422110000, 20260422120000, 20260504120000]
+        );
     }
 
     #[test]
@@ -318,7 +321,7 @@ mod tests {
         .into_iter()
         .map(|item| item.version)
         .collect::<Vec<_>>();
-        assert_eq!(versions, vec![20260422120000]);
+        assert_eq!(versions, vec![20260422120000, 20260504120000]);
     }
 
     #[tokio::test]
@@ -619,6 +622,7 @@ mod tests {
                 cache_read_cost_usd,
                 total_cost_usd,
                 actual_total_cost_usd,
+                input_price_per_1m,
                 output_price_per_1m,
                 status,
                 billing_status,
@@ -646,6 +650,7 @@ mod tests {
                 1.25,
                 1.10,
                 50.0,
+                50.0,
                 'completed',
                 'settled',
                 TIMESTAMPTZ '2024-05-06 07:18:09+00',
@@ -665,9 +670,10 @@ mod tests {
         let pending_before = pending_backfills(&pool)
             .await
             .expect("pending backfills should load");
-        assert_eq!(pending_before.len(), 2);
+        assert_eq!(pending_before.len(), 3);
         assert_eq!(pending_before[0].version, 20260422110000);
         assert_eq!(pending_before[1].version, 20260422120000);
+        assert_eq!(pending_before[2].version, 20260504120000);
 
         run_backfills(&pool)
             .await
@@ -683,7 +689,10 @@ mod tests {
                 .fetch_all(&pool)
                 .await
                 .expect("applied backfill versions should load");
-        assert_eq!(applied_versions, vec![20260422110000, 20260422120000]);
+        assert_eq!(
+            applied_versions,
+            vec![20260422110000, 20260422120000, 20260504120000]
+        );
 
         let api_key_total_requests: i64 = query_scalar(
             "SELECT COALESCE(total_requests, 0)::BIGINT FROM public.api_keys WHERE id = 'api-key-backfill-1'",
@@ -1335,6 +1344,6 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .expect("backfill count should load");
-        assert_eq!(applied_count, 1);
+        assert_eq!(applied_count, 3);
     }
 }

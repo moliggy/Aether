@@ -1429,7 +1429,7 @@ pub fn build_admin_stats_cost_savings_response(
     let mut estimated_full_cost: f64 = usage
         .iter()
         .map(|item| {
-            item.settlement_output_price_per_1m().unwrap_or(0.0)
+            item.settlement_input_price_per_1m().unwrap_or(0.0)
                 * item.cache_read_input_tokens as f64
                 / 1_000_000.0
         })

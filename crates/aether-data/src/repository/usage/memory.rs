@@ -1915,7 +1915,7 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                 .saturating_add(item.cache_read_input_tokens);
             summary.cache_read_cost_usd += item.cache_read_cost_usd;
             summary.cache_creation_cost_usd += item.cache_creation_cost_usd;
-            summary.estimated_full_cost_usd += item.settlement_output_price_per_1m().unwrap_or(0.0)
+            summary.estimated_full_cost_usd += item.settlement_input_price_per_1m().unwrap_or(0.0)
                 * item.cache_read_input_tokens as f64
                 / 1_000_000.0;
         }

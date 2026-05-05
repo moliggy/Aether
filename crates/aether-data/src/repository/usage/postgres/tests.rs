@@ -402,6 +402,19 @@ fn usage_sql_summarize_usage_leaderboard_supports_daily_aggregates() {
 }
 
 #[test]
+fn usage_sql_aggregate_usage_audits_supports_daily_model_and_provider_aggregates() {
+    let source = include_str!("mod.rs");
+    assert!(source.contains("aggregate_usage_audits_from_daily_aggregates"));
+    assert!(source.contains("stats_user_daily_model"));
+    assert!(source.contains("stats_user_daily_provider"));
+    assert!(source.contains("stats_user_daily_api_format"));
+    assert!(source.contains("absorb_usage_audit_aggregation_rows"));
+    assert!(
+        source.contains("split_dashboard_daily_aggregate_range(start_utc, end_utc, cutoff_utc)")
+    );
+}
+
+#[test]
 fn usage_sql_summarize_total_tokens_by_api_key_ids_supports_daily_aggregates() {
     let source = include_str!("mod.rs");
     assert!(source.contains("FROM stats_daily_api_key"));

@@ -17,6 +17,7 @@ use axum::routing::{any, get};
 use axum::{extract::Request, Router};
 use chrono::Utc;
 use http::StatusCode;
+use serde_json::json;
 
 use super::super::{
     build_router_with_state, sample_currently_usable_auth_snapshot, sample_provider, start_server,
@@ -1235,6 +1236,7 @@ async fn gateway_handles_admin_stats_cost_savings_locally_with_trusted_admin_pri
     usage_row.cache_creation_cost_usd = 0.001;
     usage_row.cache_read_cost_usd = 0.002;
     usage_row.output_price_per_1m = Some(50.0);
+    usage_row.request_metadata = Some(json!({ "input_price_per_1m": 30.0 }));
 
     let usage_repository = Arc::new(InMemoryUsageReadRepository::seed(vec![usage_row]));
 
@@ -1261,8 +1263,8 @@ async fn gateway_handles_admin_stats_cost_savings_locally_with_trusted_admin_pri
     assert_eq!(payload["cache_read_tokens"], 100);
     assert_eq!(payload["cache_read_cost"], 0.002);
     assert_eq!(payload["cache_creation_cost"], 0.001);
-    assert_eq!(payload["estimated_full_cost"], 0.005);
-    assert_eq!(payload["cache_savings"], 0.003);
+    assert_eq!(payload["estimated_full_cost"], 0.003);
+    assert_eq!(payload["cache_savings"], 0.001);
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();
