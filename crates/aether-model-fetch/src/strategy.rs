@@ -41,10 +41,49 @@ pub struct ModelsFetchOutcome {
     pub upstream_metadata: Option<Value>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelFetchStrategyKind {
+    PresetCatalog,
+    StandardTransport,
+    Vertex,
+    Antigravity,
+    GeminiCliPreset,
+}
+
+pub trait ModelFetchStrategy {
+    fn provider_id(&self) -> &str;
+
+    fn kind(&self) -> ModelFetchStrategyKind;
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectedModelFetchStrategy {
+    provider_type: String,
+    kind: ModelFetchStrategyKind,
+    preset_models: Option<Vec<Value>>,
+}
+
+impl ModelFetchStrategy for SelectedModelFetchStrategy {
+    fn provider_id(&self) -> &str {
+        self.provider_type.as_str()
+    }
+
+    fn kind(&self) -> ModelFetchStrategyKind {
+        self.kind
+    }
+}
+
 pub async fn fetch_models_from_transports(
     runtime: &(impl ModelFetchTransportRuntime + ?Sized),
     transports: &[GatewayProviderTransportSnapshot],
 ) -> Result<ModelsFetchOutcome, String> {
+    let strategy = select_model_fetch_strategy(transports)?;
+    execute_model_fetch_strategy(runtime, transports, strategy).await
+}
+
+fn select_model_fetch_strategy(
+    transports: &[GatewayProviderTransportSnapshot],
+) -> Result<SelectedModelFetchStrategy, String> {
     let Some(first_transport) = transports.first() else {
         return Err("No transport snapshots available for models fetch".to_string());
     };
@@ -56,22 +95,76 @@ pub async fn fetch_models_from_transports(
         .to_ascii_lowercase();
     if let Some(models) = preset_models_for_provider(&provider_type) {
         if provider_type == "codex" {
-            return fetch_standard_models(runtime, transports).await;
+            return Ok(SelectedModelFetchStrategy {
+                provider_type,
+                kind: ModelFetchStrategyKind::StandardTransport,
+                preset_models: None,
+            });
         }
         if provider_type == "gemini_cli" {
-            return fetch_gemini_cli_models(runtime, first_transport, models).await;
+            return Ok(SelectedModelFetchStrategy {
+                provider_type,
+                kind: ModelFetchStrategyKind::GeminiCliPreset,
+                preset_models: Some(models),
+            });
         }
-        return Ok(build_success_outcome(models, None, true));
+        return Ok(SelectedModelFetchStrategy {
+            provider_type,
+            kind: ModelFetchStrategyKind::PresetCatalog,
+            preset_models: Some(models),
+        });
     }
 
     if transports.iter().any(is_vertex_api_key_transport_context) {
-        return fetch_vertex_models(runtime, transports).await;
+        return Ok(SelectedModelFetchStrategy {
+            provider_type,
+            kind: ModelFetchStrategyKind::Vertex,
+            preset_models: None,
+        });
     }
 
-    match provider_type.as_str() {
-        "antigravity" => fetch_antigravity_models(runtime, first_transport).await,
-        "vertex_ai" => fetch_vertex_models(runtime, transports).await,
-        _ => fetch_standard_models(runtime, transports).await,
+    let kind = match provider_type.as_str() {
+        "antigravity" => ModelFetchStrategyKind::Antigravity,
+        "vertex_ai" => ModelFetchStrategyKind::Vertex,
+        _ => ModelFetchStrategyKind::StandardTransport,
+    };
+    Ok(SelectedModelFetchStrategy {
+        provider_type,
+        kind,
+        preset_models: None,
+    })
+}
+
+async fn execute_model_fetch_strategy(
+    runtime: &(impl ModelFetchTransportRuntime + ?Sized),
+    transports: &[GatewayProviderTransportSnapshot],
+    strategy: SelectedModelFetchStrategy,
+) -> Result<ModelsFetchOutcome, String> {
+    let Some(first_transport) = transports.first() else {
+        return Err("No transport snapshots available for models fetch".to_string());
+    };
+
+    match strategy.kind() {
+        ModelFetchStrategyKind::PresetCatalog => Ok(build_success_outcome(
+            strategy.preset_models.unwrap_or_default(),
+            None,
+            true,
+        )),
+        ModelFetchStrategyKind::StandardTransport => {
+            fetch_standard_models(runtime, transports).await
+        }
+        ModelFetchStrategyKind::Vertex => fetch_vertex_models(runtime, transports).await,
+        ModelFetchStrategyKind::Antigravity => {
+            fetch_antigravity_models(runtime, first_transport).await
+        }
+        ModelFetchStrategyKind::GeminiCliPreset => {
+            fetch_gemini_cli_models(
+                runtime,
+                first_transport,
+                strategy.preset_models.unwrap_or_default(),
+            )
+            .await
+        }
     }
 }
 
@@ -1084,6 +1177,7 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::{json, Value};
 
+    use super::{select_model_fetch_strategy, ModelFetchStrategy, ModelFetchStrategyKind};
     use crate::fetch_models_from_transports;
     use crate::transport::ModelFetchTransportRuntime;
 
@@ -1200,6 +1294,27 @@ mod tests {
         transport.key.api_formats = Some(vec!["openai:responses".to_string()]);
         transport.key.decrypted_api_key = "access-token".to_string();
         transport
+    }
+
+    #[test]
+    fn strategy_selection_keeps_codex_on_standard_transport_fetch() {
+        let strategy = select_model_fetch_strategy(&[sample_codex_transport()])
+            .expect("strategy should select");
+
+        assert_eq!(strategy.provider_id(), "codex");
+        assert_eq!(strategy.kind(), ModelFetchStrategyKind::StandardTransport);
+    }
+
+    #[test]
+    fn strategy_selection_uses_preset_catalog_for_claude_code() {
+        let mut transport = sample_custom_aiplatform_transport();
+        transport.provider.provider_type = "claude_code".to_string();
+        transport.endpoint.api_format = "claude:messages".to_string();
+
+        let strategy = select_model_fetch_strategy(&[transport]).expect("strategy should select");
+
+        assert_eq!(strategy.provider_id(), "claude_code");
+        assert_eq!(strategy.kind(), ModelFetchStrategyKind::PresetCatalog);
     }
 
     #[tokio::test]

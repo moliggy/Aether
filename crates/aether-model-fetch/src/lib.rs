@@ -17,7 +17,10 @@ pub use logic::{
     preset_models_for_provider, provider_type_uses_preset_models, select_models_fetch_endpoint,
     selected_models_fetch_endpoints, ModelFetchRunSummary, ModelsFetchPage, ModelsFetchSuccess,
 };
-pub use strategy::{fetch_models_from_transports, ModelsFetchOutcome};
+pub use strategy::{
+    fetch_models_from_transports, ModelFetchStrategy, ModelFetchStrategyKind, ModelsFetchOutcome,
+    SelectedModelFetchStrategy,
+};
 pub use transport::{
     build_antigravity_fetch_available_models_plan, build_gemini_cli_load_code_assist_plan,
     build_models_fetch_execution_plan, build_standard_models_fetch_execution_plan,
