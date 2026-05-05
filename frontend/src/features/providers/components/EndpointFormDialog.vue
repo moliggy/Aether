@@ -186,7 +186,7 @@
                 </div>
               </div>
 
-              <!-- 请求规则（合并请求头和请求体规则） -->
+              <!-- 请求/响应规则（请求头、请求体和响应头规则） -->
               <Collapsible v-model:open="endpointRulesExpanded[endpoint.id]">
                 <div class="flex items-center gap-2">
                   <!-- 有规则时显示可折叠的触发器 -->
@@ -202,7 +202,7 @@
                         class="w-4 h-4 transition-transform text-muted-foreground"
                         :class="{ 'rotate-90': endpointRulesExpanded[endpoint.id] }"
                       />
-                      <span class="text-sm font-medium">请求规则</span>
+                      <span class="text-sm font-medium">请求/响应规则</span>
                       <Badge
                         variant="secondary"
                         class="text-xs"
@@ -216,12 +216,12 @@
                     v-else
                     class="text-sm text-muted-foreground py-1.5"
                   >
-                    请求规则
+                    请求/响应规则
                   </span>
                   <div class="flex-1" />
                   <div class="flex items-center gap-1 shrink-0">
                     <Button
-                      v-if="hasRulesChanges(endpoint) || hasBodyRulesChanges(endpoint)"
+                      v-if="hasRulesChanges(endpoint) || hasBodyRulesChanges(endpoint) || hasResponseHeaderRulesChanges(endpoint)"
                       variant="ghost"
                       size="icon"
                       class="h-7 w-7"
@@ -252,6 +252,16 @@
                       请求体
                     </Button>
                     <Button
+                      variant="ghost"
+                      size="sm"
+                      class="h-7 text-xs px-2"
+                      title="添加响应头规则"
+                      @click="handleAddEndpointResponseRule(endpoint.id)"
+                    >
+                      <Plus class="w-3 h-3 mr-1" />
+                      响应头
+                    </Button>
+                    <Button
                       v-if="isFixedProvider && hasDefaultBodyRules(endpoint.api_format)"
                       variant="ghost"
                       size="sm"
@@ -268,7 +278,7 @@
                 <CollapsibleContent class="pt-3">
                   <div class="space-y-2">
                     <div
-                      v-if="getEndpointRulesCount(endpoint) > 1 || getEndpointBodyRulesCount(endpoint) > 1"
+                      v-if="getEndpointRulesCount(endpoint) > 1 || getEndpointBodyRulesCount(endpoint) > 1 || getEndpointResponseRulesCount(endpoint) > 1"
                       class="flex items-center gap-1.5 text-xs text-muted-foreground px-2"
                     >
                       <GripVertical class="w-3.5 h-3.5" />
@@ -393,6 +403,128 @@
                         removable
                         @update:model-value="(condition) => updateEndpointRuleCondition(endpoint.id, index, condition)"
                         @remove="clearEndpointRuleCondition(endpoint.id, index)"
+                      />
+                    </template>
+
+                    <!-- 响应头规则列表 -->
+                    <template
+                      v-for="(rule, index) in getEndpointEditResponseRules(endpoint.id)"
+                      :key="`response-header-${index}`"
+                    >
+                      <div
+                        class="flex items-center gap-1.5 px-2 py-1.5 rounded-md border-l-4 border-sky-500/60 bg-muted/30"
+                        :class="[
+                          isResponseRuleDragging(endpoint.id, index) ? 'opacity-60 border-sky-500 bg-sky-500/5' : '',
+                          isResponseRuleDragOver(endpoint.id, index) ? 'ring-1 ring-sky-500/40 bg-sky-500/10' : ''
+                        ]"
+                        @dragover.prevent="handleResponseRuleDragOver(endpoint.id, index)"
+                        @dragleave="handleResponseRuleDragLeave(endpoint.id, index)"
+                        @drop.prevent="handleResponseRuleDrop(endpoint.id, index)"
+                      >
+                        <button
+                          type="button"
+                          class="h-7 w-6 shrink-0 inline-flex items-center justify-center rounded-sm text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted cursor-grab active:cursor-grabbing"
+                          title="拖拽排序"
+                          draggable="true"
+                          @dragstart="(e) => handleResponseRuleDragStart(endpoint.id, index, e)"
+                          @dragend="() => handleResponseRuleDragEnd(endpoint.id)"
+                        >
+                          <GripVertical class="w-3.5 h-3.5" />
+                        </button>
+                        <span
+                          class="text-[10px] font-semibold text-sky-600 dark:text-sky-400 shrink-0"
+                          title="响应头"
+                        >R</span>
+                        <Select
+                          :model-value="rule.action"
+                          :open="responseRuleSelectOpen[`${endpoint.id}-${index}`]"
+                          @update:model-value="(v) => updateEndpointResponseRuleAction(endpoint.id, index, v as 'set' | 'drop' | 'rename')"
+                          @update:open="(v) => handleResponseRuleSelectOpen(endpoint.id, index, v)"
+                        >
+                          <SelectTrigger class="w-[88px] h-7 text-xs shrink-0">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="set">
+                              覆写
+                            </SelectItem>
+                            <SelectItem value="drop">
+                              删除
+                            </SelectItem>
+                            <SelectItem value="rename">
+                              重命名
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          class="h-7 w-7 shrink-0"
+                          :class="rule.condition ? 'text-primary' : ''"
+                          title="条件触发"
+                          @click="toggleEndpointResponseRuleCondition(endpoint.id, index)"
+                        >
+                          <Filter class="w-3 h-3" />
+                        </Button>
+                        <template v-if="rule.action === 'set'">
+                          <Input
+                            :model-value="rule.key"
+                            placeholder="响应头名称"
+                            size="sm"
+                            class="flex-1 min-w-0 h-7 text-xs"
+                            @update:model-value="(v) => updateEndpointResponseRuleField(endpoint.id, index, 'key', v)"
+                          />
+                          <span class="text-muted-foreground text-xs">=</span>
+                          <Input
+                            :model-value="rule.value"
+                            placeholder="值"
+                            size="sm"
+                            class="flex-1 min-w-0 h-7 text-xs"
+                            @update:model-value="(v) => updateEndpointResponseRuleField(endpoint.id, index, 'value', v)"
+                          />
+                        </template>
+                        <template v-else-if="rule.action === 'drop'">
+                          <Input
+                            :model-value="rule.key"
+                            placeholder="要删除的响应头"
+                            size="sm"
+                            class="flex-1 min-w-0 h-7 text-xs"
+                            @update:model-value="(v) => updateEndpointResponseRuleField(endpoint.id, index, 'key', v)"
+                          />
+                        </template>
+                        <template v-else-if="rule.action === 'rename'">
+                          <Input
+                            :model-value="rule.from"
+                            placeholder="原名"
+                            size="sm"
+                            class="flex-1 min-w-0 h-7 text-xs"
+                            @update:model-value="(v) => updateEndpointResponseRuleField(endpoint.id, index, 'from', v)"
+                          />
+                          <span class="text-muted-foreground text-xs">→</span>
+                          <Input
+                            :model-value="rule.to"
+                            placeholder="新名"
+                            size="sm"
+                            class="flex-1 min-w-0 h-7 text-xs"
+                            @update:model-value="(v) => updateEndpointResponseRuleField(endpoint.id, index, 'to', v)"
+                          />
+                        </template>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          class="h-7 w-7 shrink-0"
+                          @click="removeEndpointResponseRule(endpoint.id, index)"
+                        >
+                          <X class="w-3 h-3" />
+                        </Button>
+                      </div>
+                      <EndpointConditionEditor
+                        v-if="rule.condition"
+                        :model-value="rule.condition"
+                        path-hint="响应体字段路径"
+                        removable
+                        @update:model-value="(condition) => updateEndpointResponseRuleCondition(endpoint.id, index, condition)"
+                        @remove="clearEndpointResponseRuleCondition(endpoint.id, index)"
                       />
                     </template>
 
@@ -936,6 +1068,7 @@ interface EndpointEditState {
   path: string
   upstreamStreamPolicy: string
   rules: EditableRule[]
+  responseRules: EditableRule[]
   bodyRules: EditableBodyRule[]
 }
 
@@ -974,6 +1107,7 @@ const proxyNodesStore = useProxyNodesStore()
 
 // 规则 Select 的展开状态（与 Collapsible 分开管理）
 const ruleSelectOpen = ref<Record<string, boolean>>({})
+const responseRuleSelectOpen = ref<Record<string, boolean>>({})
 
 // 打开规则选择器时关闭其他所有下拉
 function handleRuleSelectOpen(endpointId: string, index: number, open: boolean) {
@@ -983,8 +1117,28 @@ function handleRuleSelectOpen(endpointId: string, index: number, open: boolean) 
     Object.keys(ruleSelectOpen.value).forEach(key => {
       ruleSelectOpen.value[key] = false
     })
+    Object.keys(responseRuleSelectOpen.value).forEach(key => {
+      responseRuleSelectOpen.value[key] = false
+    })
   }
   ruleSelectOpen.value[`${endpointId}-${index}`] = open
+}
+
+// 打开响应头规则选择器时关闭其他所有下拉
+function handleResponseRuleSelectOpen(endpointId: string, index: number, open: boolean) {
+  if (open) {
+    formatSelectOpen.value = false
+    Object.keys(ruleSelectOpen.value).forEach(key => {
+      ruleSelectOpen.value[key] = false
+    })
+    Object.keys(responseRuleSelectOpen.value).forEach(key => {
+      responseRuleSelectOpen.value[key] = false
+    })
+    Object.keys(bodyRuleSelectOpen.value).forEach(key => {
+      bodyRuleSelectOpen.value[key] = false
+    })
+  }
+  responseRuleSelectOpen.value[`${endpointId}-${index}`] = open
 }
 
 // 打开格式选择器时关闭其他所有下拉
@@ -993,6 +1147,9 @@ function handleFormatSelectOpen(open: boolean) {
     // 关闭所有规则 Select
     Object.keys(ruleSelectOpen.value).forEach(key => {
       ruleSelectOpen.value[key] = false
+    })
+    Object.keys(responseRuleSelectOpen.value).forEach(key => {
+      responseRuleSelectOpen.value[key] = false
     })
     Object.keys(bodyRuleSelectOpen.value).forEach(key => {
       bodyRuleSelectOpen.value[key] = false
@@ -1009,6 +1166,9 @@ function handleBodyRuleSelectOpen(endpointId: string, index: number, open: boole
     Object.keys(ruleSelectOpen.value).forEach(key => {
       ruleSelectOpen.value[key] = false
     })
+    Object.keys(responseRuleSelectOpen.value).forEach(key => {
+      responseRuleSelectOpen.value[key] = false
+    })
     Object.keys(bodyRuleSelectOpen.value).forEach(key => {
       bodyRuleSelectOpen.value[key] = false
     })
@@ -1020,6 +1180,14 @@ function clearHeaderRuleSelectOpen(endpointId: string) {
   Object.keys(ruleSelectOpen.value).forEach((key) => {
     if (key.startsWith(`${endpointId}-`)) {
       delete ruleSelectOpen.value[key]
+    }
+  })
+}
+
+function clearResponseRuleSelectOpen(endpointId: string) {
+  Object.keys(responseRuleSelectOpen.value).forEach((key) => {
+    if (key.startsWith(`${endpointId}-`)) {
+      delete responseRuleSelectOpen.value[key]
     }
   })
 }
@@ -1044,13 +1212,26 @@ function isBodyRuleDragging(endpointId: string, index: number): boolean {
   return bodyRuleDraggedIndex.value[endpointId] === index
 }
 
+function isResponseRuleDragging(endpointId: string, index: number): boolean {
+  return responseRuleDraggedIndex.value[endpointId] === index
+}
+
 function isBodyRuleDragOver(endpointId: string, index: number): boolean {
   return bodyRuleDragOverIndex.value[endpointId] === index
+}
+
+function isResponseRuleDragOver(endpointId: string, index: number): boolean {
+  return responseRuleDragOverIndex.value[endpointId] === index
 }
 
 function clearHeaderRuleDragState(endpointId: string) {
   headerRuleDraggedIndex.value[endpointId] = null
   headerRuleDragOverIndex.value[endpointId] = null
+}
+
+function clearResponseRuleDragState(endpointId: string) {
+  responseRuleDraggedIndex.value[endpointId] = null
+  responseRuleDragOverIndex.value[endpointId] = null
 }
 
 function clearBodyRuleDragState(endpointId: string) {
@@ -1097,6 +1278,47 @@ function handleHeaderRuleDrop(endpointId: string, targetIndex: number) {
 
 function handleHeaderRuleDragEnd(endpointId: string) {
   clearHeaderRuleDragState(endpointId)
+}
+
+function handleResponseRuleDragStart(endpointId: string, index: number, event: DragEvent) {
+  const rules = getEndpointEditResponseRules(endpointId)
+  if (!rules[index]) return
+
+  responseRuleDraggedIndex.value[endpointId] = index
+  responseRuleDragOverIndex.value[endpointId] = null
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', `response:${endpointId}:${index}`)
+  }
+}
+
+function handleResponseRuleDragOver(endpointId: string, index: number) {
+  const dragged = responseRuleDraggedIndex.value[endpointId]
+  if (dragged === null || dragged === undefined || dragged === index) return
+  responseRuleDragOverIndex.value[endpointId] = index
+}
+
+function handleResponseRuleDragLeave(endpointId: string, index: number) {
+  if (responseRuleDragOverIndex.value[endpointId] === index) {
+    responseRuleDragOverIndex.value[endpointId] = null
+  }
+}
+
+function handleResponseRuleDrop(endpointId: string, targetIndex: number) {
+  const dragIndex = responseRuleDraggedIndex.value[endpointId]
+  clearResponseRuleDragState(endpointId)
+  if (dragIndex === null || dragIndex === undefined || dragIndex === targetIndex) return
+
+  const rules = getEndpointEditResponseRules(endpointId)
+  if (dragIndex < 0 || dragIndex >= rules.length || targetIndex < 0 || targetIndex >= rules.length) return
+
+  const [draggedRule] = rules.splice(dragIndex, 1)
+  rules.splice(targetIndex, 0, draggedRule)
+  clearResponseRuleSelectOpen(endpointId)
+}
+
+function handleResponseRuleDragEnd(endpointId: string) {
+  clearResponseRuleDragState(endpointId)
 }
 
 function handleBodyRuleDragStart(endpointId: string, index: number, event: DragEvent) {
@@ -1166,6 +1388,8 @@ const bodyRuleHelpOpenEndpointId = ref<string | null>(null)
 // 规则拖拽状态（按 endpoint 维度）
 const headerRuleDraggedIndex = ref<Record<string, number | null>>({})
 const headerRuleDragOverIndex = ref<Record<string, number | null>>({})
+const responseRuleDraggedIndex = ref<Record<string, number | null>>({})
+const responseRuleDragOverIndex = ref<Record<string, number | null>>({})
 const bodyRuleDraggedIndex = ref<Record<string, number | null>>({})
 const bodyRuleDragOverIndex = ref<Record<string, number | null>>({})
 
@@ -1188,6 +1412,13 @@ const RESERVED_HEADERS = new Set([
   'content-length',
   'host',
 ])
+
+const RESERVED_RESPONSE_HEADERS = new Set([
+  'content-length',
+])
+
+const RESPONSE_HEADER_RULES_CONFIG_KEY = 'response_header_rules'
+const RESPONSE_HEADER_RULES_CAMEL_CONFIG_KEY = 'responseHeaderRules'
 
 // 系统保留的 body 字段名（不允许用户设置）
 const RESERVED_BODY_FIELDS = new Set([
@@ -1496,6 +1727,21 @@ function emptyHeaderRule(): EditableRule {
   return { action: 'set', key: '', value: '', from: '', to: '', condition: null }
 }
 
+function editableHeaderRulesFromRules(rules: HeaderRule[] | null | undefined): EditableRule[] {
+  if (!Array.isArray(rules)) return []
+  const editableRules: EditableRule[] = []
+  for (const rule of rules) {
+    if (rule.action === 'set') {
+      editableRules.push({ ...emptyHeaderRule(), action: 'set', key: rule.key, value: rule.value || '', condition: conditionToEditable(rule.condition) })
+    } else if (rule.action === 'drop') {
+      editableRules.push({ ...emptyHeaderRule(), action: 'drop', key: rule.key, condition: conditionToEditable(rule.condition) })
+    } else if (rule.action === 'rename') {
+      editableRules.push({ ...emptyHeaderRule(), action: 'rename', from: rule.from, to: rule.to, condition: conditionToEditable(rule.condition) })
+    }
+  }
+  return editableRules
+}
+
 function emptyBodyRule(action: BodyRuleAction = 'set'): EditableBodyRule {
   return {
     action,
@@ -1515,18 +1761,8 @@ function emptyBodyRule(action: BodyRuleAction = 'set'): EditableBodyRule {
 
 // 初始化端点的编辑状态
 function initEndpointEditState(endpoint: ProviderEndpoint): EndpointEditState {
-  const rules: EditableRule[] = []
-  if (endpoint.header_rules && endpoint.header_rules.length > 0) {
-    for (const rule of endpoint.header_rules) {
-      if (rule.action === 'set') {
-        rules.push({ ...emptyHeaderRule(), action: 'set', key: rule.key, value: rule.value || '', condition: conditionToEditable(rule.condition) })
-      } else if (rule.action === 'drop') {
-        rules.push({ ...emptyHeaderRule(), action: 'drop', key: rule.key, condition: conditionToEditable(rule.condition) })
-      } else if (rule.action === 'rename') {
-        rules.push({ ...emptyHeaderRule(), action: 'rename', from: rule.from, to: rule.to, condition: conditionToEditable(rule.condition) })
-      }
-    }
-  }
+  const rules = editableHeaderRulesFromRules(endpoint.header_rules)
+  const responseRules = editableHeaderRulesFromRules(getEndpointResponseHeaderRules(endpoint))
 
   const bodyRules: EditableBodyRule[] = []
   if (endpoint.body_rules && endpoint.body_rules.length > 0) {
@@ -1565,6 +1801,7 @@ function initEndpointEditState(endpoint: ProviderEndpoint): EndpointEditState {
     path: endpoint.custom_path || '',
     upstreamStreamPolicy: getEndpointUpstreamStreamPolicy(endpoint),
     rules,
+    responseRules,
     bodyRules,
   }
 }
@@ -1603,11 +1840,38 @@ function getEndpointEditRules(endpointId: string): EditableRule[] {
   return []
 }
 
+function getEndpointResponseHeaderRules(endpoint: ProviderEndpoint): HeaderRule[] {
+  const raw = (endpoint as ProviderEndpoint & { response_header_rules?: unknown }).response_header_rules
+    ?? endpoint.config?.[RESPONSE_HEADER_RULES_CONFIG_KEY]
+    ?? endpoint.config?.[RESPONSE_HEADER_RULES_CAMEL_CONFIG_KEY]
+  return Array.isArray(raw) ? (raw as HeaderRule[]) : []
+}
+
+function getEndpointEditResponseRules(endpointId: string): EditableRule[] {
+  const state = endpointEditStates.value[endpointId]
+  if (state) {
+    return state.responseRules
+  }
+  const endpoint = localEndpoints.value.find(e => e.id === endpointId)
+  if (endpoint) {
+    const newState = initEndpointEditState(endpoint)
+    endpointEditStates.value[endpointId] = newState
+    return newState.responseRules
+  }
+  return []
+}
+
 // 添加规则（同时自动展开折叠）
 function handleAddEndpointRule(endpointId: string) {
   const rules = getEndpointEditRules(endpointId)
   rules.push(emptyHeaderRule())
   // 自动展开折叠
+  endpointRulesExpanded.value[endpointId] = true
+}
+
+function handleAddEndpointResponseRule(endpointId: string) {
+  const rules = getEndpointEditResponseRules(endpointId)
+  rules.push(emptyHeaderRule())
   endpointRulesExpanded.value[endpointId] = true
 }
 
@@ -1619,9 +1883,24 @@ function removeEndpointRule(endpointId: string, index: number) {
   clearHeaderRuleSelectOpen(endpointId)
 }
 
+function removeEndpointResponseRule(endpointId: string, index: number) {
+  const rules = getEndpointEditResponseRules(endpointId)
+  rules.splice(index, 1)
+  clearResponseRuleDragState(endpointId)
+  clearResponseRuleSelectOpen(endpointId)
+}
+
 // 更新规则类型
 function updateEndpointRuleAction(endpointId: string, index: number, action: 'set' | 'drop' | 'rename') {
   const rules = getEndpointEditRules(endpointId)
+  if (rules[index]) {
+    const currentCondition = rules[index].condition
+    rules[index] = { ...emptyHeaderRule(), action, condition: currentCondition }
+  }
+}
+
+function updateEndpointResponseRuleAction(endpointId: string, index: number, action: 'set' | 'drop' | 'rename') {
+  const rules = getEndpointEditResponseRules(endpointId)
   if (rules[index]) {
     const currentCondition = rules[index].condition
     rules[index] = { ...emptyHeaderRule(), action, condition: currentCondition }
@@ -1636,8 +1915,22 @@ function updateEndpointRuleField(endpointId: string, index: number, field: 'key'
   }
 }
 
+function updateEndpointResponseRuleField(endpointId: string, index: number, field: 'key' | 'value' | 'from' | 'to', value: string) {
+  const rules = getEndpointEditResponseRules(endpointId)
+  if (rules[index]) {
+    rules[index][field] = value
+  }
+}
+
 function toggleEndpointRuleCondition(endpointId: string, index: number) {
   const rules = getEndpointEditRules(endpointId)
+  if (rules[index]) {
+    rules[index].condition = rules[index].condition ? null : createEmptyConditionLeaf()
+  }
+}
+
+function toggleEndpointResponseRuleCondition(endpointId: string, index: number) {
+  const rules = getEndpointEditResponseRules(endpointId)
   if (rules[index]) {
     rules[index].condition = rules[index].condition ? null : createEmptyConditionLeaf()
   }
@@ -1650,8 +1943,22 @@ function updateEndpointRuleCondition(endpointId: string, index: number, conditio
   }
 }
 
+function updateEndpointResponseRuleCondition(endpointId: string, index: number, condition: EditableConditionNode) {
+  const rules = getEndpointEditResponseRules(endpointId)
+  if (rules[index]) {
+    rules[index].condition = condition
+  }
+}
+
 function clearEndpointRuleCondition(endpointId: string, index: number) {
   const rules = getEndpointEditRules(endpointId)
+  if (rules[index]) {
+    rules[index].condition = null
+  }
+}
+
+function clearEndpointResponseRuleCondition(endpointId: string, index: number) {
+  const rules = getEndpointEditResponseRules(endpointId)
   if (rules[index]) {
     rules[index].condition = null
   }
@@ -1732,6 +2039,18 @@ function getEndpointRulesCount(endpoint: ProviderEndpoint): number {
     }).length
   }
   return endpoint.header_rules?.length || 0
+}
+
+function getEndpointResponseRulesCount(endpoint: ProviderEndpoint): number {
+  const state = endpointEditStates.value[endpoint.id]
+  if (state) {
+    return state.responseRules.filter(r => {
+      if (r.action === 'set' || r.action === 'drop') return r.key.trim()
+      if (r.action === 'rename') return r.from.trim() && r.to.trim()
+      return false
+    }).length
+  }
+  return getEndpointResponseHeaderRules(endpoint).length
 }
 
 // 检查端点是否有任何规则（包括正在编辑的空规则）
@@ -2040,9 +2359,9 @@ function _hasAnyBodyRules(endpoint: ProviderEndpoint): boolean {
   return (endpoint.body_rules?.length || 0) > 0
 }
 
-// 获取端点的总规则数量（请求头 + 请求体）
+// 获取端点的总规则数量（请求头 + 请求体 + 响应头）
 function getTotalRulesCount(endpoint: ProviderEndpoint): number {
-  return getEndpointRulesCount(endpoint) + getEndpointBodyRulesCount(endpoint)
+  return getEndpointRulesCount(endpoint) + getEndpointBodyRulesCount(endpoint) + getEndpointResponseRulesCount(endpoint)
 }
 
 // 格式化请求头规则的显示标签
@@ -2256,12 +2575,8 @@ function hasUrlChanges(endpoint: ProviderEndpoint): boolean {
 }
 
 // 检查端点规则是否有修改
-function hasRulesChanges(endpoint: ProviderEndpoint): boolean {
-  const state = endpointEditStates.value[endpoint.id]
-  if (!state) return false
-
-  const originalRules = endpoint.header_rules || []
-  const editedRules = state.rules.filter(r => {
+function editableHeaderRulesChanged(edited: EditableRule[], originalRules: HeaderRule[]): boolean {
+  const editedRules = edited.filter(r => {
     if (r.action === 'set' || r.action === 'drop') return r.key.trim()
     if (r.action === 'rename') return r.from.trim() && r.to.trim()
     return false
@@ -2284,10 +2599,22 @@ function hasRulesChanges(endpoint: ProviderEndpoint): boolean {
   return false
 }
 
+function hasRulesChanges(endpoint: ProviderEndpoint): boolean {
+  const state = endpointEditStates.value[endpoint.id]
+  if (!state) return false
+  return editableHeaderRulesChanged(state.rules, endpoint.header_rules || [])
+}
+
+function hasResponseHeaderRulesChanges(endpoint: ProviderEndpoint): boolean {
+  const state = endpointEditStates.value[endpoint.id]
+  if (!state) return false
+  return editableHeaderRulesChanged(state.responseRules, getEndpointResponseHeaderRules(endpoint))
+}
+
 // 检查端点是否有修改（URL、路径或规则）
 // 注：当前模板直接使用各子函数，此聚合函数保留供未来使用
 function _hasEndpointChanges(endpoint: ProviderEndpoint): boolean {
-  return hasUrlChanges(endpoint) || hasRulesChanges(endpoint) || hasBodyRulesChanges(endpoint)
+  return hasUrlChanges(endpoint) || hasRulesChanges(endpoint) || hasBodyRulesChanges(endpoint) || hasResponseHeaderRulesChanges(endpoint)
 }
 
 // 重置端点修改
@@ -2315,7 +2642,7 @@ async function handleResetBodyRulesToDefault(endpoint: ProviderEndpoint) {
       body_rules: defaultRules,
     })
     state.bodyRules = resetState.bodyRules
-    endpointRulesExpanded.value[endpoint.id] = (state.rules.length + state.bodyRules.length) > 0
+    endpointRulesExpanded.value[endpoint.id] = (state.rules.length + state.responseRules.length + state.bodyRules.length) > 0
     clearBodyRuleDragState(endpoint.id)
     clearBodyRuleSelectOpen(endpoint.id)
     success('已重置请求体为默认规则，请点击保存生效')
@@ -2344,6 +2671,16 @@ function rulesToHeaderRules(rules: EditableRule[]): HeaderRule[] | null {
   return result.length > 0 ? result : null
 }
 
+function endpointConfigWithResponseHeaderRules(endpoint: ProviderEndpoint, rules: HeaderRule[] | null): Record<string, unknown> | null {
+  const merged: Record<string, unknown> = { ...(endpoint.config || {}) }
+  delete merged[RESPONSE_HEADER_RULES_CONFIG_KEY]
+  delete merged[RESPONSE_HEADER_RULES_CAMEL_CONFIG_KEY]
+  if (rules && rules.length > 0) {
+    merged[RESPONSE_HEADER_RULES_CONFIG_KEY] = rules
+  }
+  return Object.keys(merged).length > 0 ? merged : null
+}
+
 function getHeaderValidationErrorForEndpoint(endpointId: string): string | null {
   const rules = getEndpointEditRules(endpointId)
   for (let i = 0; i < rules.length; i++) {
@@ -2356,6 +2693,50 @@ function getHeaderValidationErrorForEndpoint(endpointId: string): string | null 
       const fromErr = validateRenameFromForEndpoint(endpointId, rule.from, i)
       if (fromErr) return `${prefix}${fromErr}`
       const toErr = validateRenameToForEndpoint(endpointId, rule.to, i)
+      if (toErr) return `${prefix}${toErr}`
+    }
+    const conditionErr = validateEditableCondition(rule.condition)
+    if (conditionErr) return `${prefix}${conditionErr}`
+  }
+  return null
+}
+
+function validateResponseHeaderNameForEndpoint(endpointId: string, name: string, index: number, field: 'key' | 'from' | 'to'): string | null {
+  const trimmedName = name.trim().toLowerCase()
+  if (!trimmedName) return null
+
+  if ((field === 'key' || field === 'to') && RESERVED_RESPONSE_HEADERS.has(trimmedName)) {
+    return `"${name}" 是系统保留的响应头`
+  }
+
+  const rules = getEndpointEditResponseRules(endpointId)
+  const duplicate = rules.findIndex(
+    (r, i) => i !== index && (
+      ((r.action === 'set' || r.action === 'drop') && r.key.trim().toLowerCase() === trimmedName) ||
+      (r.action === 'rename' && (field === 'from'
+        ? r.from.trim().toLowerCase() === trimmedName
+        : r.to.trim().toLowerCase() === trimmedName))
+    )
+  )
+  if (duplicate >= 0) {
+    return field === 'from' ? '该响应头已被其他规则处理' : '响应头名称重复'
+  }
+
+  return null
+}
+
+function getResponseHeaderValidationErrorForEndpoint(endpointId: string): string | null {
+  const rules = getEndpointEditResponseRules(endpointId)
+  for (let i = 0; i < rules.length; i++) {
+    const rule = rules[i]
+    const prefix = `第 ${i + 1} 条响应头规则：`
+    if (rule.action === 'set' || rule.action === 'drop') {
+      const err = validateResponseHeaderNameForEndpoint(endpointId, rule.key, i, 'key')
+      if (err) return `${prefix}${err}`
+    } else if (rule.action === 'rename') {
+      const fromErr = validateResponseHeaderNameForEndpoint(endpointId, rule.from, i, 'from')
+      if (fromErr) return `${prefix}${fromErr}`
+      const toErr = validateResponseHeaderNameForEndpoint(endpointId, rule.to, i, 'to')
       if (toErr) return `${prefix}${toErr}`
     }
     const conditionErr = validateEditableCondition(rule.condition)
@@ -2389,9 +2770,12 @@ onMounted(() => {
 watch(() => props.modelValue, (open) => {
   bodyRuleHelpOpenEndpointId.value = null
   ruleSelectOpen.value = {}
+  responseRuleSelectOpen.value = {}
   bodyRuleSelectOpen.value = {}
   headerRuleDraggedIndex.value = {}
   headerRuleDragOverIndex.value = {}
+  responseRuleDraggedIndex.value = {}
+  responseRuleDragOverIndex.value = {}
   bodyRuleDraggedIndex.value = {}
   bodyRuleDragOverIndex.value = {}
   if (open) {
@@ -2403,7 +2787,7 @@ watch(() => props.modelValue, (open) => {
     for (const endpoint of localEndpoints.value) {
       endpointEditStates.value[endpoint.id] = initEndpointEditState(endpoint)
       // 有规则时默认展开
-      const hasRules = (endpoint.header_rules?.length || 0) + (endpoint.body_rules?.length || 0) > 0
+      const hasRules = (endpoint.header_rules?.length || 0) + getEndpointResponseHeaderRules(endpoint).length + (endpoint.body_rules?.length || 0) > 0
       endpointRulesExpanded.value[endpoint.id] = hasRules
     }
     void preloadDefaultBodyRules(localEndpoints.value)
@@ -2443,6 +2827,12 @@ async function saveEndpoint(endpoint: ProviderEndpoint) {
     return
   }
 
+  const responseHeaderErr = getResponseHeaderValidationErrorForEndpoint(endpoint.id)
+  if (responseHeaderErr) {
+    showError(responseHeaderErr)
+    return
+  }
+
   // 检查请求体规则是否有验证错误
   const bodyErr = getBodyValidationErrorForEndpoint(endpoint.id)
   if (bodyErr) {
@@ -2461,6 +2851,12 @@ async function saveEndpoint(endpoint: ProviderEndpoint) {
     }
 
     if (hasRulesChanges(endpoint)) payload.header_rules = rulesToHeaderRules(state.rules)
+    if (hasResponseHeaderRulesChanges(endpoint)) {
+      payload.config = endpointConfigWithResponseHeaderRules(
+        endpoint,
+        rulesToHeaderRules(state.responseRules),
+      )
+    }
     if (hasBodyRulesChanges(endpoint)) payload.body_rules = rulesToBodyRules(state.bodyRules)
 
     // 注：upstreamStreamPolicy 现在由头部按钮直接保存，不在此处处理

@@ -136,7 +136,8 @@ pub struct SyncTerminalUsagePayloadSeed {
     pub status_code: u16,
     pub response_time_ms: Option<u64>,
     pub first_byte_time_ms: Option<u64>,
-    pub response_headers: Option<Value>,
+    pub provider_response_headers: Option<Value>,
+    pub client_response_headers: Option<Value>,
     pub provider_response_full: Option<Value>,
     pub provider_response_body_state: Option<UsageBodyCaptureState>,
     pub client_response: Option<Value>,
@@ -150,7 +151,8 @@ pub struct StreamTerminalUsagePayloadSeed {
     pub status_code: u16,
     pub response_time_ms: Option<u64>,
     pub first_byte_time_ms: Option<u64>,
-    pub response_headers: Option<Value>,
+    pub provider_response_headers: Option<Value>,
+    pub client_response_headers: Option<Value>,
     pub provider_response_full: Option<Value>,
     pub provider_response_body_state: Option<UsageBodyCaptureState>,
     pub client_response: Option<Value>,
@@ -729,7 +731,10 @@ pub fn build_sync_terminal_usage_payload_seed(
         false,
         false,
     ));
-    let response_headers = headers_to_json(&payload.headers);
+    let context = payload.report_context.as_ref().and_then(Value::as_object);
+    let provider_response_headers = context_usage_value(context, "provider_response_headers")
+        .or_else(|| headers_to_json(&payload.headers));
+    let client_response_headers = headers_to_json(&payload.headers);
     SyncTerminalUsagePayloadSeed {
         report_kind: payload.report_kind.clone(),
         status_code: payload.status_code,
@@ -738,7 +743,8 @@ pub fn build_sync_terminal_usage_payload_seed(
             .as_ref()
             .and_then(|value| value.elapsed_ms),
         first_byte_time_ms: payload.telemetry.as_ref().and_then(|value| value.ttfb_ms),
-        response_headers,
+        provider_response_headers,
+        client_response_headers,
         provider_response_full,
         provider_response_body_state,
         client_response,
@@ -755,7 +761,10 @@ pub fn build_sync_terminal_usage_payload_seed(
 pub fn build_stream_terminal_usage_payload_seed(
     payload: &GatewayStreamReportRequest,
 ) -> StreamTerminalUsagePayloadSeed {
-    let response_headers = headers_to_json(&payload.headers);
+    let context = payload.report_context.as_ref().and_then(Value::as_object);
+    let provider_response_headers = context_usage_value(context, "provider_response_headers")
+        .or_else(|| headers_to_json(&payload.headers));
+    let client_response_headers = headers_to_json(&payload.headers);
     StreamTerminalUsagePayloadSeed {
         report_kind: payload.report_kind.clone(),
         status_code: payload.status_code,
@@ -764,7 +773,8 @@ pub fn build_stream_terminal_usage_payload_seed(
             .as_ref()
             .and_then(|value| value.elapsed_ms),
         first_byte_time_ms: payload.telemetry.as_ref().and_then(|value| value.ttfb_ms),
-        response_headers,
+        provider_response_headers,
+        client_response_headers,
         provider_response_full: decode_body_for_storage(payload.provider_body_base64.as_deref()),
         provider_response_body_state: payload.provider_body_state,
         client_response: decode_body_for_storage(payload.client_body_base64.as_deref()),
@@ -791,7 +801,8 @@ pub fn build_sync_terminal_usage_seed(
         status_code,
         response_time_ms,
         first_byte_time_ms,
-        response_headers,
+        provider_response_headers,
+        client_response_headers,
         provider_response_full,
         provider_response_body_state,
         client_response,
@@ -842,9 +853,9 @@ pub fn build_sync_terminal_usage_seed(
             client_response_body_state,
         },
         routing: context_seed.routing,
-        provider_response_headers: response_headers.clone(),
+        provider_response_headers,
         provider_response: provider_response_full,
-        client_response_headers: response_headers,
+        client_response_headers,
         client_response,
         request_metadata: context_seed.request_metadata,
         audit_payload: capture_metadata,
@@ -862,7 +873,8 @@ pub fn build_stream_terminal_usage_seed(
         status_code,
         response_time_ms,
         first_byte_time_ms,
-        response_headers,
+        provider_response_headers,
+        client_response_headers,
         provider_response_full,
         provider_response_body_state,
         client_response,
@@ -912,9 +924,9 @@ pub fn build_stream_terminal_usage_seed(
             client_response_body_state,
         },
         routing: context_seed.routing,
-        provider_response_headers: response_headers.clone(),
+        provider_response_headers,
         provider_response: provider_response_full,
-        client_response_headers: response_headers,
+        client_response_headers,
         client_response,
         request_metadata: context_seed.request_metadata,
         audit_payload: capture_metadata,

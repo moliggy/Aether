@@ -65,6 +65,7 @@ use crate::execution_runtime::transport::{
     DirectSyncExecutionRuntime, DirectUpstreamStreamExecution, ExecutionRuntimeTransportError,
 };
 use crate::execution_runtime::{
+    apply_endpoint_response_header_rules, attach_provider_response_headers_to_report_context,
     local_failover_response_text, resolve_core_stream_direct_finalize_report_kind,
     resolve_core_stream_error_finalize_report_kind,
     resolve_local_candidate_failover_analysis_stream, should_fallback_to_control_stream,
@@ -839,6 +840,8 @@ async fn execute_stream_from_frame_stream(
             "execution runtime stream must start with headers frame".to_string(),
         ));
     };
+    let report_context =
+        attach_provider_response_headers_to_report_context(report_context, &headers);
     let mut buffered_frames = VecDeque::new();
     let mut stream_terminal_summary: Option<ExecutionStreamTerminalSummary> = None;
     if status_code == 200 && should_probe_success_failover_before_stream(&headers) {
@@ -1069,6 +1072,10 @@ async fn execute_stream_from_frame_stream(
             return Ok(None);
         }
 
+        let mut client_headers = headers.clone();
+        apply_endpoint_response_header_rules(state, &plan, &mut client_headers, body_json.as_ref())
+            .await?;
+
         let payload = build_stream_sync_payload(
             trace_id,
             stream_error_finalize_kind
@@ -1078,7 +1085,7 @@ async fn execute_stream_from_frame_stream(
                 .to_string(),
             report_context,
             status_code,
-            headers,
+            client_headers,
             body_json,
             body_base64,
             None,
@@ -1509,6 +1516,8 @@ async fn execute_stream_from_frame_stream(
             .await;
         });
     }
+
+    apply_endpoint_response_header_rules(state, &plan, &mut headers, None).await?;
 
     let request_id = request_id.to_string();
     let candidate_id = candidate_id.map(ToOwned::to_owned);

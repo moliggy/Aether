@@ -10,6 +10,7 @@ pub(crate) mod ndjson;
 mod oauth_retry;
 #[cfg(test)]
 pub(crate) mod remote_compat;
+mod response_header_rules;
 mod server;
 pub(crate) mod stream;
 mod stream_pump;
@@ -29,6 +30,9 @@ pub(crate) use self::fallback::{
     should_fallback_to_control_sync, should_finalize_sync_response,
     should_retry_next_local_candidate_stream, should_retry_next_local_candidate_sync,
     should_stop_local_candidate_failover_stream, should_stop_local_candidate_failover_sync,
+};
+pub(crate) use self::response_header_rules::{
+    apply_endpoint_response_header_rules, attach_provider_response_headers_to_report_context,
 };
 pub(crate) use crate::orchestration::{
     append_local_failover_policy_to_value, LocalFailoverAnalysis, LocalFailoverDecision,

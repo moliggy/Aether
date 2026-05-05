@@ -30,7 +30,8 @@ use crate::execution_runtime::remote_compat::post_sync_plan_to_remote_execution_
 use crate::execution_runtime::submission::submit_local_core_error_or_sync_finalize;
 use crate::execution_runtime::transport::DirectSyncExecutionRuntime;
 use crate::execution_runtime::{
-    analyze_local_candidate_failover_sync, local_failover_response_text,
+    analyze_local_candidate_failover_sync, apply_endpoint_response_header_rules,
+    attach_provider_response_headers_to_report_context, local_failover_response_text,
     resolve_core_sync_error_finalize_report_kind, should_fallback_to_control_sync,
     should_finalize_sync_response, LocalFailoverDecision,
 };
@@ -539,6 +540,11 @@ pub(crate) async fn execute_execution_runtime_sync(
     }
     let status_code = result.status_code;
     let has_body_bytes = body_base64.is_some();
+    let report_context =
+        attach_provider_response_headers_to_report_context(report_context, &headers);
+    let mut client_headers = headers.clone();
+    apply_endpoint_response_header_rules(state, &plan, &mut client_headers, body_json.as_ref())
+        .await?;
     let explicit_finalize = should_finalize_sync_response(report_kind.as_deref());
     let mapped_error_finalize_kind =
         resolve_core_sync_error_finalize_report_kind(plan_kind, &result, body_json.as_ref());
@@ -549,7 +555,7 @@ pub(crate) async fn execute_execution_runtime_sync(
             plan_kind,
             &report_context,
             status_code,
-            &headers,
+            &client_headers,
             &body_json,
             &body_base64,
             &result.telemetry,
@@ -694,7 +700,7 @@ pub(crate) async fn execute_execution_runtime_sync(
             finalize_report_kind,
             report_context,
             status_code,
-            headers,
+            client_headers,
             body_json,
             body_base64,
             telemetry,
@@ -863,7 +869,7 @@ pub(crate) async fn execute_execution_runtime_sync(
         report_kind.unwrap_or_default(),
         report_context,
         status_code,
-        headers,
+        client_headers,
         body_json,
         body_base64,
         telemetry,
