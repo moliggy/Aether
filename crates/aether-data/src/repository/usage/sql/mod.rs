@@ -36,7 +36,8 @@ use uuid::Uuid;
 
 use super::{
     api_key_usage_contribution, incoming_usage_can_recover_terminal_failure,
-    provider_api_key_usage_contribution, strip_deprecated_usage_display_fields, ApiKeyUsageDelta,
+    model_usage_contribution, provider_api_key_usage_contribution,
+    strip_deprecated_usage_display_fields, ApiKeyUsageDelta, ModelUsageDelta,
     ProviderApiKeyUsageDelta, StoredProviderApiKeyUsageSummary, StoredProviderUsageSummary,
     StoredRequestUsageAudit, StoredUsageDailySummary, UpsertUsageRecord, UsageAuditListQuery,
     UsageDailyHeatmapQuery, UsageReadRepository, UsageWriteRepository,
@@ -1218,6 +1219,9 @@ const REBUILD_API_KEY_USAGE_STATS_SQL: &str =
 
 const APPLY_PROVIDER_API_KEY_USAGE_DELTA_SQL: &str =
     include_str!("queries/apply_provider_api_key_usage_delta_sql.sql");
+
+const APPLY_GLOBAL_MODEL_USAGE_DELTA_SQL: &str =
+    include_str!("queries/apply_global_model_usage_delta_sql.sql");
 
 const RESET_PROVIDER_API_KEY_USAGE_STATS_SQL: &str =
     include_str!("queries/reset_provider_api_key_usage_stats_sql.sql");
@@ -7268,6 +7272,40 @@ ORDER BY "usage".user_id ASC
                             }
                         }
                     }
+
+                    let before_model_contribution =
+                        previous_usage.as_ref().and_then(model_usage_contribution);
+                    let after_model_contribution = model_usage_contribution(&stored);
+                    match (
+                        before_model_contribution.as_ref(),
+                        after_model_contribution.as_ref(),
+                    ) {
+                        (Some(before), Some(after)) if before.model == after.model => {
+                            let delta = ModelUsageDelta::between(before, after);
+                            apply_global_model_usage_delta_in_tx(tx, before.model.as_str(), &delta)
+                                .await?;
+                        }
+                        _ => {
+                            if let Some(before) = before_model_contribution.as_ref() {
+                                let delta = ModelUsageDelta::removal(before);
+                                apply_global_model_usage_delta_in_tx(
+                                    tx,
+                                    before.model.as_str(),
+                                    &delta,
+                                )
+                                .await?;
+                            }
+                            if let Some(after) = after_model_contribution.as_ref() {
+                                let delta = ModelUsageDelta::addition(after);
+                                apply_global_model_usage_delta_in_tx(
+                                    tx,
+                                    after.model.as_str(),
+                                    &delta,
+                                )
+                                .await?;
+                            }
+                        }
+                    }
                     Ok(stored)
                 }) as BoxFuture<'_, Result<StoredRequestUsageAudit, DataLayerError>>
             })
@@ -7680,6 +7718,33 @@ async fn apply_provider_api_key_usage_delta_in_tx(
                 .removed_last_used_at_unix_secs
                 .map(|value| value as f64),
         )
+        .execute(&mut **tx)
+        .await
+        .map_postgres_err()?;
+    Ok(())
+}
+
+async fn apply_global_model_usage_delta_in_tx(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    model: &str,
+    delta: &ModelUsageDelta,
+) -> Result<(), DataLayerError> {
+    let model = model.trim();
+    if model.is_empty() {
+        return Ok(());
+    }
+    if delta.is_noop() {
+        return Ok(());
+    }
+
+    sqlx::query(APPLY_GLOBAL_MODEL_USAGE_DELTA_SQL)
+        .bind(model)
+        .bind(i32::try_from(delta.request_count).map_err(|_| {
+            DataLayerError::UnexpectedValue(format!(
+                "global_models.usage_count delta exceeds i32: {}",
+                delta.request_count
+            ))
+        })?)
         .execute(&mut **tx)
         .await
         .map_postgres_err()?;

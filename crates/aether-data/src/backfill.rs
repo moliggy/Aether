@@ -277,7 +277,15 @@ mod tests {
             .into_iter()
             .map(|item| item.version)
             .collect::<Vec<_>>();
-        assert_eq!(versions, vec![20260422110000, 20260422120000]);
+        assert_eq!(
+            versions,
+            vec![
+                20260422110000,
+                20260422120000,
+                20260504120000,
+                20260505120000
+            ]
+        );
     }
 
     #[test]
@@ -289,7 +297,10 @@ mod tests {
         .into_iter()
         .map(|item| item.version)
         .collect::<Vec<_>>();
-        assert_eq!(versions, vec![20260422120000]);
+        assert_eq!(
+            versions,
+            vec![20260422120000, 20260504120000, 20260505120000]
+        );
     }
 
     #[derive(Debug)]
@@ -533,6 +544,25 @@ mod tests {
 
         query(
             r#"
+            INSERT INTO public.global_models (
+                id,
+                name,
+                display_name,
+                usage_count
+            ) VALUES (
+                'global-model-backfill-1',
+                'gpt-4o-mini',
+                'GPT-4o Mini',
+                77
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("global model fixture should insert");
+
+        query(
+            r#"
             INSERT INTO public.usage (
                 id,
                 user_id,
@@ -597,10 +627,11 @@ mod tests {
         let pending_before = pending_backfills(&pool)
             .await
             .expect("pending backfills should load");
-        assert_eq!(pending_before.len(), 3);
+        assert_eq!(pending_before.len(), 4);
         assert_eq!(pending_before[0].version, 20260422110000);
         assert_eq!(pending_before[1].version, 20260422120000);
         assert_eq!(pending_before[2].version, 20260504120000);
+        assert_eq!(pending_before[3].version, 20260505120000);
 
         run_backfills(&pool)
             .await
@@ -618,7 +649,12 @@ mod tests {
                 .expect("applied backfill versions should load");
         assert_eq!(
             applied_versions,
-            vec![20260422110000, 20260422120000, 20260504120000]
+            vec![
+                20260422110000,
+                20260422120000,
+                20260504120000,
+                20260505120000
+            ]
         );
 
         let api_key_total_requests: i64 = query_scalar(
@@ -628,6 +664,14 @@ mod tests {
         .await
         .expect("api key total requests should load");
         assert_eq!(api_key_total_requests, 1);
+
+        let global_model_usage_count: i64 = query_scalar(
+            "SELECT COALESCE(usage_count, 0)::BIGINT FROM public.global_models WHERE name = 'gpt-4o-mini'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("global model usage count should load");
+        assert_eq!(global_model_usage_count, 1);
 
         let api_key_total_tokens: i64 = query_scalar(
             "SELECT COALESCE(total_tokens, 0)::BIGINT FROM public.api_keys WHERE id = 'api-key-backfill-1'",
