@@ -33,6 +33,25 @@ const OPENAI_IMAGE_INPUT_FIDELITY_DETAIL: &str = "input_fidelity 仅支持 low �
 const OPENAI_IMAGE_OUTPUT_COMPRESSION_DETAIL: &str = "output_compression 必须是 0-100 的整数";
 const OPENAI_IMAGE_INVALID_JSON_DETAIL: &str = "图片接口 JSON 请求体无效";
 const OPENAI_IMAGE_INVALID_MULTIPART_DETAIL: &str = "图片接口 multipart/form-data 请求体无效";
+const OPENAI_EMBEDDING_CONTENT_TYPE_DETAIL: &str =
+    "Embedding request content-type must be application/json";
+const OPENAI_EMBEDDING_INVALID_JSON_DETAIL: &str = "Embedding request JSON body is invalid";
+const OPENAI_EMBEDDING_MODEL_REQUIRED_DETAIL: &str = "Embedding request model is required";
+const OPENAI_EMBEDDING_INPUT_REQUIRED_DETAIL: &str = "Embedding request input is required";
+const OPENAI_EMBEDDING_CHAT_PAYLOAD_DETAIL: &str =
+    "Embedding request must use input, not chat messages";
+const OPENAI_EMBEDDING_STREAM_UNSUPPORTED_DETAIL: &str =
+    "Embedding requests do not support streaming";
+const OPENAI_RERANK_CONTENT_TYPE_DETAIL: &str =
+    "Rerank request content-type must be application/json";
+const OPENAI_RERANK_INVALID_JSON_DETAIL: &str = "Rerank request JSON body is invalid";
+const OPENAI_RERANK_MODEL_REQUIRED_DETAIL: &str = "Rerank request model is required";
+const OPENAI_RERANK_QUERY_REQUIRED_DETAIL: &str = "Rerank request query is required";
+const OPENAI_RERANK_DOCUMENTS_REQUIRED_DETAIL: &str = "Rerank request documents are required";
+const OPENAI_RERANK_TOP_N_DETAIL: &str = "Rerank request top_n must be a positive integer";
+const OPENAI_RERANK_CHAT_PAYLOAD_DETAIL: &str =
+    "Rerank request must use query/documents, not chat messages";
+const OPENAI_RERANK_STREAM_UNSUPPORTED_DETAIL: &str = "Rerank requests do not support streaming";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OpenAiImageOperation {
@@ -78,9 +97,15 @@ pub(crate) fn ai_public_local_requires_buffered_body(
         .as_ref()
         .is_some_and(|decision| {
             decision.route_class.as_deref() == Some("ai_public")
-                && decision.route_family.as_deref() == Some("claude")
-                && decision.route_kind.as_deref() == Some("count_tokens")
                 && request_context.request_method == http::Method::POST
+                && ((decision.route_family.as_deref() == Some("claude")
+                    && decision.route_kind.as_deref() == Some("count_tokens"))
+                    || (decision.route_family.as_deref() == Some("openai")
+                        && decision.route_kind.as_deref() == Some("embedding")
+                        && request_context.request_path == "/v1/embeddings")
+                    || (decision.route_family.as_deref() == Some("openai")
+                        && decision.route_kind.as_deref() == Some("rerank")
+                        && request_context.request_path == "/v1/rerank"))
         })
 }
 
@@ -124,13 +149,55 @@ fn maybe_build_local_openai_request_validation_response(
         return None;
     }
 
-    let request_body = request_body?;
-
     if decision.route_kind.as_deref() == Some("chat")
         && request_context.request_path == "/v1/chat/completions"
     {
         return None;
     }
+
+    if decision.route_kind.as_deref() == Some("embedding")
+        && request_context.request_path == "/v1/embeddings"
+    {
+        let Some(request_body) = request_body else {
+            return Some(build_ai_public_error_response(
+                http::StatusCode::BAD_REQUEST,
+                OPENAI_EMBEDDING_INVALID_JSON_DETAIL,
+            ));
+        };
+        if let Err(detail) = validate_openai_embedding_request(
+            request_context.request_content_type.as_deref(),
+            request_body,
+        ) {
+            return Some(build_ai_public_error_response(
+                http::StatusCode::BAD_REQUEST,
+                detail,
+            ));
+        }
+        return None;
+    }
+
+    if decision.route_kind.as_deref() == Some("rerank")
+        && request_context.request_path == "/v1/rerank"
+    {
+        let Some(request_body) = request_body else {
+            return Some(build_ai_public_error_response(
+                http::StatusCode::BAD_REQUEST,
+                OPENAI_RERANK_INVALID_JSON_DETAIL,
+            ));
+        };
+        if let Err(detail) = validate_openai_rerank_request(
+            request_context.request_content_type.as_deref(),
+            request_body,
+        ) {
+            return Some(build_ai_public_error_response(
+                http::StatusCode::BAD_REQUEST,
+                detail,
+            ));
+        }
+        return None;
+    }
+
+    let request_body = request_body?;
 
     if decision.route_kind.as_deref() != Some("image")
         || !matches!(
@@ -291,6 +358,160 @@ fn maybe_build_local_openai_request_validation_response(
     }
 
     None
+}
+
+fn validate_openai_embedding_request(
+    content_type: Option<&str>,
+    request_body: &Bytes,
+) -> Result<(), &'static str> {
+    if !content_type
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .contains("application/json")
+    {
+        return Err(OPENAI_EMBEDDING_CONTENT_TYPE_DETAIL);
+    }
+    if request_body.is_empty() {
+        return Err(OPENAI_EMBEDDING_INVALID_JSON_DETAIL);
+    }
+    let payload = serde_json::from_slice::<Value>(request_body)
+        .map_err(|_| OPENAI_EMBEDDING_INVALID_JSON_DETAIL)?;
+    let object = payload
+        .as_object()
+        .ok_or(OPENAI_EMBEDDING_INVALID_JSON_DETAIL)?;
+    if object.contains_key("messages") {
+        return Err(OPENAI_EMBEDDING_CHAT_PAYLOAD_DETAIL);
+    }
+    if object
+        .get("stream")
+        .and_then(value_as_bool)
+        .unwrap_or(false)
+    {
+        return Err(OPENAI_EMBEDDING_STREAM_UNSUPPORTED_DETAIL);
+    }
+    if object
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return Err(OPENAI_EMBEDDING_MODEL_REQUIRED_DETAIL);
+    }
+    let Some(input) = object.get("input") else {
+        return Err(OPENAI_EMBEDDING_INPUT_REQUIRED_DETAIL);
+    };
+    if !embedding_input_is_non_empty(input) {
+        return Err(OPENAI_EMBEDDING_INPUT_REQUIRED_DETAIL);
+    }
+    Ok(())
+}
+
+fn validate_openai_rerank_request(
+    content_type: Option<&str>,
+    request_body: &Bytes,
+) -> Result<(), &'static str> {
+    if !content_type
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .contains("application/json")
+    {
+        return Err(OPENAI_RERANK_CONTENT_TYPE_DETAIL);
+    }
+    if request_body.is_empty() {
+        return Err(OPENAI_RERANK_INVALID_JSON_DETAIL);
+    }
+    let payload = serde_json::from_slice::<Value>(request_body)
+        .map_err(|_| OPENAI_RERANK_INVALID_JSON_DETAIL)?;
+    let object = payload
+        .as_object()
+        .ok_or(OPENAI_RERANK_INVALID_JSON_DETAIL)?;
+    if object.contains_key("messages") {
+        return Err(OPENAI_RERANK_CHAT_PAYLOAD_DETAIL);
+    }
+    if object
+        .get("stream")
+        .and_then(value_as_bool)
+        .unwrap_or(false)
+    {
+        return Err(OPENAI_RERANK_STREAM_UNSUPPORTED_DETAIL);
+    }
+    if object
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return Err(OPENAI_RERANK_MODEL_REQUIRED_DETAIL);
+    }
+    if object
+        .get("query")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return Err(OPENAI_RERANK_QUERY_REQUIRED_DETAIL);
+    }
+    let Some(documents) = object.get("documents").and_then(Value::as_array) else {
+        return Err(OPENAI_RERANK_DOCUMENTS_REQUIRED_DETAIL);
+    };
+    if documents.is_empty() || documents.iter().any(rerank_document_is_empty) {
+        return Err(OPENAI_RERANK_DOCUMENTS_REQUIRED_DETAIL);
+    }
+    if object
+        .get("top_n")
+        .or_else(|| object.get("topN"))
+        .is_some_and(|value| !positive_json_integer(value))
+    {
+        return Err(OPENAI_RERANK_TOP_N_DETAIL);
+    }
+    Ok(())
+}
+
+fn rerank_document_is_empty(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.trim().is_empty(),
+        Value::Object(object) => object
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.trim().is_empty()),
+        Value::Null => true,
+        _ => false,
+    }
+}
+
+fn positive_json_integer(value: &Value) -> bool {
+    value.as_u64().is_some_and(|number| number > 0)
+        || value.as_i64().is_some_and(|number| number > 0)
+        || value
+            .as_str()
+            .and_then(|text| text.trim().parse::<u64>().ok())
+            .is_some_and(|number| number > 0)
+}
+
+fn embedding_input_is_non_empty(value: &Value) -> bool {
+    match value {
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(items) if !items.is_empty() => embedding_array_input_is_non_empty(items),
+        _ => false,
+    }
+}
+
+fn embedding_array_input_is_non_empty(items: &[Value]) -> bool {
+    items
+        .iter()
+        .all(|item| item.as_str().is_some_and(|text| !text.trim().is_empty()))
+        || embedding_token_array_is_non_empty(items)
+        || items.iter().all(|item| {
+            item.as_array()
+                .is_some_and(|items| embedding_token_array_is_non_empty(items))
+        })
+}
+
+fn embedding_token_array_is_non_empty(items: &[Value]) -> bool {
+    !items.is_empty() && items.iter().all(|item| item.as_u64().is_some())
 }
 
 fn image_request_count(value: &Value) -> Option<u64> {

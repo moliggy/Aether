@@ -498,6 +498,19 @@ pub(super) fn classify_admin_observability_family_route(
     } else if method == http::Method::GET
         && matches!(
             normalized_path,
+            "/api/admin/stats/performance/providers" | "/api/admin/stats/performance/providers/"
+        )
+    {
+        Some(classified(
+            "admin_proxy",
+            "stats_manage",
+            "provider_performance",
+            "admin:stats",
+            false,
+        ))
+    } else if method == http::Method::GET
+        && matches!(
+            normalized_path,
             "/api/admin/stats/cost/forecast" | "/api/admin/stats/cost/forecast/"
         )
     {

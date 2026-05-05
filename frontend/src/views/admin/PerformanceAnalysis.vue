@@ -491,6 +491,183 @@
       </Card>
     </div>
 
+    <Card class="space-y-4 p-4">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 class="text-sm font-semibold">
+            Provider 性能
+          </h3>
+          <p class="text-xs text-muted-foreground">
+            {{ providerPerformanceSubtitle }}
+          </p>
+        </div>
+        <Badge variant="outline">
+          Top {{ providerPerformanceRows.length || 0 }}
+        </Badge>
+      </div>
+
+      <div
+        v-if="providerPerformanceLoading"
+        class="p-6"
+      >
+        <LoadingState />
+      </div>
+
+      <div
+        v-else
+        class="space-y-4"
+      >
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div
+            v-for="card in providerPerformanceSummaryCards"
+            :key="card.title"
+            class="rounded-xl border border-border/70 bg-card/70 px-4 py-3"
+          >
+            <div class="flex items-center justify-between gap-3">
+              <span class="text-xs text-muted-foreground">{{ card.title }}</span>
+              <component
+                :is="card.icon"
+                class="h-4 w-4"
+                :class="card.iconClass"
+              />
+            </div>
+            <div class="mt-3 text-2xl font-semibold tracking-tight">
+              {{ card.value }}
+            </div>
+            <div class="mt-2 text-xs text-muted-foreground">
+              {{ card.hint }}
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="providerPerformanceRows.length"
+          class="overflow-x-auto rounded-lg border border-border/70"
+        >
+          <table class="min-w-full divide-y divide-border/70 text-sm">
+            <thead class="bg-muted/30 text-xs text-muted-foreground">
+              <tr>
+                <th class="px-3 py-2 text-left font-medium">
+                  Provider
+                </th>
+                <th class="px-3 py-2 text-right font-medium">
+                  请求
+                </th>
+                <th class="px-3 py-2 text-right font-medium">
+                  成功率
+                </th>
+                <th class="px-3 py-2 text-right font-medium">
+                  输出 TPS
+                </th>
+                <th class="px-3 py-2 text-right font-medium">
+                  平均首字
+                </th>
+                <th class="px-3 py-2 text-right font-medium">
+                  平均响应
+                </th>
+                <th class="px-3 py-2 text-right font-medium">
+                  P90 响应 / 首字
+                </th>
+                <th class="px-3 py-2 text-right font-medium">
+                  样本
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-border/60">
+              <tr
+                v-for="provider in providerPerformanceRows"
+                :key="provider.provider_id"
+                class="bg-background/40"
+              >
+                <td class="max-w-[220px] px-3 py-2">
+                  <div class="truncate font-medium">
+                    {{ provider.provider }}
+                  </div>
+                  <div class="truncate text-xs text-muted-foreground">
+                    {{ provider.provider_id }}
+                  </div>
+                </td>
+                <td class="px-3 py-2 text-right">
+                  {{ formatMetricNumber(provider.request_count) }}
+                </td>
+                <td class="px-3 py-2 text-right">
+                  {{ formatProviderPerformanceMetric(provider.success_rate, '%') }}
+                </td>
+                <td class="px-3 py-2 text-right">
+                  {{ formatProviderPerformanceMetric(provider.avg_output_tps, '/s') }}
+                </td>
+                <td class="px-3 py-2 text-right">
+                  {{ formatProviderPerformanceMetric(provider.avg_first_byte_time_ms, 'ms') }}
+                </td>
+                <td class="px-3 py-2 text-right">
+                  {{ formatProviderPerformanceMetric(provider.avg_response_time_ms, 'ms') }}
+                </td>
+                <td class="px-3 py-2 text-right">
+                  {{ formatProviderPerformanceMetric(provider.p90_response_time_ms, 'ms', 0) }}
+                  /
+                  {{ formatProviderPerformanceMetric(provider.p90_first_byte_time_ms, 'ms', 0) }}
+                </td>
+                <td class="px-3 py-2 text-right text-xs text-muted-foreground">
+                  {{ formatMetricNumber(provider.tps_sample_count) }} /
+                  {{ formatMetricNumber(provider.first_byte_sample_count) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div
+          v-else
+          class="rounded-lg border border-dashed border-border/70 px-3 py-4 text-sm text-muted-foreground"
+        >
+          当前没有 Provider 性能数据。
+        </div>
+      </div>
+    </Card>
+
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <Card class="space-y-3 p-4">
+        <h3 class="text-sm font-semibold">
+          输出 TPS 趋势
+        </h3>
+        <div
+          v-if="providerPerformanceLoading"
+          class="p-6"
+        >
+          <LoadingState />
+        </div>
+        <div
+          v-else
+          class="h-[260px]"
+        >
+          <LineChart
+            :data="providerTpsChartData"
+            :options="providerTpsChartOptions"
+          />
+        </div>
+      </Card>
+      <Card class="space-y-3 p-4">
+        <h3 class="text-sm font-semibold">
+          平均首字趋势
+        </h3>
+        <div
+          v-if="providerPerformanceLoading"
+          class="p-6"
+        >
+          <LoadingState />
+        </div>
+        <div
+          v-else
+          class="h-[260px]"
+        >
+          <LineChart
+            :data="providerFirstByteChartData"
+            :options="providerLatencyChartOptions"
+          />
+        </div>
+      </Card>
+    </div>
+
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Card class="p-4">
         <ErrorDistributionChart
@@ -562,11 +739,20 @@ import {
   Activity,
   AlertTriangle,
   Cable,
+  CheckCircle2,
   GitBranch,
+  Gauge,
   ShieldCheck,
+  Timer,
   Workflow,
+  Zap,
 } from 'lucide-vue-next'
-import { adminApi, type ErrorDistributionResponse, type PercentileItem } from '@/api/admin'
+import {
+  adminApi,
+  type ErrorDistributionResponse,
+  type PercentileItem,
+  type ProviderPerformanceResponse,
+} from '@/api/admin'
 import { dashboardApi, type ProviderStatus } from '@/api/dashboard'
 import {
   monitoringApi,
@@ -586,6 +772,10 @@ import { getDateRangeFromPeriod } from '@/features/usage/composables'
 import type { DateRangeParams } from '@/features/usage/types'
 import { formatDate, formatNumber, formatTokens } from '@/utils/format'
 import { log } from '@/utils/logger'
+import {
+  buildProviderPerformanceChartData,
+  formatProviderPerformanceMetric,
+} from './performanceAnalysisHelpers'
 
 const LIVE_REFRESH_INTERVAL_MS = 10_000
 
@@ -601,6 +791,8 @@ const errorLoading = ref(false)
 
 const providerStatus = ref<ProviderStatus[]>([])
 const providerLoading = ref(false)
+const providerPerformance = ref<ProviderPerformanceResponse | null>(null)
+const providerPerformanceLoading = ref(false)
 
 const systemStatus = ref<AdminMonitoringSystemStatus | null>(null)
 const resilienceStatus = ref<AdminMonitoringResilienceStatus | null>(null)
@@ -615,6 +807,7 @@ const liveLastUpdatedAt = ref<string | null>(null)
 let percentilesRequestId = 0
 let errorsRequestId = 0
 let providersRequestId = 0
+let providerPerformanceRequestId = 0
 let liveRequestId = 0
 let loadAllPromise: Promise<void> | null = null
 let hasPendingLoadAll = false
@@ -695,6 +888,28 @@ async function loadProviders() {
   } finally {
     if (requestId === providersRequestId) {
       providerLoading.value = false
+    }
+  }
+}
+
+async function loadProviderPerformance() {
+  const requestId = ++providerPerformanceRequestId
+  providerPerformanceLoading.value = true
+  try {
+    const data = await adminApi.getProviderPerformance({
+      ...buildTimeRangeParams(),
+      granularity: 'day',
+      limit: 8,
+    })
+    if (requestId !== providerPerformanceRequestId) return
+    providerPerformance.value = data
+  } catch (error) {
+    if (requestId !== providerPerformanceRequestId) return
+    providerPerformance.value = null
+    log.error('加载 Provider 性能统计失败', error)
+  } finally {
+    if (requestId === providerPerformanceRequestId) {
+      providerPerformanceLoading.value = false
     }
   }
 }
@@ -866,6 +1081,83 @@ const fallbackRows = computed(() => {
     }))
 })
 
+const providerPerformanceRows = computed(() => providerPerformance.value?.providers ?? [])
+
+const providerPerformanceSubtitle = computed(() => {
+  const requests = providerPerformance.value?.summary.request_count ?? 0
+  return `完成窗口内 ${formatMetricNumber(requests)} 个 Provider 请求样本`
+})
+
+const providerPerformanceSummaryCards = computed(() => {
+  const summary = providerPerformance.value?.summary
+  return [
+    {
+      title: '输出 TPS',
+      value: formatProviderPerformanceMetric(summary?.avg_output_tps, '/s'),
+      hint: `请求 ${formatMetricNumber(summary?.request_count)}`,
+      icon: Zap,
+      iconClass: 'text-amber-500',
+    },
+    {
+      title: '平均首字',
+      value: formatProviderPerformanceMetric(summary?.avg_first_byte_time_ms, 'ms'),
+      hint: '成功请求首字样本',
+      icon: Timer,
+      iconClass: 'text-sky-500',
+    },
+    {
+      title: '平均响应',
+      value: formatProviderPerformanceMetric(summary?.avg_response_time_ms, 'ms'),
+      hint: '成功请求响应耗时',
+      icon: Gauge,
+      iconClass: 'text-violet-500',
+    },
+    {
+      title: '成功率',
+      value: formatProviderPerformanceMetric(summary?.success_rate, '%'),
+      hint: `${formatMetricNumber(providerPerformanceRows.value.length)} 个 Provider`,
+      icon: CheckCircle2,
+      iconClass: 'text-emerald-500',
+    },
+  ]
+})
+
+const providerTpsChartData = computed(() => (
+  buildProviderPerformanceChartData(
+    providerPerformance.value?.timeline ?? [],
+    'avg_output_tps',
+    providerPerformanceRows.value,
+  )
+))
+
+const providerFirstByteChartData = computed(() => (
+  buildProviderPerformanceChartData(
+    providerPerformance.value?.timeline ?? [],
+    'avg_first_byte_time_ms',
+    providerPerformanceRows.value,
+  )
+))
+
+const providerTpsChartOptions = computed(() => ({
+  scales: {
+    y: {
+      ticks: {
+        callback: (value: string | number) => `${value}/s`,
+      },
+    },
+  },
+}))
+
+const providerLatencyChartOptions = computed(() => ({
+  scales: {
+    y: {
+      ticks: {
+        callback: (value: string | number) => `${value}ms`,
+      },
+    },
+  },
+}))
+
 const liveSummaryCards = computed(() => [
   {
     title: '系统健康',
@@ -920,7 +1212,8 @@ const isRefreshing = computed(() => (
   liveRefreshing.value ||
   percentileLoading.value ||
   errorLoading.value ||
-  providerLoading.value
+  providerLoading.value ||
+  providerPerformanceLoading.value
 ))
 
 async function loadAll() {
@@ -929,7 +1222,12 @@ async function loadAll() {
     return loadAllPromise
   }
 
-  loadAllPromise = Promise.all([loadPercentiles(), loadErrors(), loadProviders()])
+  loadAllPromise = Promise.all([
+    loadPercentiles(),
+    loadErrors(),
+    loadProviders(),
+    loadProviderPerformance(),
+  ])
     .then(() => undefined)
     .finally(() => {
       loadAllPromise = null
@@ -983,6 +1281,7 @@ onUnmounted(() => {
   percentilesRequestId += 1
   errorsRequestId += 1
   providersRequestId += 1
+  providerPerformanceRequestId += 1
   liveRequestId += 1
 })
 </script>

@@ -451,6 +451,128 @@ async fn gateway_handles_admin_model_catalog_locally_with_trusted_admin_principa
 }
 
 #[tokio::test]
+async fn admin_global_models_include_embedding_capability() {
+    let upstream_hits = Arc::new(Mutex::new(0usize));
+    let upstream_hits_clone = Arc::clone(&upstream_hits);
+    let upstream = Router::new().route(
+        "/{*path}",
+        any(move |_request: Request| {
+            let upstream_hits_inner = Arc::clone(&upstream_hits_clone);
+            async move {
+                *upstream_hits_inner.lock().expect("mutex should lock") += 1;
+                (StatusCode::OK, Body::from("unexpected upstream hit"))
+            }
+        }),
+    );
+
+    let mut global_model = sample_admin_global_model(
+        "global-embedding-small",
+        "text-embedding-3-small",
+        "Text Embedding 3 Small",
+    );
+    global_model.supported_capabilities = Some(json!(["embedding"]));
+    global_model.config = Some(json!({
+        "api_formats": ["openai:embedding"],
+        "dimensions": 1536,
+        "model_type": "embedding"
+    }));
+    let mut provider_model = sample_admin_provider_model(
+        "model-openai-embedding-small",
+        "provider-openai",
+        "global-embedding-small",
+        "text-embedding-3-small",
+    );
+    provider_model.provider_model_mappings = Some(json!([{
+        "name": "text-embedding-3-small",
+        "priority": 1,
+        "api_formats": ["openai:embedding"]
+    }]));
+    provider_model.config = Some(json!({
+        "api_formats": ["openai:embedding"],
+        "dimensions": 1536,
+        "model_type": "embedding"
+    }));
+    provider_model.supports_streaming = Some(false);
+    provider_model.global_model_name = Some("text-embedding-3-small".to_string());
+    provider_model.global_model_display_name = Some("Text Embedding 3 Small".to_string());
+    provider_model.global_model_supported_capabilities = Some(json!(["embedding"]));
+    provider_model.global_model_config = global_model.config.clone();
+
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![sample_provider("provider-openai", "openai", 10)],
+        Vec::new(),
+        Vec::new(),
+    ));
+    let global_model_repository = Arc::new(
+        InMemoryGlobalModelReadRepository::seed(Vec::new())
+            .with_admin_global_models(vec![global_model])
+            .with_admin_provider_models(vec![provider_model]),
+    );
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_reader_for_tests(
+                    provider_catalog_repository,
+                )
+                .with_global_model_repository_for_tests(global_model_repository),
+            ),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+    let client = reqwest::Client::new();
+
+    let list_response = client
+        .get(format!("{gateway_url}/api/admin/models/global?limit=20"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(list_response.status(), StatusCode::OK);
+    let list_payload: serde_json::Value =
+        list_response.json().await.expect("json body should parse");
+    assert_eq!(
+        list_payload["models"][0]["supported_capabilities"],
+        json!(["embedding"])
+    );
+    assert_eq!(
+        list_payload["models"][0]["config"]["api_formats"],
+        json!(["openai:embedding"])
+    );
+
+    let catalog_response = client
+        .get(format!("{gateway_url}/api/admin/models/catalog"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(catalog_response.status(), StatusCode::OK);
+    let catalog_payload: serde_json::Value = catalog_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(
+        catalog_payload["models"][0]["capabilities"]["supports_embedding"],
+        true
+    );
+    assert_eq!(
+        catalog_payload["models"][0]["providers"][0]["supports_embedding"],
+        true
+    );
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
 async fn gateway_returns_service_unavailable_for_admin_model_catalog_without_required_readers() {
     let upstream_hits = Arc::new(Mutex::new(0usize));
     let upstream_hits_clone = Arc::clone(&upstream_hits);
@@ -859,8 +981,8 @@ async fn gateway_creates_admin_global_model_locally_with_trusted_admin_principal
                     "output_price_per_1m": 24.0
                 }]
             },
-            "supported_capabilities": ["streaming", "vision"],
-            "config": {"streaming": true}
+            "supported_capabilities": ["streaming", "vision", "embedding"],
+            "config": {"streaming": true, "api_formats": ["openai:embedding"], "model_type": "embedding"}
         }))
         .send()
         .await
@@ -870,6 +992,14 @@ async fn gateway_creates_admin_global_model_locally_with_trusted_admin_principal
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(payload["name"], "gpt-5-pro");
     assert_eq!(payload["display_name"], "GPT 5 Pro");
+    assert_eq!(
+        payload["supported_capabilities"],
+        json!(["streaming", "vision", "embedding"])
+    );
+    assert_eq!(
+        payload["config"]["api_formats"],
+        json!(["openai:embedding"])
+    );
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     let created = global_model_repository
@@ -878,6 +1008,10 @@ async fn gateway_creates_admin_global_model_locally_with_trusted_admin_principal
         .expect("model lookup should succeed")
         .expect("model should exist");
     assert_eq!(created.display_name, "GPT 5 Pro");
+    assert_eq!(
+        created.supported_capabilities,
+        Some(json!(["streaming", "vision", "embedding"]))
+    );
 
     gateway_handle.abort();
     upstream_handle.abort();
@@ -926,7 +1060,8 @@ async fn gateway_updates_and_deletes_admin_global_model_locally_with_trusted_adm
         .json(&json!({
             "display_name": "GPT 5 Updated",
             "is_active": false,
-            "config": {"streaming": false}
+            "supported_capabilities": ["embedding"],
+            "config": {"streaming": false, "api_formats": ["openai:embedding"], "dimensions": 1536}
         }))
         .send()
         .await
@@ -939,6 +1074,14 @@ async fn gateway_updates_and_deletes_admin_global_model_locally_with_trusted_adm
         .expect("json body should parse");
     assert_eq!(update_payload["display_name"], "GPT 5 Updated");
     assert_eq!(update_payload["is_active"], false);
+    assert_eq!(
+        update_payload["supported_capabilities"],
+        json!(["embedding"])
+    );
+    assert_eq!(
+        update_payload["config"]["api_formats"],
+        json!(["openai:embedding"])
+    );
 
     let delete_response = reqwest::Client::new()
         .delete(format!(

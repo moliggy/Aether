@@ -37,6 +37,13 @@ const STANDARD_API_FORMAT_ORDER: &[&str] = &[
     "claude:messages",
     "gemini:generate_content",
 ];
+const EMBEDDING_CANDIDATE_API_FORMATS: &[&str] = &[
+    "openai:embedding",
+    "gemini:embedding",
+    "jina:embedding",
+    "doubao:embedding",
+];
+const RERANK_CANDIDATE_API_FORMATS: &[&str] = &["openai:rerank", "jina:rerank"];
 
 pub fn request_candidate_api_format_preference(
     client_api_format: &str,
@@ -47,6 +54,26 @@ pub fn request_candidate_api_format_preference(
 
     if client_api_format == "openai:responses:compact" {
         return (provider_api_format == "openai:responses:compact").then_some((0, 0));
+    }
+    if is_embedding_api_format(client_api_format.as_str()) {
+        return is_embedding_api_format(provider_api_format.as_str()).then_some((
+            if client_api_format == provider_api_format {
+                0
+            } else {
+                1
+            },
+            embedding_api_format_priority(provider_api_format.as_str()),
+        ));
+    }
+    if is_rerank_api_format(client_api_format.as_str()) {
+        return is_rerank_api_format(provider_api_format.as_str()).then_some((
+            if client_api_format == provider_api_format {
+                0
+            } else {
+                1
+            },
+            rerank_api_format_priority(provider_api_format.as_str()),
+        ));
     }
 
     let (client_family, client_kind) =
@@ -76,6 +103,22 @@ pub fn request_candidate_api_formats(
     let client_api_format = normalize_api_format_alias(client_api_format);
     if client_api_format == "openai:responses:compact" {
         return vec!["openai:responses:compact"];
+    }
+    if is_embedding_api_format(client_api_format.as_str()) {
+        let mut candidate_api_formats = EMBEDDING_CANDIDATE_API_FORMATS.to_vec();
+        candidate_api_formats.sort_by_key(|provider_api_format| {
+            request_candidate_api_format_preference(client_api_format.as_str(), provider_api_format)
+                .unwrap_or((u8::MAX, u8::MAX))
+        });
+        return candidate_api_formats;
+    }
+    if is_rerank_api_format(client_api_format.as_str()) {
+        let mut candidate_api_formats = RERANK_CANDIDATE_API_FORMATS.to_vec();
+        candidate_api_formats.sort_by_key(|provider_api_format| {
+            request_candidate_api_format_preference(client_api_format.as_str(), provider_api_format)
+                .unwrap_or((u8::MAX, u8::MAX))
+        });
+        return candidate_api_formats;
     }
     if parse_non_compact_standard_api_format(client_api_format.as_str()).is_none() {
         return Vec::new();
@@ -192,6 +235,20 @@ pub fn is_standard_api_format(api_format: &str) -> bool {
     )
 }
 
+pub fn is_embedding_api_format(api_format: &str) -> bool {
+    matches!(
+        normalize_api_format_alias(api_format).as_str(),
+        "openai:embedding" | "gemini:embedding" | "jina:embedding" | "doubao:embedding"
+    )
+}
+
+pub fn is_rerank_api_format(api_format: &str) -> bool {
+    matches!(
+        normalize_api_format_alias(api_format).as_str(),
+        "openai:rerank" | "jina:rerank"
+    )
+}
+
 pub fn parse_non_compact_standard_api_format(
     api_format: &str,
 ) -> Option<(&'static str, &'static str)> {
@@ -210,6 +267,10 @@ pub fn api_data_format_id(api_format: &str) -> Option<&'static str> {
         "gemini:generate_content" => Some("gemini"),
         "openai:chat" => Some("openai_chat"),
         "openai:responses" | "openai:responses:compact" => Some("openai_responses"),
+        "openai:embedding" | "gemini:embedding" | "jina:embedding" | "doubao:embedding" => {
+            Some("embedding")
+        }
+        "openai:rerank" | "jina:rerank" => Some("rerank"),
         _ => None,
     }
 }
@@ -226,9 +287,26 @@ fn standard_api_format_priority(api_format: &str) -> u8 {
         .unwrap_or(STANDARD_API_FORMAT_ORDER.len()) as u8
 }
 
+fn embedding_api_format_priority(api_format: &str) -> u8 {
+    let api_format = normalize_api_format_alias(api_format);
+    EMBEDDING_CANDIDATE_API_FORMATS
+        .iter()
+        .position(|candidate| *candidate == api_format)
+        .unwrap_or(EMBEDDING_CANDIDATE_API_FORMATS.len()) as u8
+}
+
+fn rerank_api_format_priority(api_format: &str) -> u8 {
+    let api_format = normalize_api_format_alias(api_format);
+    RERANK_CANDIDATE_API_FORMATS
+        .iter()
+        .position(|candidate| *candidate == api_format)
+        .unwrap_or(RERANK_CANDIDATE_API_FORMATS.len()) as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
+        api_data_format_id, is_embedding_api_format, is_rerank_api_format,
         request_candidate_api_format_preference, request_candidate_api_formats,
         request_conversion_kind, request_conversion_requires_enable_flag,
         sync_chat_response_conversion_kind, sync_cli_response_conversion_kind,
@@ -353,6 +431,162 @@ mod tests {
             sync_cli_response_conversion_kind("openai:compact", "openai:responses:compact"),
             None
         );
+    }
+
+    #[test]
+    fn embedding_candidate_registry_excludes_chat_generation_formats() {
+        assert_eq!(
+            request_candidate_api_formats("openai:embedding", false),
+            vec![
+                "openai:embedding",
+                "gemini:embedding",
+                "jina:embedding",
+                "doubao:embedding",
+            ]
+        );
+        assert_eq!(
+            request_candidate_api_formats("jina:embedding", false),
+            vec![
+                "jina:embedding",
+                "openai:embedding",
+                "gemini:embedding",
+                "doubao:embedding",
+            ]
+        );
+        assert!(!request_candidate_api_formats("openai:embedding", false).contains(&"openai:chat"));
+        assert!(!request_candidate_api_formats("openai:embedding", false)
+            .contains(&"gemini:generate_content"));
+        assert_eq!(
+            request_conversion_kind("openai:embedding", "jina:embedding"),
+            None
+        );
+        assert_eq!(
+            request_conversion_kind("openai:embedding", "openai:chat"),
+            None
+        );
+        assert!(!request_conversion_requires_enable_flag(
+            "openai:embedding",
+            "jina:embedding"
+        ));
+    }
+
+    #[test]
+    fn embedding_candidate_registry_covers_all_provider_orderings() {
+        assert_eq!(
+            request_candidate_api_formats("gemini:embedding", true),
+            vec![
+                "gemini:embedding",
+                "openai:embedding",
+                "jina:embedding",
+                "doubao:embedding",
+            ]
+        );
+        assert_eq!(
+            request_candidate_api_formats("doubao:embedding", false),
+            vec![
+                "doubao:embedding",
+                "openai:embedding",
+                "gemini:embedding",
+                "jina:embedding",
+            ]
+        );
+
+        let embedding_formats = [
+            "openai:embedding",
+            "gemini:embedding",
+            "jina:embedding",
+            "doubao:embedding",
+        ];
+        for client_api_format in embedding_formats {
+            for provider_api_format in embedding_formats {
+                assert!(
+                    request_candidate_api_format_preference(client_api_format, provider_api_format)
+                        .is_some(),
+                    "{client_api_format} should consider {provider_api_format} as embedding candidate"
+                );
+                assert_eq!(
+                    request_conversion_kind(client_api_format, provider_api_format),
+                    None,
+                    "embedding pair should not use chat/generation conversion kind"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn embedding_candidate_registry_never_crosses_chat_generation_boundary() {
+        let embedding_formats = [
+            "openai:embedding",
+            "gemini:embedding",
+            "jina:embedding",
+            "doubao:embedding",
+        ];
+        let standard_formats = [
+            "openai:chat",
+            "openai:responses",
+            "claude:messages",
+            "gemini:generate_content",
+        ];
+
+        for embedding_api_format in embedding_formats {
+            assert!(is_embedding_api_format(embedding_api_format));
+            assert_eq!(api_data_format_id(embedding_api_format), Some("embedding"));
+            for standard_api_format in standard_formats {
+                assert_eq!(
+                    request_candidate_api_format_preference(
+                        embedding_api_format,
+                        standard_api_format
+                    ),
+                    None
+                );
+                assert_eq!(
+                    request_candidate_api_format_preference(
+                        standard_api_format,
+                        embedding_api_format
+                    ),
+                    None
+                );
+                assert_eq!(
+                    request_conversion_kind(embedding_api_format, standard_api_format),
+                    None
+                );
+                assert_eq!(
+                    request_conversion_kind(standard_api_format, embedding_api_format),
+                    None
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rerank_candidate_registry_excludes_chat_and_embedding_formats() {
+        assert_eq!(
+            request_candidate_api_formats("openai:rerank", false),
+            vec!["openai:rerank", "jina:rerank"]
+        );
+        assert_eq!(
+            request_candidate_api_formats("jina:rerank", false),
+            vec!["jina:rerank", "openai:rerank"]
+        );
+        assert_eq!(api_data_format_id("openai:rerank"), Some("rerank"));
+        assert!(is_rerank_api_format("jina:rerank"));
+        assert!(!is_embedding_api_format("openai:rerank"));
+        assert_eq!(
+            request_candidate_api_format_preference("openai:rerank", "openai:embedding"),
+            None
+        );
+        assert_eq!(
+            request_candidate_api_format_preference("openai:rerank", "openai:chat"),
+            None
+        );
+        assert_eq!(
+            request_conversion_kind("openai:rerank", "jina:rerank"),
+            None
+        );
+        assert!(!request_conversion_requires_enable_flag(
+            "openai:rerank",
+            "jina:rerank"
+        ));
     }
 
     #[test]

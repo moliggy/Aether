@@ -340,6 +340,7 @@ fn sample_public_catalog_model(
         Some(true),
         Some(true),
         Some(true),
+        Some(false),
         true,
     )
     .expect("public catalog model should build")

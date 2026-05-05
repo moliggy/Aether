@@ -362,6 +362,7 @@ pub(super) async fn handle_users_me_providers_get(
                             "supports_vision": model.supports_vision,
                             "supports_function_calling": model.supports_function_calling,
                             "supports_streaming": model.supports_streaming,
+                            "supports_embedding": model.supports_embedding,
                         })
                     })
                     .collect::<Vec<_>>(),

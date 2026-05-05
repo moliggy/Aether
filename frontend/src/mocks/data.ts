@@ -546,20 +546,21 @@ export const MOCK_PROVIDERS: ProviderWithEndpointsSummary[] = [
     billing_type: 'pay_as_you_go',
     monthly_used_usd: 5.29,
     is_active: true,
-    total_endpoints: 4,
-    active_endpoints: 4,
+    total_endpoints: 5,
+    active_endpoints: 5,
     total_keys: 11,
     active_keys: 11,
-    total_models: 8,
-    active_models: 8,
+    total_models: 9,
+    active_models: 9,
     avg_health_score: 0.863,
     unhealthy_endpoints: 1,
-    api_formats: ['claude:messages', 'gemini:generate_content', 'openai:chat', 'openai:responses'],
+    api_formats: ['claude:messages', 'gemini:generate_content', 'openai:chat', 'openai:responses', 'openai:embedding'],
     endpoint_health_details: [
       { api_format: 'claude:messages', health_score: 1.0, is_active: true, active_keys: 2 },
       { api_format: 'gemini:generate_content', health_score: 1.0, is_active: true, active_keys: 2 },
       { api_format: 'openai:chat', health_score: 0.85, is_active: true, active_keys: 2 },
-      { api_format: 'openai:responses', health_score: 1.0, is_active: true, active_keys: 1 }
+      { api_format: 'openai:responses', health_score: 1.0, is_active: true, active_keys: 1 },
+      { api_format: 'openai:embedding', health_score: 0.98, is_active: true, active_keys: 1 }
     ],
     created_at: '2024-12-07T22:56:09.712806+08:00',
     updated_at: new Date().toISOString()
@@ -805,6 +806,46 @@ export const MOCK_GLOBAL_MODELS: GlobalModelResponse[] = [
     },
     provider_count: 2,
     created_at: '2024-01-01T00:00:00Z'
+  },
+  {
+    id: 'gm-010',
+    name: 'text-embedding-3-small',
+    display_name: 'text-embedding-3-small',
+    is_active: true,
+    default_tiered_pricing: {
+      tiers: [{ up_to: null, input_price_per_1m: 0.02, output_price_per_1m: 0 }]
+    },
+    supported_capabilities: ['embedding'],
+    supports_embedding: true,
+    config: {
+      streaming: false,
+      embedding: true,
+      model_type: 'embedding',
+      api_formats: ['openai:embedding'],
+      dimensions: 1536,
+      description: 'OpenAI 文本向量嵌入模型'
+    },
+    provider_count: 1,
+    created_at: '2024-01-01T00:00:00Z'
+  },
+  {
+    id: 'gm-rerank-001',
+    name: 'bge-reranker-base',
+    display_name: 'bge-reranker-base',
+    is_active: true,
+    default_tiered_pricing: {
+      tiers: [{ up_to: null, input_price_per_1m: 0.05, output_price_per_1m: 0 }]
+    },
+    supported_capabilities: ['rerank'],
+    config: {
+      streaming: false,
+      rerank: true,
+      model_type: 'rerank',
+      api_formats: ['openai:rerank'],
+      description: '文本重排序模型'
+    },
+    provider_count: 1,
+    created_at: '2024-01-01T00:00:00Z'
   }
 ]
 
@@ -878,9 +919,15 @@ export const MOCK_API_FORMATS = {
     { value: 'openai:chat', label: 'OpenAI Chat', default_path: '/v1/chat/completions', aliases: [] },
     { value: 'openai:responses', label: 'OpenAI Responses', default_path: '/v1/responses', aliases: [] },
     { value: 'openai:responses:compact', label: 'OpenAI Responses Compact', default_path: '/v1/responses/compact', aliases: [] },
+    { value: 'openai:embedding', label: 'OpenAI Embedding', default_path: '/v1/embeddings', aliases: [] },
+    { value: 'openai:rerank', label: 'OpenAI Rerank', default_path: '/v1/rerank', aliases: [] },
     { value: 'openai:image', label: 'OpenAI Image', default_path: '/v1/images/generations', aliases: [] },
     { value: 'openai:video', label: 'OpenAI Video', default_path: '/v1/videos', aliases: [] },
     { value: 'gemini:generate_content', label: 'Gemini Generate Content', default_path: '/v1beta/models/{model}:{action}', aliases: [] },
-    { value: 'gemini:video', label: 'Gemini Video', default_path: '/v1beta/models/{model}:predictLongRunning', aliases: [] }
+    { value: 'gemini:embedding', label: 'Gemini Embedding', default_path: '/v1beta/models/{model}:embedContent', aliases: [] },
+    { value: 'gemini:video', label: 'Gemini Video', default_path: '/v1beta/models/{model}:predictLongRunning', aliases: [] },
+    { value: 'jina:embedding', label: 'Jina Embedding', default_path: '/v1/embeddings', aliases: [] },
+    { value: 'jina:rerank', label: 'Jina Rerank', default_path: '/v1/rerank', aliases: [] },
+    { value: 'doubao:embedding', label: 'Doubao Embedding', default_path: '/embeddings/multimodal', aliases: [] }
   ]
 }

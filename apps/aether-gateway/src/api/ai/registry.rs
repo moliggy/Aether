@@ -1,7 +1,7 @@
 use axum::routing::{any, post};
 use axum::Router;
 
-use super::{claude, gemini, openai};
+use super::{claude, doubao, gemini, jina, openai};
 use crate::{handlers::proxy::proxy_request, state::AppState};
 
 // Router registration patterns live here so AI public ingress has a single mount registry.
@@ -9,6 +9,8 @@ use crate::{handlers::proxy::proxy_request, state::AppState};
 // which describe operational compatibility surfaces rather than the concrete axum mount list.
 const AI_POST_ROUTE_PATTERNS: &[&str] = &[
     "/v1/chat/completions",
+    "/v1/embeddings",
+    "/v1/rerank",
     "/v1/messages",
     "/v1/messages/count_tokens",
     "/v1/responses",
@@ -45,6 +47,8 @@ pub(crate) fn public_api_format_local_path(api_format: &str) -> &'static str {
     openai::local_path(&normalized)
         .or_else(|| claude::local_path(&normalized))
         .or_else(|| gemini::local_path(&normalized))
+        .or_else(|| jina::local_path(&normalized))
+        .or_else(|| doubao::local_path(&normalized))
         .unwrap_or("/")
 }
 
@@ -53,6 +57,8 @@ pub(crate) fn normalize_admin_endpoint_signature(api_format: &str) -> Option<&'s
     openai::normalized_signature(&normalized)
         .or_else(|| claude::normalized_signature(&normalized))
         .or_else(|| gemini::normalized_signature(&normalized))
+        .or_else(|| jina::normalized_signature(&normalized))
+        .or_else(|| doubao::normalized_signature(&normalized))
 }
 
 pub(crate) fn admin_endpoint_signature_parts(
@@ -70,4 +76,27 @@ pub(crate) fn admin_default_body_rules_for_signature(
     let normalized_api_format = normalize_admin_endpoint_signature(api_format)?.to_string();
     let _ = provider_type;
     Some((normalized_api_format, Vec::new()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{admin_endpoint_signature_parts, public_api_format_local_path};
+
+    #[test]
+    fn supports_data_api_endpoint_signatures_and_public_paths() {
+        for (api_format, family, kind, path) in [
+            ("openai:embedding", "openai", "embedding", "/v1/embeddings"),
+            ("gemini:embedding", "gemini", "embedding", "/v1/embeddings"),
+            ("jina:embedding", "jina", "embedding", "/v1/embeddings"),
+            ("doubao:embedding", "doubao", "embedding", "/v1/embeddings"),
+            ("openai:rerank", "openai", "rerank", "/v1/rerank"),
+            ("jina:rerank", "jina", "rerank", "/v1/rerank"),
+        ] {
+            assert_eq!(
+                admin_endpoint_signature_parts(api_format),
+                Some((api_format, family, kind))
+            );
+            assert_eq!(public_api_format_local_path(api_format), path);
+        }
+    }
 }

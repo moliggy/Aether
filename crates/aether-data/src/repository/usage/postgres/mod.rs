@@ -4,7 +4,9 @@ use aether_data_contracts::repository::usage::{
     StoredUsageCacheAffinityIntervalRow, StoredUsageCacheHitSummary, StoredUsageCostSavingsSummary,
     StoredUsageDashboardDailyBreakdownRow, StoredUsageDashboardProviderCount,
     StoredUsageDashboardSummary, StoredUsageErrorDistributionRow, StoredUsageLeaderboardSummary,
-    StoredUsagePerformancePercentilesRow, StoredUsageSettledCostSummary,
+    StoredUsagePerformancePercentilesRow, StoredUsageProviderPerformance,
+    StoredUsageProviderPerformanceProviderRow, StoredUsageProviderPerformanceSummary,
+    StoredUsageProviderPerformanceTimelineRow, StoredUsageSettledCostSummary,
     StoredUsageTimeSeriesBucket, StoredUsageUserTotals, UsageAuditAggregationGroupBy,
     UsageAuditAggregationQuery, UsageAuditKeywordSearchQuery, UsageAuditSummaryQuery,
     UsageBodyCaptureState, UsageBodyField, UsageBreakdownGroupBy, UsageBreakdownSummaryQuery,
@@ -13,8 +15,8 @@ use aether_data_contracts::repository::usage::{
     UsageCleanupWindow, UsageCostSavingsSummaryQuery, UsageDashboardDailyBreakdownQuery,
     UsageDashboardProviderCountsQuery, UsageDashboardSummaryQuery, UsageErrorDistributionQuery,
     UsageLeaderboardGroupBy, UsageLeaderboardQuery, UsageMonitoringErrorCountQuery,
-    UsageMonitoringErrorListQuery, UsagePerformancePercentilesQuery, UsageSettledCostSummaryQuery,
-    UsageTimeSeriesGranularity, UsageTimeSeriesQuery,
+    UsageMonitoringErrorListQuery, UsagePerformancePercentilesQuery, UsageProviderPerformanceQuery,
+    UsageSettledCostSummaryQuery, UsageTimeSeriesGranularity, UsageTimeSeriesQuery,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -803,6 +805,107 @@ fn decode_usage_performance_percentiles_row(
             .try_get::<Option<i64>, _>("p99_first_byte_time_ms")
             .map_postgres_err()?
             .map(|value| value.max(0) as u64),
+    })
+}
+
+fn decode_usage_provider_performance_summary(
+    row: &PgRow,
+) -> Result<StoredUsageProviderPerformanceSummary, DataLayerError> {
+    Ok(StoredUsageProviderPerformanceSummary {
+        request_count: row
+            .try_get::<i64, _>("request_count")
+            .map_postgres_err()?
+            .max(0) as u64,
+        success_count: row
+            .try_get::<i64, _>("success_count")
+            .map_postgres_err()?
+            .max(0) as u64,
+        avg_output_tps: row
+            .try_get::<Option<f64>, _>("avg_output_tps")
+            .map_postgres_err()?,
+        avg_first_byte_time_ms: row
+            .try_get::<Option<f64>, _>("avg_first_byte_time_ms")
+            .map_postgres_err()?,
+        avg_response_time_ms: row
+            .try_get::<Option<f64>, _>("avg_response_time_ms")
+            .map_postgres_err()?,
+    })
+}
+
+fn decode_usage_provider_performance_provider_row(
+    row: &PgRow,
+) -> Result<StoredUsageProviderPerformanceProviderRow, DataLayerError> {
+    Ok(StoredUsageProviderPerformanceProviderRow {
+        provider_id: row.try_get::<String, _>("provider_id").map_postgres_err()?,
+        provider: row.try_get::<String, _>("provider").map_postgres_err()?,
+        request_count: row
+            .try_get::<i64, _>("request_count")
+            .map_postgres_err()?
+            .max(0) as u64,
+        success_count: row
+            .try_get::<i64, _>("success_count")
+            .map_postgres_err()?
+            .max(0) as u64,
+        output_tokens: row
+            .try_get::<i64, _>("output_tokens")
+            .map_postgres_err()?
+            .max(0) as u64,
+        avg_output_tps: row
+            .try_get::<Option<f64>, _>("avg_output_tps")
+            .map_postgres_err()?,
+        avg_first_byte_time_ms: row
+            .try_get::<Option<f64>, _>("avg_first_byte_time_ms")
+            .map_postgres_err()?,
+        avg_response_time_ms: row
+            .try_get::<Option<f64>, _>("avg_response_time_ms")
+            .map_postgres_err()?,
+        p90_response_time_ms: row
+            .try_get::<Option<i64>, _>("p90_response_time_ms")
+            .map_postgres_err()?
+            .map(|value| value.max(0) as u64),
+        p90_first_byte_time_ms: row
+            .try_get::<Option<i64>, _>("p90_first_byte_time_ms")
+            .map_postgres_err()?
+            .map(|value| value.max(0) as u64),
+        tps_sample_count: row
+            .try_get::<i64, _>("tps_sample_count")
+            .map_postgres_err()?
+            .max(0) as u64,
+        first_byte_sample_count: row
+            .try_get::<i64, _>("first_byte_sample_count")
+            .map_postgres_err()?
+            .max(0) as u64,
+    })
+}
+
+fn decode_usage_provider_performance_timeline_row(
+    row: &PgRow,
+) -> Result<StoredUsageProviderPerformanceTimelineRow, DataLayerError> {
+    Ok(StoredUsageProviderPerformanceTimelineRow {
+        date: row.try_get::<String, _>("date").map_postgres_err()?,
+        provider_id: row.try_get::<String, _>("provider_id").map_postgres_err()?,
+        provider: row.try_get::<String, _>("provider").map_postgres_err()?,
+        request_count: row
+            .try_get::<i64, _>("request_count")
+            .map_postgres_err()?
+            .max(0) as u64,
+        success_count: row
+            .try_get::<i64, _>("success_count")
+            .map_postgres_err()?
+            .max(0) as u64,
+        output_tokens: row
+            .try_get::<i64, _>("output_tokens")
+            .map_postgres_err()?
+            .max(0) as u64,
+        avg_output_tps: row
+            .try_get::<Option<f64>, _>("avg_output_tps")
+            .map_postgres_err()?,
+        avg_first_byte_time_ms: row
+            .try_get::<Option<f64>, _>("avg_first_byte_time_ms")
+            .map_postgres_err()?,
+        avg_response_time_ms: row
+            .try_get::<Option<f64>, _>("avg_response_time_ms")
+            .map_postgres_err()?,
     })
 }
 
@@ -4467,6 +4570,306 @@ ORDER BY date ASC
         Ok(items)
     }
 
+    async fn summarize_usage_provider_performance_summary(
+        &self,
+        query: &UsageProviderPerformanceQuery,
+    ) -> Result<StoredUsageProviderPerformanceSummary, DataLayerError> {
+        let mut builder = QueryBuilder::<Postgres>::new(
+            r#"
+WITH filtered_usage AS (
+  SELECT
+    GREATEST(COALESCE("usage".output_tokens, 0), 0) AS output_tokens,
+    GREATEST(COALESCE("usage".response_time_ms, 0), 0) AS response_time_ms,
+    GREATEST(COALESCE("usage".first_byte_time_ms, 0), 0) AS first_byte_time_ms,
+    "usage".response_time_ms IS NOT NULL AS has_response_time,
+    "usage".first_byte_time_ms IS NOT NULL AS has_first_byte_time,
+    CASE
+      WHEN lower(COALESCE("usage".status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
+           AND ("usage".status_code IS NULL OR "usage".status_code < 400)
+      THEN 1
+      ELSE 0
+    END AS success_flag
+  FROM usage_billing_facts AS "usage"
+  WHERE "usage".created_at >= TO_TIMESTAMP("#,
+        );
+        builder.push_bind(query.created_from_unix_secs as f64);
+        builder.push(
+            r#"::double precision)
+    AND "usage".created_at < TO_TIMESTAMP("#,
+        );
+        builder.push_bind(query.created_until_unix_secs as f64);
+        builder.push(
+            r#"::double precision)
+    AND COALESCE("usage".status, '') NOT IN ('pending', 'streaming')
+    AND NULLIF(BTRIM(COALESCE("usage".provider_id, '')), '') IS NOT NULL
+    AND lower(BTRIM(COALESCE("usage".provider_id, ''))) NOT IN ('unknown', 'pending')
+    AND lower(BTRIM(COALESCE("usage".provider_name, ''))) NOT IN ('unknown', 'pending')
+)
+SELECT
+  COUNT(*)::BIGINT AS request_count,
+  COALESCE(SUM(success_flag), 0)::BIGINT AS success_count,
+  CASE
+    WHEN COALESCE(SUM(CASE
+      WHEN success_flag = 1 AND response_time_ms > 0 AND output_tokens > 0
+      THEN response_time_ms
+      ELSE 0
+    END), 0) > 0
+    THEN COALESCE(SUM(CASE
+      WHEN success_flag = 1 AND response_time_ms > 0 AND output_tokens > 0
+      THEN output_tokens
+      ELSE 0
+    END), 0)::DOUBLE PRECISION * 1000.0 / COALESCE(SUM(CASE
+      WHEN success_flag = 1 AND response_time_ms > 0 AND output_tokens > 0
+      THEN response_time_ms
+      ELSE 0
+    END), 0)::DOUBLE PRECISION
+    ELSE NULL
+  END AS avg_output_tps,
+  AVG(first_byte_time_ms::DOUBLE PRECISION)
+    FILTER (WHERE success_flag = 1 AND has_first_byte_time) AS avg_first_byte_time_ms,
+  AVG(response_time_ms::DOUBLE PRECISION)
+    FILTER (WHERE success_flag = 1 AND has_response_time) AS avg_response_time_ms
+FROM filtered_usage
+"#,
+        );
+
+        let row = builder
+            .build()
+            .fetch_one(&self.pool)
+            .await
+            .map_postgres_err()?;
+        decode_usage_provider_performance_summary(&row)
+    }
+
+    async fn summarize_usage_provider_performance_providers(
+        &self,
+        query: &UsageProviderPerformanceQuery,
+    ) -> Result<Vec<StoredUsageProviderPerformanceProviderRow>, DataLayerError> {
+        let mut builder = QueryBuilder::<Postgres>::new(
+            r#"
+WITH filtered_usage AS (
+  SELECT
+    COALESCE("usage".provider_id, '') AS provider_id,
+    COALESCE(NULLIF(BTRIM("usage".provider_name), ''), COALESCE("usage".provider_id, '')) AS provider,
+    GREATEST(COALESCE("usage".output_tokens, 0), 0) AS output_tokens,
+    GREATEST(COALESCE("usage".response_time_ms, 0), 0) AS response_time_ms,
+    GREATEST(COALESCE("usage".first_byte_time_ms, 0), 0) AS first_byte_time_ms,
+    "usage".response_time_ms IS NOT NULL AS has_response_time,
+    "usage".first_byte_time_ms IS NOT NULL AS has_first_byte_time,
+    CASE
+      WHEN lower(COALESCE("usage".status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
+           AND ("usage".status_code IS NULL OR "usage".status_code < 400)
+      THEN 1
+      ELSE 0
+    END AS success_flag
+  FROM usage_billing_facts AS "usage"
+  WHERE "usage".created_at >= TO_TIMESTAMP("#,
+        );
+        builder.push_bind(query.created_from_unix_secs as f64);
+        builder.push(
+            r#"::double precision)
+    AND "usage".created_at < TO_TIMESTAMP("#,
+        );
+        builder.push_bind(query.created_until_unix_secs as f64);
+        builder.push(
+            r#"::double precision)
+    AND COALESCE("usage".status, '') NOT IN ('pending', 'streaming')
+    AND NULLIF(BTRIM(COALESCE("usage".provider_id, '')), '') IS NOT NULL
+    AND lower(BTRIM(COALESCE("usage".provider_id, ''))) NOT IN ('unknown', 'pending')
+    AND lower(BTRIM(COALESCE("usage".provider_name, ''))) NOT IN ('unknown', 'pending')
+)
+SELECT
+  provider_id,
+  COALESCE(MAX(NULLIF(provider, '')), provider_id) AS provider,
+  COUNT(*)::BIGINT AS request_count,
+  COALESCE(SUM(success_flag), 0)::BIGINT AS success_count,
+  COALESCE(SUM(output_tokens), 0)::BIGINT AS output_tokens,
+  CASE
+    WHEN COALESCE(SUM(CASE
+      WHEN success_flag = 1 AND response_time_ms > 0 AND output_tokens > 0
+      THEN response_time_ms
+      ELSE 0
+    END), 0) > 0
+    THEN COALESCE(SUM(CASE
+      WHEN success_flag = 1 AND response_time_ms > 0 AND output_tokens > 0
+      THEN output_tokens
+      ELSE 0
+    END), 0)::DOUBLE PRECISION * 1000.0 / COALESCE(SUM(CASE
+      WHEN success_flag = 1 AND response_time_ms > 0 AND output_tokens > 0
+      THEN response_time_ms
+      ELSE 0
+    END), 0)::DOUBLE PRECISION
+    ELSE NULL
+  END AS avg_output_tps,
+  AVG(first_byte_time_ms::DOUBLE PRECISION)
+    FILTER (WHERE success_flag = 1 AND has_first_byte_time) AS avg_first_byte_time_ms,
+  AVG(response_time_ms::DOUBLE PRECISION)
+    FILTER (WHERE success_flag = 1 AND has_response_time) AS avg_response_time_ms,
+  CASE
+    WHEN COUNT(response_time_ms) FILTER (WHERE success_flag = 1 AND has_response_time) >= 10
+    THEN FLOOR(PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY response_time_ms)
+      FILTER (WHERE success_flag = 1 AND has_response_time))::BIGINT
+    ELSE NULL
+  END AS p90_response_time_ms,
+  CASE
+    WHEN COUNT(first_byte_time_ms) FILTER (WHERE success_flag = 1 AND has_first_byte_time) >= 10
+    THEN FLOOR(PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY first_byte_time_ms)
+      FILTER (WHERE success_flag = 1 AND has_first_byte_time))::BIGINT
+    ELSE NULL
+  END AS p90_first_byte_time_ms,
+  COALESCE(SUM(CASE
+    WHEN success_flag = 1 AND response_time_ms > 0 AND output_tokens > 0
+    THEN 1
+    ELSE 0
+  END), 0)::BIGINT AS tps_sample_count,
+  (COUNT(first_byte_time_ms) FILTER (WHERE success_flag = 1 AND has_first_byte_time))::BIGINT
+    AS first_byte_sample_count
+FROM filtered_usage
+GROUP BY provider_id
+ORDER BY request_count DESC, provider_id ASC
+"#,
+        );
+
+        let mut rows = builder.build().fetch(&self.pool);
+        let mut items = Vec::new();
+        while let Some(row) = rows.try_next().await.map_postgres_err()? {
+            items.push(decode_usage_provider_performance_provider_row(&row)?);
+        }
+        Ok(items)
+    }
+
+    async fn summarize_usage_provider_performance_timeline(
+        &self,
+        query: &UsageProviderPerformanceQuery,
+        provider_ids: &[String],
+    ) -> Result<Vec<StoredUsageProviderPerformanceTimelineRow>, DataLayerError> {
+        if provider_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut builder = QueryBuilder::<Postgres>::new("WITH filtered_usage AS ( SELECT ");
+        match query.granularity {
+            UsageTimeSeriesGranularity::Day => {
+                builder
+                    .push("TO_CHAR(date_trunc('day', \"usage\".created_at + (")
+                    .push_bind(query.tz_offset_minutes)
+                    .push("::integer * INTERVAL '1 minute')), 'YYYY-MM-DD') AS date");
+            }
+            UsageTimeSeriesGranularity::Hour => {
+                builder
+                    .push("TO_CHAR(date_trunc('hour', \"usage\".created_at + (")
+                    .push_bind(query.tz_offset_minutes)
+                    .push("::integer * INTERVAL '1 minute')), 'YYYY-MM-DD\"T\"HH24:00:00+00:00') AS date");
+            }
+        }
+        builder.push(
+            r#",
+    COALESCE("usage".provider_id, '') AS provider_id,
+    COALESCE(NULLIF(BTRIM("usage".provider_name), ''), COALESCE("usage".provider_id, '')) AS provider,
+    GREATEST(COALESCE("usage".output_tokens, 0), 0) AS output_tokens,
+    GREATEST(COALESCE("usage".response_time_ms, 0), 0) AS response_time_ms,
+    GREATEST(COALESCE("usage".first_byte_time_ms, 0), 0) AS first_byte_time_ms,
+    "usage".response_time_ms IS NOT NULL AS has_response_time,
+    "usage".first_byte_time_ms IS NOT NULL AS has_first_byte_time,
+    CASE
+      WHEN lower(COALESCE("usage".status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
+           AND ("usage".status_code IS NULL OR "usage".status_code < 400)
+      THEN 1
+      ELSE 0
+    END AS success_flag
+  FROM usage_billing_facts AS "usage"
+  WHERE "usage".created_at >= TO_TIMESTAMP("#,
+        );
+        builder.push_bind(query.created_from_unix_secs as f64);
+        builder.push(
+            r#"::double precision)
+    AND "usage".created_at < TO_TIMESTAMP("#,
+        );
+        builder.push_bind(query.created_until_unix_secs as f64);
+        builder.push(
+            r#"::double precision)
+    AND COALESCE("usage".status, '') NOT IN ('pending', 'streaming')
+    AND NULLIF(BTRIM(COALESCE("usage".provider_id, '')), '') IS NOT NULL
+    AND lower(BTRIM(COALESCE("usage".provider_id, ''))) NOT IN ('unknown', 'pending')
+    AND lower(BTRIM(COALESCE("usage".provider_name, ''))) NOT IN ('unknown', 'pending')
+    AND "usage".provider_id = ANY("#,
+        );
+        builder.push_bind(provider_ids.to_vec());
+        builder.push(
+            r#")
+)
+SELECT
+  date,
+  provider_id,
+  COALESCE(MAX(NULLIF(provider, '')), provider_id) AS provider,
+  COUNT(*)::BIGINT AS request_count,
+  COALESCE(SUM(success_flag), 0)::BIGINT AS success_count,
+  COALESCE(SUM(output_tokens), 0)::BIGINT AS output_tokens,
+  CASE
+    WHEN COALESCE(SUM(CASE
+      WHEN success_flag = 1 AND response_time_ms > 0 AND output_tokens > 0
+      THEN response_time_ms
+      ELSE 0
+    END), 0) > 0
+    THEN COALESCE(SUM(CASE
+      WHEN success_flag = 1 AND response_time_ms > 0 AND output_tokens > 0
+      THEN output_tokens
+      ELSE 0
+    END), 0)::DOUBLE PRECISION * 1000.0 / COALESCE(SUM(CASE
+      WHEN success_flag = 1 AND response_time_ms > 0 AND output_tokens > 0
+      THEN response_time_ms
+      ELSE 0
+    END), 0)::DOUBLE PRECISION
+    ELSE NULL
+  END AS avg_output_tps,
+  AVG(first_byte_time_ms::DOUBLE PRECISION)
+    FILTER (WHERE success_flag = 1 AND has_first_byte_time) AS avg_first_byte_time_ms,
+  AVG(response_time_ms::DOUBLE PRECISION)
+    FILTER (WHERE success_flag = 1 AND has_response_time) AS avg_response_time_ms
+FROM filtered_usage
+GROUP BY date, provider_id
+ORDER BY date ASC, provider_id ASC
+"#,
+        );
+
+        let mut rows = builder.build().fetch(&self.pool);
+        let mut items = Vec::new();
+        while let Some(row) = rows.try_next().await.map_postgres_err()? {
+            items.push(decode_usage_provider_performance_timeline_row(&row)?);
+        }
+        Ok(items)
+    }
+
+    pub async fn summarize_usage_provider_performance(
+        &self,
+        query: &UsageProviderPerformanceQuery,
+    ) -> Result<StoredUsageProviderPerformance, DataLayerError> {
+        if query.created_from_unix_secs >= query.created_until_unix_secs {
+            return Ok(StoredUsageProviderPerformance::default());
+        }
+
+        let summary = self
+            .summarize_usage_provider_performance_summary(query)
+            .await?;
+        let mut providers = self
+            .summarize_usage_provider_performance_providers(query)
+            .await?;
+        providers.truncate(query.limit.max(1));
+        let provider_ids = providers
+            .iter()
+            .map(|row| row.provider_id.clone())
+            .collect::<Vec<_>>();
+        let timeline = self
+            .summarize_usage_provider_performance_timeline(query, &provider_ids)
+            .await?;
+
+        Ok(StoredUsageProviderPerformance {
+            summary,
+            providers,
+            timeline,
+        })
+    }
+
     async fn summarize_usage_cost_savings_raw_from_range(
         &self,
         start_utc: DateTime<Utc>,
@@ -6997,6 +7400,13 @@ impl UsageReadRepository for SqlxUsageReadRepository {
         query: &UsagePerformancePercentilesQuery,
     ) -> Result<Vec<StoredUsagePerformancePercentilesRow>, DataLayerError> {
         Self::summarize_usage_performance_percentiles(self, query).await
+    }
+
+    async fn summarize_usage_provider_performance(
+        &self,
+        query: &UsageProviderPerformanceQuery,
+    ) -> Result<StoredUsageProviderPerformance, DataLayerError> {
+        Self::summarize_usage_provider_performance(self, query).await
     }
 
     async fn summarize_usage_cost_savings(

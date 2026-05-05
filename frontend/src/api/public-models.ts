@@ -15,6 +15,7 @@ export interface PublicGlobalModel {
   default_price_per_request: number | null  // 按次计费价格
   // Key 能力支持
   supported_capabilities: string[] | null
+  supports_embedding?: boolean | null
   // 模型配置（JSON）
   config: Record<string, unknown> | null
   // 调用次数

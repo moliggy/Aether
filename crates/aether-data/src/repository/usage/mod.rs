@@ -241,6 +241,17 @@ macro_rules! impl_materialized_usage_read_repository {
                 <$crate::repository::usage::InMemoryUsageReadRepository as $crate::repository::usage::UsageReadRepository>::summarize_usage_performance_percentiles(&repository, query).await
             }
 
+            async fn summarize_usage_provider_performance(
+                &self,
+                query: &$crate::repository::usage::UsageProviderPerformanceQuery,
+            ) -> Result<
+                $crate::repository::usage::StoredUsageProviderPerformance,
+                $crate::DataLayerError,
+            > {
+                let repository = self.materialize_read_model().await?;
+                <$crate::repository::usage::InMemoryUsageReadRepository as $crate::repository::usage::UsageReadRepository>::summarize_usage_provider_performance(&repository, query).await
+            }
+
             async fn summarize_usage_cost_savings(
                 &self,
                 query: &$crate::repository::usage::UsageCostSavingsSummaryQuery,
@@ -348,7 +359,9 @@ pub(crate) use aether_data_contracts::repository::usage::{
     StoredUsageDailySummary, StoredUsageDashboardDailyBreakdownRow,
     StoredUsageDashboardProviderCount, StoredUsageDashboardSummary,
     StoredUsageErrorDistributionRow, StoredUsageLeaderboardSummary,
-    StoredUsagePerformancePercentilesRow, StoredUsageSettledCostSummary,
+    StoredUsagePerformancePercentilesRow, StoredUsageProviderPerformance,
+    StoredUsageProviderPerformanceProviderRow, StoredUsageProviderPerformanceSummary,
+    StoredUsageProviderPerformanceTimelineRow, StoredUsageSettledCostSummary,
     StoredUsageTimeSeriesBucket, StoredUsageUserTotals, UpsertUsageRecord,
     UsageAuditAggregationGroupBy, UsageAuditAggregationQuery, UsageAuditKeywordSearchQuery,
     UsageAuditListQuery, UsageAuditSummaryQuery, UsageBreakdownGroupBy, UsageBreakdownSummaryQuery,
@@ -358,9 +371,9 @@ pub(crate) use aether_data_contracts::repository::usage::{
     UsageDashboardDailyBreakdownQuery, UsageDashboardProviderCountsQuery,
     UsageDashboardSummaryQuery, UsageErrorDistributionQuery, UsageLeaderboardGroupBy,
     UsageLeaderboardQuery, UsageMonitoringErrorCountQuery, UsageMonitoringErrorListQuery,
-    UsagePerformancePercentilesQuery, UsageReadRepository, UsageRepository,
-    UsageSettledCostSummaryQuery, UsageTimeSeriesGranularity, UsageTimeSeriesQuery,
-    UsageWriteRepository,
+    UsagePerformancePercentilesQuery, UsageProviderPerformanceQuery, UsageReadRepository,
+    UsageRepository, UsageSettledCostSummaryQuery, UsageTimeSeriesGranularity,
+    UsageTimeSeriesQuery, UsageWriteRepository,
 };
 pub mod cleanup {
     pub use super::postgres::cleanup::*;

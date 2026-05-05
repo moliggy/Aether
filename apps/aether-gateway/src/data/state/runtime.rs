@@ -1255,6 +1255,21 @@ impl GatewayDataState {
         }
     }
 
+    pub(crate) async fn summarize_usage_provider_performance(
+        &self,
+        query: &aether_data_contracts::repository::usage::UsageProviderPerformanceQuery,
+    ) -> Result<
+        aether_data_contracts::repository::usage::StoredUsageProviderPerformance,
+        DataLayerError,
+    > {
+        match &self.usage_reader {
+            Some(repository) => repository.summarize_usage_provider_performance(query).await,
+            None => Ok(
+                aether_data_contracts::repository::usage::StoredUsageProviderPerformance::default(),
+            ),
+        }
+    }
+
     pub(crate) async fn summarize_usage_cost_savings(
         &self,
         query: &aether_data_contracts::repository::usage::UsageCostSavingsSummaryQuery,

@@ -700,7 +700,7 @@ function runMappingTest(testingKey: string, modelName: string) {
   selectedTestEndpoint.value = activeEndpoints.value[0] ?? null
   testRequestHeadersResetValue.value = buildDefaultModelTestRequestHeaders()
   testRequestHeadersDraft.value = testRequestHeadersResetValue.value
-  testRequestBodyResetValue.value = buildDefaultModelTestRequestBody(modelName)
+  testRequestBodyResetValue.value = buildDefaultModelTestRequestBody(modelName, selectedTestEndpoint.value?.api_format)
   testRequestBodyDraft.value = testRequestBodyResetValue.value
 }
 

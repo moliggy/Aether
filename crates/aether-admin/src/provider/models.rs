@@ -3,6 +3,13 @@ use chrono::{SecondsFormat, Utc};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 
+const EMBEDDING_API_FORMATS: &[&str] = &[
+    "openai:embedding",
+    "jina:embedding",
+    "gemini:embedding",
+    "doubao:embedding",
+];
+
 fn unix_secs_to_rfc3339(unix_secs: u64) -> Option<String> {
     let timestamp = i64::try_from(unix_secs).ok()?;
     Some(
@@ -34,6 +41,50 @@ fn model_effective_capability(
             .and_then(Value::as_bool)
             .unwrap_or(false)
     })
+}
+
+fn value_contains_string(value: &Value, expected: &str) -> bool {
+    match value {
+        Value::String(value) => value.trim().eq_ignore_ascii_case(expected),
+        Value::Array(values) => values
+            .iter()
+            .any(|value| value_contains_string(value, expected)),
+        Value::Object(object) => object
+            .values()
+            .any(|value| value_contains_string(value, expected)),
+        _ => false,
+    }
+}
+
+fn value_has_true_key(value: &Value, key: &str) -> bool {
+    value
+        .as_object()
+        .and_then(|object| object.get(key))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn value_contains_embedding_metadata(value: &Value) -> bool {
+    value_has_true_key(value, "embedding")
+        || value_contains_string(value, "embedding")
+        || EMBEDDING_API_FORMATS
+            .iter()
+            .any(|api_format| value_contains_string(value, api_format))
+}
+
+fn model_effective_embedding_capability(model: &StoredAdminProviderModel) -> bool {
+    model
+        .config
+        .as_ref()
+        .is_some_and(value_contains_embedding_metadata)
+        || model
+            .global_model_supported_capabilities
+            .as_ref()
+            .is_some_and(value_contains_embedding_metadata)
+        || model
+            .global_model_config
+            .as_ref()
+            .is_some_and(value_contains_embedding_metadata)
 }
 
 fn merge_json_values(base: &mut Value, overlay: Value) {
@@ -128,6 +179,7 @@ pub fn admin_provider_model_effective_capability(
             model.global_model_config.as_ref(),
             "image_generation",
         ),
+        "embedding" => model_effective_embedding_capability(model),
         _ => false,
     }
 }
@@ -161,6 +213,7 @@ pub fn build_admin_provider_model_response(
         "supports_streaming": model.supports_streaming,
         "supports_extended_thinking": model.supports_extended_thinking,
         "supports_image_generation": model.supports_image_generation,
+        "supports_embedding": model_effective_embedding_capability(model),
         "effective_supports_vision": admin_provider_model_effective_capability(model, "vision"),
         "effective_supports_function_calling": admin_provider_model_effective_capability(
             model,
@@ -174,6 +227,10 @@ pub fn build_admin_provider_model_response(
         "effective_supports_image_generation": admin_provider_model_effective_capability(
             model,
             "image_generation",
+        ),
+        "effective_supports_embedding": admin_provider_model_effective_capability(
+            model,
+            "embedding",
         ),
         "is_active": model.is_active,
         "is_available": model.is_available,
@@ -214,6 +271,7 @@ pub fn build_admin_provider_available_source_models_payload(
                     "supports_vision": admin_provider_model_effective_capability(&model, "vision"),
                     "supports_function_calling": admin_provider_model_effective_capability(&model, "function_calling"),
                     "supports_streaming": admin_provider_model_effective_capability(&model, "streaming"),
+                    "supports_embedding": admin_provider_model_effective_capability(&model, "embedding"),
                 }),
                 "is_active": model.is_active,
             })

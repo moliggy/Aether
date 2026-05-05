@@ -1,6 +1,147 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
+const EMBEDDING_CAPABILITY: &str = "embedding";
+const EMBEDDING_API_FORMATS: &[&str] = &[
+    "openai:embedding",
+    "gemini:embedding",
+    "jina:embedding",
+    "doubao:embedding",
+    "/v1/embeddings",
+    "/jina/v1/embeddings",
+];
+
+fn validate_optional_price(
+    field_name: &str,
+    value: Option<f64>,
+) -> Result<(), crate::DataLayerError> {
+    if value.is_some_and(|price| !price.is_finite() || price < 0.0) {
+        return Err(crate::DataLayerError::UnexpectedValue(format!(
+            "{field_name} must be a non-negative finite number"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_embedding_global_billing(
+    default_price_per_request: Option<f64>,
+    default_tiered_pricing: Option<&Value>,
+    supported_capabilities: Option<&Value>,
+    config: Option<&Value>,
+) -> Result<(), crate::DataLayerError> {
+    validate_optional_price(
+        "global_models.default_price_per_request",
+        default_price_per_request,
+    )?;
+    if !has_embedding_metadata(supported_capabilities, config) {
+        return Ok(());
+    }
+    if has_request_or_input_token_pricing(default_price_per_request, default_tiered_pricing) {
+        return Ok(());
+    }
+    Err(crate::DataLayerError::UnexpectedValue(
+        "embedding global model requires default_price_per_request or default_tiered_pricing.tiers[].input_price_per_1m".to_string(),
+    ))
+}
+
+fn validate_provider_model_pricing(
+    price_per_request: Option<f64>,
+) -> Result<(), crate::DataLayerError> {
+    validate_optional_price("models.price_per_request", price_per_request)
+}
+
+fn has_request_or_input_token_pricing(
+    price_per_request: Option<f64>,
+    tiered_pricing: Option<&Value>,
+) -> bool {
+    price_per_request.is_some_and(|price| price.is_finite() && price >= 0.0)
+        || tiered_pricing
+            .and_then(|value| value.get("tiers"))
+            .and_then(Value::as_array)
+            .is_some_and(|tiers| {
+                tiers.iter().any(|tier| {
+                    tier.get("input_price_per_1m")
+                        .and_then(Value::as_f64)
+                        .is_some_and(|price| price.is_finite() && price >= 0.0)
+                })
+            })
+}
+
+fn has_embedding_metadata(supported_capabilities: Option<&Value>, config: Option<&Value>) -> bool {
+    supported_capabilities.is_some_and(value_contains_embedding_capability)
+        || config.is_some_and(value_contains_embedding_metadata)
+}
+
+fn value_contains_embedding_capability(value: &Value) -> bool {
+    match value {
+        Value::String(value) => value.trim().eq_ignore_ascii_case(EMBEDDING_CAPABILITY),
+        Value::Array(values) => values.iter().any(value_contains_embedding_capability),
+        Value::Object(object) => {
+            object
+                .get(EMBEDDING_CAPABILITY)
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                || [
+                    "capability",
+                    "model_type",
+                    "type",
+                    "task_type",
+                    "request_type",
+                ]
+                .iter()
+                .any(|key| {
+                    object
+                        .get(*key)
+                        .is_some_and(value_contains_embedding_capability)
+                })
+                || ["capabilities", "supported_capabilities"]
+                    .iter()
+                    .any(|key| {
+                        object
+                            .get(*key)
+                            .is_some_and(value_contains_embedding_capability)
+                    })
+        }
+        _ => false,
+    }
+}
+
+fn value_contains_embedding_metadata(value: &Value) -> bool {
+    match value {
+        Value::String(value) => {
+            value.trim().eq_ignore_ascii_case(EMBEDDING_CAPABILITY)
+                || is_known_embedding_api_format(value)
+        }
+        Value::Array(values) => values.iter().any(value_contains_embedding_metadata),
+        Value::Object(object) => {
+            value_contains_embedding_capability(value)
+                || ["api_format", "client_api_format", "provider_api_format"]
+                    .iter()
+                    .any(|key| {
+                        object
+                            .get(*key)
+                            .and_then(Value::as_str)
+                            .is_some_and(is_known_embedding_api_format)
+                    })
+                || ["api_formats", "client_api_formats", "provider_api_formats"]
+                    .iter()
+                    .any(|key| {
+                        object
+                            .get(*key)
+                            .is_some_and(value_contains_embedding_metadata)
+                    })
+        }
+        _ => false,
+    }
+}
+
+fn is_known_embedding_api_format(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    EMBEDDING_API_FORMATS
+        .iter()
+        .any(|api_format| normalized == *api_format)
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StoredPublicGlobalModel {
     pub id: String,
@@ -37,6 +178,12 @@ impl StoredPublicGlobalModel {
                 "global_models.name is empty".to_string(),
             ));
         }
+        validate_embedding_global_billing(
+            default_price_per_request,
+            default_tiered_pricing.as_ref(),
+            supported_capabilities.as_ref(),
+            config.as_ref(),
+        )?;
 
         Ok(Self {
             id,
@@ -77,6 +224,7 @@ pub struct StoredPublicCatalogModel {
     pub supports_vision: Option<bool>,
     pub supports_function_calling: Option<bool>,
     pub supports_streaming: Option<bool>,
+    pub supports_embedding: Option<bool>,
     pub is_active: bool,
 }
 
@@ -98,6 +246,7 @@ impl StoredPublicCatalogModel {
         supports_vision: Option<bool>,
         supports_function_calling: Option<bool>,
         supports_streaming: Option<bool>,
+        supports_embedding: Option<bool>,
         is_active: bool,
     ) -> Result<Self, crate::DataLayerError> {
         if id.trim().is_empty() {
@@ -147,6 +296,7 @@ impl StoredPublicCatalogModel {
             supports_vision,
             supports_function_calling,
             supports_streaming,
+            supports_embedding,
             is_active,
         })
     }
@@ -223,6 +373,12 @@ impl StoredAdminGlobalModel {
                 "global_models.display_name is empty".to_string(),
             ));
         }
+        validate_embedding_global_billing(
+            default_price_per_request,
+            default_tiered_pricing.as_ref(),
+            supported_capabilities.as_ref(),
+            config.as_ref(),
+        )?;
 
         Ok(Self {
             id,
@@ -273,6 +429,7 @@ pub struct StoredAdminProviderModel {
     pub global_model_display_name: Option<String>,
     pub global_model_default_price_per_request: Option<f64>,
     pub global_model_default_tiered_pricing: Option<Value>,
+    pub global_model_supported_capabilities: Option<Value>,
     pub global_model_config: Option<Value>,
 }
 
@@ -300,6 +457,7 @@ impl StoredAdminProviderModel {
         global_model_display_name: Option<String>,
         global_model_default_price_per_request: Option<f64>,
         global_model_default_tiered_pricing: Option<Value>,
+        global_model_supported_capabilities: Option<Value>,
         global_model_config: Option<Value>,
     ) -> Result<Self, crate::DataLayerError> {
         if id.trim().is_empty() {
@@ -322,6 +480,7 @@ impl StoredAdminProviderModel {
                 "models.provider_model_name is empty".to_string(),
             ));
         }
+        validate_provider_model_pricing(price_per_request)?;
 
         Ok(Self {
             id,
@@ -345,6 +504,7 @@ impl StoredAdminProviderModel {
             global_model_display_name,
             global_model_default_price_per_request,
             global_model_default_tiered_pricing,
+            global_model_supported_capabilities,
             global_model_config,
         })
     }
@@ -408,6 +568,7 @@ impl UpsertAdminProviderModelRecord {
                 "models.provider_model_name is empty".to_string(),
             ));
         }
+        validate_provider_model_pricing(price_per_request)?;
 
         Ok(Self {
             id,
@@ -468,6 +629,12 @@ impl CreateAdminGlobalModelRecord {
                 "global_models.display_name is empty".to_string(),
             ));
         }
+        validate_embedding_global_billing(
+            default_price_per_request,
+            default_tiered_pricing.as_ref(),
+            supported_capabilities.as_ref(),
+            config.as_ref(),
+        )?;
 
         Ok(Self {
             id,
@@ -514,6 +681,12 @@ impl UpdateAdminGlobalModelRecord {
                 "global_models.display_name is empty".to_string(),
             ));
         }
+        validate_embedding_global_billing(
+            default_price_per_request,
+            default_tiered_pricing.as_ref(),
+            supported_capabilities.as_ref(),
+            config.as_ref(),
+        )?;
 
         Ok(Self {
             id,
@@ -694,4 +867,100 @@ pub trait GlobalModelWriteRepository: Send + Sync {
         &self,
         global_model_id: &str,
     ) -> Result<bool, crate::DataLayerError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{CreateAdminGlobalModelRecord, UpsertAdminProviderModelRecord};
+
+    #[test]
+    fn embedding_missing_billing_config_rejected() {
+        let err = CreateAdminGlobalModelRecord::new(
+            "gm-embedding".to_string(),
+            "text-embedding-3-small".to_string(),
+            "Text Embedding 3 Small".to_string(),
+            true,
+            None,
+            None,
+            Some(json!(["embedding"])),
+            None,
+        )
+        .expect_err("embedding model without explicit billing should be rejected");
+
+        assert!(err.to_string().contains(
+            "embedding global model requires default_price_per_request or default_tiered_pricing.tiers[].input_price_per_1m"
+        ));
+    }
+
+    #[test]
+    fn embedding_api_format_config_requires_billing_config() {
+        let err = CreateAdminGlobalModelRecord::new(
+            "gm-embedding".to_string(),
+            "jina-embeddings-v3".to_string(),
+            "Jina Embeddings v3".to_string(),
+            true,
+            None,
+            Some(json!({"tiers": []})),
+            None,
+            Some(json!({"api_formats": ["jina:embedding"]})),
+        )
+        .expect_err("embedding API format without price should be rejected");
+
+        assert!(err.to_string().contains("embedding global model requires"));
+    }
+
+    #[test]
+    fn embedding_input_token_or_request_pricing_is_accepted() {
+        CreateAdminGlobalModelRecord::new(
+            "gm-embedding-input".to_string(),
+            "text-embedding-3-small".to_string(),
+            "Text Embedding 3 Small".to_string(),
+            true,
+            None,
+            Some(json!({"tiers":[{"up_to":null,"input_price_per_1m":0.02}]})),
+            Some(json!(["embedding"])),
+            Some(json!({"dimensions": 1536})),
+        )
+        .expect("input-token pricing should satisfy embedding billing");
+
+        CreateAdminGlobalModelRecord::new(
+            "gm-embedding-request".to_string(),
+            "custom-embedding".to_string(),
+            "Custom Embedding".to_string(),
+            true,
+            Some(0.0),
+            None,
+            Some(json!(["embedding"])),
+            None,
+        )
+        .expect("explicit request pricing should satisfy embedding billing");
+    }
+
+    #[test]
+    fn provider_model_negative_request_price_rejected() {
+        let err = UpsertAdminProviderModelRecord::new(
+            "model-1".to_string(),
+            "provider-1".to_string(),
+            "global-model-1".to_string(),
+            "text-embedding-3-small".to_string(),
+            None,
+            Some(-0.01),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            true,
+            true,
+            None,
+        )
+        .expect_err("negative provider model request price should be rejected");
+
+        assert!(err
+            .to_string()
+            .contains("models.price_per_request must be a non-negative finite number"));
+    }
 }

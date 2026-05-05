@@ -37,6 +37,8 @@ pub(crate) fn frontdoor_self_loop_public_ai_path(path: &str) -> bool {
         "/v1/messages"
             | "/v1/messages/count_tokens"
             | "/v1/chat/completions"
+            | "/v1/embeddings"
+            | "/v1/rerank"
             | "/v1/responses"
             | "/v1/responses/compact"
             | "/v1beta/files"

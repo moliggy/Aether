@@ -142,7 +142,7 @@
               >描述</Label>
               <Input
                 id="model-description"
-                :model-value="form.config?.description || ''"
+                :model-value="getConfigInputValue('description')"
                 placeholder="简短描述此模型的特点"
                 @update:model-value="(v) => setConfigField('description', v || undefined)"
               />
@@ -155,7 +155,7 @@
                 >最大输出 Token</Label>
                 <Input
                   id="model-output-limit"
-                  :model-value="form.config?.output_limit ?? ''"
+                  :model-value="getConfigInputValue('output_limit')"
                   type="number"
                   min="1"
                   placeholder="如 8192"
@@ -169,12 +169,39 @@
                 >上下文窗口</Label>
                 <Input
                   id="model-context-limit"
-                  :model-value="form.config?.context_limit ?? ''"
+                  :model-value="getConfigInputValue('context_limit')"
                   type="number"
                   min="1"
                   placeholder="如 200000"
                   @update:model-value="(v) => setConfigField('context_limit', parseNumberInput(v, { allowFloat: false }))"
                 />
+              </div>
+            </div>
+            <div class="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-2">
+              <div class="flex items-start gap-2">
+                <Checkbox
+                  :model-value="isEmbeddingEnabled"
+                  class="mt-0.5"
+                  @update:model-value="setEmbeddingEnabled"
+                />
+                <div class="space-y-1">
+                  <div class="text-sm font-medium">
+                    Embedding
+                  </div>
+                  <p class="text-xs text-muted-foreground">
+                    标记为 Embeddings 模型，并使用独立的 embedding API 格式，不按 Chat 模型处理。
+                  </p>
+                  <div
+                    v-if="isEmbeddingEnabled"
+                    class="flex flex-wrap gap-1.5"
+                  >
+                    <span
+                      v-for="format in embeddingApiFormats"
+                      :key="format"
+                      class="rounded-md border border-border/60 bg-background px-2 py-0.5 text-[11px] font-mono text-muted-foreground"
+                    >{{ format }}</span>
+                  </div>
+                </div>
               </div>
             </div>
           </section>
@@ -333,7 +360,7 @@ import {
   Loader2, Layers, SquarePen,
   Search, ChevronRight, Plus, Trash2
 } from 'lucide-vue-next'
-import { Dialog, Button, Input, Label } from '@/components/ui'
+import { Dialog, Button, Input, Label, Checkbox } from '@/components/ui'
 import { useToast } from '@/composables/useToast'
 import { useFormDialog } from '@/composables/useFormDialog'
 import { parseNumberInput, sortResolutionEntries } from '@/utils/form'
@@ -349,10 +376,13 @@ import {
   createGlobalModel,
   updateGlobalModel,
   type GlobalModelResponse,
-  type GlobalModelCreate,
-  type GlobalModelUpdate,
 } from '@/api/global-models'
 import type { TieredPricingConfig } from '@/api/endpoints/types'
+import {
+  EMBEDDING_API_FORMATS,
+  buildGlobalModelCreatePayload,
+  buildGlobalModelUpdatePayload,
+} from './global-model-form-helpers'
 
 const props = defineProps<{
   open: boolean
@@ -476,6 +506,8 @@ const VIDEO_RESOLUTION_PRICE_PRESETS: Record<
   ],
 }
 
+const embeddingApiFormats = [...EMBEDDING_API_FORMATS]
+
 interface FormData {
   name: string
   display_name: string
@@ -496,6 +528,12 @@ const defaultForm = (): FormData => ({
 
 const form = ref<FormData>(defaultForm())
 
+const isEmbeddingEnabled = computed(() => {
+  return form.value.supported_capabilities?.includes('embedding') === true
+    || form.value.config?.embedding === true
+    || form.value.config?.model_type === 'embedding'
+})
+
 const KEEP_FALSE_CONFIG_KEYS = new Set(['streaming'])
 
 // 设置 config 字段
@@ -508,6 +546,34 @@ function setConfigField(key: string, value: unknown) {
   } else {
     form.value.config[key] = value
   }
+}
+
+function getConfigInputValue(key: string): string | number {
+  const value = form.value.config?.[key]
+  return typeof value === 'string' || typeof value === 'number' ? value : ''
+}
+
+function setEmbeddingEnabled(enabled: boolean) {
+  const caps = new Set(form.value.supported_capabilities || [])
+  if (enabled) {
+    caps.add('embedding')
+    setConfigField('embedding', true)
+    setConfigField('model_type', 'embedding')
+    setConfigField('streaming', false)
+    form.value.config = {
+      ...(form.value.config || {}),
+      api_formats: [...embeddingApiFormats],
+    }
+  } else {
+    caps.delete('embedding')
+    setConfigField('embedding', undefined)
+    if (form.value.config?.model_type === 'embedding') setConfigField('model_type', undefined)
+    if (Array.isArray(form.value.config?.api_formats)
+      && form.value.config.api_formats.every((format) => embeddingApiFormats.includes(String(format)))) {
+      setConfigField('api_formats', undefined)
+    }
+  }
+  form.value.supported_capabilities = [...caps]
 }
 
 function getNested(obj: unknown, path: string): unknown {
@@ -670,7 +736,7 @@ function selectModel(model: ModelsDevModelItem) {
 
   // 构建 config
   const config: Record<string, unknown> = {
-    streaming: true,
+    streaming: model.supportsEmbedding ? false : true,
   }
   if (model.supportsVision) config.vision = true
   if (model.supportsToolCall) config.function_calling = true
@@ -687,6 +753,10 @@ function selectModel(model: ModelsDevModelItem) {
   if (model.inputModalities?.length) config.input_modalities = model.inputModalities
   if (model.outputModalities?.length) config.output_modalities = model.outputModalities
   form.value.config = config
+  form.value.supported_capabilities = model.supportsEmbedding ? ['embedding'] : []
+  if (model.supportsEmbedding) {
+    setEmbeddingEnabled(true)
+  }
   loadVideoPricingFromConfig()
 
   if (model.inputPrice !== undefined || model.outputPrice !== undefined) {
@@ -796,26 +866,11 @@ async function handleSubmit() {
   submitting.value = true
   try {
     if (isEditMode.value && props.model) {
-      const updateData: GlobalModelUpdate = {
-        display_name: form.value.display_name,
-        config: cleanConfig || null,
-        default_price_per_request: form.value.default_price_per_request ?? null,
-        default_tiered_pricing: finalTieredPricing,
-        supported_capabilities: form.value.supported_capabilities?.length ? form.value.supported_capabilities : null,
-        is_active: form.value.is_active,
-      }
+      const updateData = buildGlobalModelUpdatePayload(form.value, finalTieredPricing)
       await updateGlobalModel(props.model.id, updateData)
       success('模型更新成功')
     } else {
-      const createData: GlobalModelCreate = {
-        name: form.value.name ?? '',
-        display_name: form.value.display_name ?? '',
-        config: cleanConfig,
-        default_price_per_request: form.value.default_price_per_request ?? undefined,
-        default_tiered_pricing: finalTieredPricing,
-        supported_capabilities: form.value.supported_capabilities?.length ? form.value.supported_capabilities : undefined,
-        is_active: form.value.is_active,
-      }
+      const createData = buildGlobalModelCreatePayload(form.value, finalTieredPricing)
       await createGlobalModel(createData)
       success('模型创建成功')
       clearSelection()

@@ -546,6 +546,18 @@ const ADMIN_API_FORMAT_DEFINITIONS: &[AdminApiFormatDefinition] = &[
         aliases: &["responses_compact"],
     },
     AdminApiFormatDefinition {
+        value: "openai:embedding",
+        label: "OpenAI Embedding",
+        default_path: "/v1/embeddings",
+        aliases: &["openai_embedding", "embeddings"],
+    },
+    AdminApiFormatDefinition {
+        value: "openai:rerank",
+        label: "OpenAI Rerank",
+        default_path: "/v1/rerank",
+        aliases: &["openai_rerank", "rerank"],
+    },
+    AdminApiFormatDefinition {
         value: "openai:image",
         label: "OpenAI Image",
         default_path: "/v1/images/generations",
@@ -570,10 +582,34 @@ const ADMIN_API_FORMAT_DEFINITIONS: &[AdminApiFormatDefinition] = &[
         aliases: &["gemini", "google", "vertex"],
     },
     AdminApiFormatDefinition {
+        value: "gemini:embedding",
+        label: "Gemini Embedding",
+        default_path: "/v1/embeddings",
+        aliases: &["gemini_embedding"],
+    },
+    AdminApiFormatDefinition {
         value: "gemini:video",
         label: "Gemini Video",
         default_path: "/v1beta/models/{model}:predictLongRunning",
         aliases: &["gemini_video", "veo"],
+    },
+    AdminApiFormatDefinition {
+        value: "jina:embedding",
+        label: "Jina Embedding",
+        default_path: "/v1/embeddings",
+        aliases: &["jina_embedding"],
+    },
+    AdminApiFormatDefinition {
+        value: "jina:rerank",
+        label: "Jina Rerank",
+        default_path: "/v1/rerank",
+        aliases: &["jina_rerank"],
+    },
+    AdminApiFormatDefinition {
+        value: "doubao:embedding",
+        label: "Doubao Embedding",
+        default_path: "/v1/embeddings",
+        aliases: &["doubao_embedding"],
     },
 ];
 

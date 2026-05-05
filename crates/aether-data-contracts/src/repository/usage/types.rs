@@ -950,6 +950,60 @@ pub struct StoredUsagePerformancePercentilesRow {
     pub p99_first_byte_time_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UsageProviderPerformanceQuery {
+    pub created_from_unix_secs: u64,
+    pub created_until_unix_secs: u64,
+    pub granularity: UsageTimeSeriesGranularity,
+    pub tz_offset_minutes: i32,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoredUsageProviderPerformanceSummary {
+    pub request_count: u64,
+    pub success_count: u64,
+    pub avg_output_tps: Option<f64>,
+    pub avg_first_byte_time_ms: Option<f64>,
+    pub avg_response_time_ms: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoredUsageProviderPerformanceProviderRow {
+    pub provider_id: String,
+    pub provider: String,
+    pub request_count: u64,
+    pub success_count: u64,
+    pub output_tokens: u64,
+    pub avg_output_tps: Option<f64>,
+    pub avg_first_byte_time_ms: Option<f64>,
+    pub avg_response_time_ms: Option<f64>,
+    pub p90_response_time_ms: Option<u64>,
+    pub p90_first_byte_time_ms: Option<u64>,
+    pub tps_sample_count: u64,
+    pub first_byte_sample_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoredUsageProviderPerformanceTimelineRow {
+    pub date: String,
+    pub provider_id: String,
+    pub provider: String,
+    pub request_count: u64,
+    pub success_count: u64,
+    pub output_tokens: u64,
+    pub avg_output_tps: Option<f64>,
+    pub avg_first_byte_time_ms: Option<f64>,
+    pub avg_response_time_ms: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoredUsageProviderPerformance {
+    pub summary: StoredUsageProviderPerformanceSummary,
+    pub providers: Vec<StoredUsageProviderPerformanceProviderRow>,
+    pub timeline: Vec<StoredUsageProviderPerformanceTimelineRow>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct UsageCostSavingsSummaryQuery {
     pub created_from_unix_secs: u64,
@@ -1364,6 +1418,11 @@ pub trait UsageReadRepository: Send + Sync {
         &self,
         query: &UsagePerformancePercentilesQuery,
     ) -> Result<Vec<StoredUsagePerformancePercentilesRow>, crate::DataLayerError>;
+
+    async fn summarize_usage_provider_performance(
+        &self,
+        query: &UsageProviderPerformanceQuery,
+    ) -> Result<StoredUsageProviderPerformance, crate::DataLayerError>;
 
     async fn summarize_usage_cost_savings(
         &self,

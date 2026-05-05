@@ -27,7 +27,13 @@ export function useProviderFilters(
     { value: 'openai:chat', label: 'OpenAI Chat' },
     { value: 'openai:responses', label: 'OpenAI Responses' },
     { value: 'openai:responses:compact', label: 'OpenAI Responses Compact' },
+    { value: 'openai:embedding', label: 'OpenAI Embedding' },
+    { value: 'openai:rerank', label: 'OpenAI Rerank' },
     { value: 'gemini:generate_content', label: 'Gemini Generate Content' },
+    { value: 'gemini:embedding', label: 'Gemini Embedding' },
+    { value: 'jina:embedding', label: 'Jina Embedding' },
+    { value: 'jina:rerank', label: 'Jina Rerank' },
+    { value: 'doubao:embedding', label: 'Doubao Embedding' },
   ]
 
   const modelFilters = computed<FilterOption[]>(() => {

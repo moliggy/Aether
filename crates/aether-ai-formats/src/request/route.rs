@@ -7,12 +7,12 @@ use crate::contracts::{
     GEMINI_FILES_DOWNLOAD_PLAN_KIND, GEMINI_FILES_GET_PLAN_KIND, GEMINI_FILES_LIST_PLAN_KIND,
     GEMINI_FILES_UPLOAD_PLAN_KIND, GEMINI_VIDEO_CANCEL_SYNC_PLAN_KIND,
     GEMINI_VIDEO_CREATE_SYNC_PLAN_KIND, OPENAI_CHAT_STREAM_PLAN_KIND, OPENAI_CHAT_SYNC_PLAN_KIND,
-    OPENAI_IMAGE_STREAM_PLAN_KIND, OPENAI_IMAGE_SYNC_PLAN_KIND,
-    OPENAI_RESPONSES_COMPACT_STREAM_PLAN_KIND, OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND,
-    OPENAI_RESPONSES_STREAM_PLAN_KIND, OPENAI_RESPONSES_SYNC_PLAN_KIND,
-    OPENAI_VIDEO_CANCEL_SYNC_PLAN_KIND, OPENAI_VIDEO_CONTENT_PLAN_KIND,
-    OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND, OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND,
-    OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
+    OPENAI_EMBEDDING_SYNC_PLAN_KIND, OPENAI_IMAGE_STREAM_PLAN_KIND, OPENAI_IMAGE_SYNC_PLAN_KIND,
+    OPENAI_RERANK_SYNC_PLAN_KIND, OPENAI_RESPONSES_COMPACT_STREAM_PLAN_KIND,
+    OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND, OPENAI_RESPONSES_STREAM_PLAN_KIND,
+    OPENAI_RESPONSES_SYNC_PLAN_KIND, OPENAI_VIDEO_CANCEL_SYNC_PLAN_KIND,
+    OPENAI_VIDEO_CONTENT_PLAN_KIND, OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND,
+    OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND, OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
 };
 use crate::request::specialized::image::is_openai_image_stream_request;
 
@@ -174,6 +174,22 @@ pub fn resolve_execution_runtime_sync_plan_kind(
     }
 
     if route_family == Some("openai")
+        && route_kind == Some("embedding")
+        && *method == Method::POST
+        && path == "/v1/embeddings"
+    {
+        return Some(OPENAI_EMBEDDING_SYNC_PLAN_KIND);
+    }
+
+    if route_family == Some("openai")
+        && route_kind == Some("rerank")
+        && *method == Method::POST
+        && path == "/v1/rerank"
+    {
+        return Some(OPENAI_RERANK_SYNC_PLAN_KIND);
+    }
+
+    if route_family == Some("openai")
         && route_kind == Some("image")
         && *method == Method::POST
         && matches!(
@@ -327,6 +343,8 @@ pub fn supports_sync_execution_decision_kind(plan_kind: &str) -> bool {
     matches!(
         plan_kind,
         OPENAI_CHAT_SYNC_PLAN_KIND
+            | OPENAI_EMBEDDING_SYNC_PLAN_KIND
+            | OPENAI_RERANK_SYNC_PLAN_KIND
             | OPENAI_IMAGE_SYNC_PLAN_KIND
             | OPENAI_RESPONSES_SYNC_PLAN_KIND
             | OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND
@@ -377,7 +395,8 @@ mod tests {
         CLAUDE_CHAT_STREAM_PLAN_KIND, CLAUDE_CHAT_SYNC_PLAN_KIND, CLAUDE_CLI_STREAM_PLAN_KIND,
         CLAUDE_CLI_SYNC_PLAN_KIND, GEMINI_CHAT_STREAM_PLAN_KIND, GEMINI_CHAT_SYNC_PLAN_KIND,
         GEMINI_CLI_STREAM_PLAN_KIND, GEMINI_CLI_SYNC_PLAN_KIND, OPENAI_CHAT_STREAM_PLAN_KIND,
-        OPENAI_CHAT_SYNC_PLAN_KIND, OPENAI_IMAGE_STREAM_PLAN_KIND, OPENAI_IMAGE_SYNC_PLAN_KIND,
+        OPENAI_CHAT_SYNC_PLAN_KIND, OPENAI_EMBEDDING_SYNC_PLAN_KIND, OPENAI_IMAGE_STREAM_PLAN_KIND,
+        OPENAI_IMAGE_SYNC_PLAN_KIND, OPENAI_RERANK_SYNC_PLAN_KIND,
         OPENAI_RESPONSES_COMPACT_STREAM_PLAN_KIND, OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND,
         OPENAI_RESPONSES_STREAM_PLAN_KIND, OPENAI_RESPONSES_SYNC_PLAN_KIND,
     };
@@ -647,6 +666,42 @@ mod tests {
         );
         assert!(supports_sync_execution_decision_kind(
             OPENAI_IMAGE_SYNC_PLAN_KIND
+        ));
+    }
+
+    #[test]
+    fn resolves_openai_embedding_sync_plan_kind() {
+        assert_eq!(
+            resolve_execution_runtime_sync_plan_kind(
+                Some("ai_public"),
+                Some("openai"),
+                Some("embedding"),
+                None,
+                &Method::POST,
+                "/v1/embeddings",
+            ),
+            Some(OPENAI_EMBEDDING_SYNC_PLAN_KIND)
+        );
+        assert!(supports_sync_execution_decision_kind(
+            OPENAI_EMBEDDING_SYNC_PLAN_KIND
+        ));
+    }
+
+    #[test]
+    fn resolves_openai_rerank_sync_plan_kind() {
+        assert_eq!(
+            resolve_execution_runtime_sync_plan_kind(
+                Some("ai_public"),
+                Some("openai"),
+                Some("rerank"),
+                None,
+                &Method::POST,
+                "/v1/rerank",
+            ),
+            Some(OPENAI_RERANK_SYNC_PLAN_KIND)
+        );
+        assert!(supports_sync_execution_decision_kind(
+            OPENAI_RERANK_SYNC_PLAN_KIND
         ));
     }
 

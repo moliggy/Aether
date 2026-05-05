@@ -41,6 +41,17 @@
         >
           所有全局模型已添加到此 Provider
         </p>
+        <div
+          v-if="selectedGlobalModelSupportsEmbedding"
+          class="rounded-lg border border-border/60 bg-muted/20 px-3 py-2"
+        >
+          <div class="text-sm font-medium">
+            Embedding
+          </div>
+          <p class="text-xs text-muted-foreground">
+            此模型将继承全局模型的 Embeddings 元数据，不按 Chat 能力处理。
+          </p>
+        </div>
       </div>
 
       <!-- 编辑模式：显示模型信息 -->
@@ -56,6 +67,13 @@
             <p class="text-sm text-muted-foreground font-mono">
               {{ editingModel?.provider_model_name }}
             </p>
+            <Badge
+              v-if="editingModelSupportsEmbedding"
+              variant="secondary"
+              class="mt-2 text-xs"
+            >
+              Embedding
+            </Badge>
           </div>
         </div>
       </div>
@@ -214,6 +232,7 @@ import {
   SelectValue,
   SelectContent,
   SelectItem,
+  Badge,
 } from '@/components/ui'
 import { useToast } from '@/composables/useToast'
 import { parseNumberInput, sortResolutionEntries } from '@/utils/form'
@@ -221,6 +240,11 @@ import { createModel, updateModel, getProviderModels } from '@/api/endpoints/mod
 import { listGlobalModels, type GlobalModelResponse } from '@/api/global-models'
 import TieredPricingEditor from '@/features/models/components/TieredPricingEditor.vue'
 import type { Model, TieredPricingConfig } from '@/api/endpoints'
+import {
+  buildProviderModelCreatePayload,
+  buildProviderModelUpdatePayload,
+  modelSupportsEmbedding,
+} from './provider-model-form-helpers'
 
 interface Props {
   open: boolean
@@ -244,6 +268,16 @@ const { error: showError, success: showSuccess } = useToast()
 const tieredPricingEditorRef = ref<InstanceType<typeof TieredPricingEditor> | null>(null)
 
 const isEditing = computed(() => !!props.editingModel)
+
+const selectedGlobalModel = computed(() => {
+  return availableGlobalModels.value.find(model => model.id === form.value.global_model_id) || null
+})
+
+const selectedGlobalModelSupportsEmbedding = computed(() => modelSupportsEmbedding(selectedGlobalModel.value))
+const editingModelSupportsEmbedding = computed(() => {
+  return props.editingModel?.effective_supports_embedding === true
+    || modelSupportsEmbedding(props.editingModel)
+})
 
 // 1h 缓存定价始终显示
 const showCache1h = true
@@ -571,35 +605,36 @@ async function handleSubmit() {
     if (isEditing.value && props.editingModel) {
       // 编辑模式
       // 注意：使用 null 而不是 undefined 来显式清空字段（undefined 会被 JSON 序列化忽略）
-      await updateModel(props.providerId, props.editingModel.id, {
-        tiered_pricing: finalTieredPricing,
-        price_per_request: form.value.price_per_request ?? null,
-        config: cleanConfig || null,
-        supports_vision: form.value.supports_vision,
-        supports_function_calling: form.value.supports_function_calling,
-        supports_streaming: form.value.supports_streaming,
-        supports_extended_thinking: form.value.supports_extended_thinking,
-        supports_image_generation: form.value.supports_image_generation,
-        is_active: form.value.is_active
-      })
+      await updateModel(props.providerId, props.editingModel.id, buildProviderModelUpdatePayload({
+        finalTieredPricing,
+        pricePerRequest: form.value.price_per_request,
+        cleanConfig,
+        supportsVision: form.value.supports_vision,
+        supportsFunctionCalling: form.value.supports_function_calling,
+        supportsStreaming: form.value.supports_streaming,
+        supportsExtendedThinking: form.value.supports_extended_thinking,
+        supportsImageGeneration: form.value.supports_image_generation,
+        isActive: form.value.is_active
+      }))
       showSuccess('模型配置已更新')
     } else {
       // 添加模式：只有用户修改了配置才提交 tiered_pricing，否则保持继承关系
       const selectedModel = availableGlobalModels.value.find(m => m.id === form.value.global_model_id)
-      await createModel(props.providerId, {
-        global_model_id: form.value.global_model_id,
-        provider_model_name: selectedModel?.name || '',
-        // 只有修改了才提交，否则传 undefined 让后端继承 GlobalModel 配置
-        tiered_pricing: tieredPricingModified.value ? finalTieredPricing : undefined,
-        price_per_request: form.value.price_per_request,
-        config: configTouched.value ? cleanConfig : undefined,
-        supports_vision: form.value.supports_vision,
-        supports_function_calling: form.value.supports_function_calling,
-        supports_streaming: form.value.supports_streaming,
-        supports_extended_thinking: form.value.supports_extended_thinking,
-        supports_image_generation: form.value.supports_image_generation,
-        is_active: form.value.is_active
-      })
+      await createModel(props.providerId, buildProviderModelCreatePayload({
+        globalModelId: form.value.global_model_id,
+        providerModelName: selectedModel?.name || '',
+        finalTieredPricing,
+        tieredPricingModified: tieredPricingModified.value,
+        pricePerRequest: form.value.price_per_request,
+        cleanConfig,
+        configTouched: configTouched.value,
+        supportsVision: form.value.supports_vision,
+        supportsFunctionCalling: form.value.supports_function_calling,
+        supportsStreaming: form.value.supports_streaming,
+        supportsExtendedThinking: form.value.supports_extended_thinking,
+        supportsImageGeneration: form.value.supports_image_generation,
+        isActive: form.value.is_active
+      }))
       showSuccess('模型已添加')
     }
     emit('update:open', false)

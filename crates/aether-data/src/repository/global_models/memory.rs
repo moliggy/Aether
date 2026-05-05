@@ -497,6 +497,7 @@ impl GlobalModelWriteRepository for InMemoryGlobalModelReadRepository {
             Some(global_model.display_name.clone()),
             global_model.default_price_per_request,
             global_model.default_tiered_pricing.clone(),
+            global_model.supported_capabilities.clone(),
             global_model.config.clone(),
         )?;
         self.admin_provider_model_items
@@ -542,6 +543,7 @@ impl GlobalModelWriteRepository for InMemoryGlobalModelReadRepository {
         existing.global_model_display_name = Some(global_model.display_name.clone());
         existing.global_model_default_price_per_request = global_model.default_price_per_request;
         existing.global_model_default_tiered_pricing = global_model.default_tiered_pricing.clone();
+        existing.global_model_supported_capabilities = global_model.supported_capabilities.clone();
         existing.global_model_config = global_model.config.clone();
         Ok(Some(existing.clone()))
     }
@@ -639,8 +641,9 @@ mod tests {
 
     use super::InMemoryGlobalModelReadRepository;
     use crate::repository::global_models::{
-        GlobalModelReadRepository, PublicCatalogModelListQuery, PublicCatalogModelSearchQuery,
-        PublicGlobalModelQuery, StoredPublicCatalogModel, StoredPublicGlobalModel,
+        CreateAdminGlobalModelRecord, GlobalModelReadRepository, GlobalModelWriteRepository,
+        PublicCatalogModelListQuery, PublicCatalogModelSearchQuery, PublicGlobalModelQuery,
+        StoredPublicCatalogModel, StoredPublicGlobalModel,
     };
 
     fn sample_model(
@@ -687,9 +690,81 @@ mod tests {
             Some(true),
             Some(true),
             Some(true),
+            Some(false),
             true,
         )
         .expect("public catalog model should build")
+    }
+
+    #[tokio::test]
+    async fn embedding_model_metadata_roundtrip() {
+        let repository =
+            InMemoryGlobalModelReadRepository::seed(Vec::<StoredPublicGlobalModel>::new());
+        let record = CreateAdminGlobalModelRecord::new(
+            "gm-embedding".to_string(),
+            "text-embedding-3-small".to_string(),
+            "Text Embedding 3 Small".to_string(),
+            true,
+            None,
+            Some(json!({"tiers":[{"up_to":null,"input_price_per_1m":0.02}]})),
+            Some(json!(["embedding"])),
+            Some(json!({
+                "api_formats": ["openai:embedding"],
+                "dimensions": 1536
+            })),
+        )
+        .expect("embedding global model should validate");
+
+        repository
+            .create_admin_global_model(&record)
+            .await
+            .expect("embedding global model should persist")
+            .expect("embedding global model should be returned");
+
+        let stored = repository
+            .get_admin_global_model_by_name("text-embedding-3-small")
+            .await
+            .expect("embedding global model should read")
+            .expect("embedding global model should exist");
+
+        assert_eq!(stored.supported_capabilities, Some(json!(["embedding"])));
+        assert_eq!(
+            stored
+                .config
+                .as_ref()
+                .and_then(|value| value.get("dimensions")),
+            Some(&json!(1536))
+        );
+        assert_eq!(
+            stored
+                .default_tiered_pricing
+                .as_ref()
+                .and_then(|value| value.get("tiers"))
+                .and_then(serde_json::Value::as_array)
+                .and_then(|tiers| tiers.first())
+                .and_then(|tier| tier.get("input_price_per_1m"))
+                .and_then(serde_json::Value::as_f64),
+            Some(0.02)
+        );
+    }
+
+    #[tokio::test]
+    async fn embedding_missing_billing_config_rejected() {
+        let error = CreateAdminGlobalModelRecord::new(
+            "gm-embedding".to_string(),
+            "text-embedding-3-small".to_string(),
+            "Text Embedding 3 Small".to_string(),
+            true,
+            None,
+            None,
+            Some(json!(["embedding"])),
+            None,
+        )
+        .expect_err("embedding metadata without billing should fail closed");
+
+        assert!(error
+            .to_string()
+            .contains("embedding global model requires"));
     }
 
     #[tokio::test]
@@ -789,6 +864,52 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].provider_id, "provider-openai");
         assert_eq!(items[0].name, "gpt-5");
+    }
+
+    #[tokio::test]
+    async fn public_catalog_preserves_embedding_capability_without_contaminating_chat_models() {
+        let mut embedding_model = sample_public_catalog_model(
+            "model-embedding",
+            "provider-openai",
+            "openai",
+            "text-embedding-3-small",
+            "text-embedding-3-small",
+            "Text Embedding 3 Small",
+        );
+        embedding_model.supports_embedding = Some(true);
+        embedding_model.supports_streaming = Some(false);
+        let chat_model = sample_public_catalog_model(
+            "model-chat",
+            "provider-openai",
+            "openai",
+            "gpt-5-upstream",
+            "gpt-5",
+            "GPT 5",
+        );
+        let repository =
+            InMemoryGlobalModelReadRepository::seed(Vec::<StoredPublicGlobalModel>::new())
+                .with_public_catalog_models(vec![embedding_model, chat_model]);
+
+        let items = repository
+            .list_public_catalog_models(&PublicCatalogModelListQuery {
+                provider_id: Some("provider-openai".to_string()),
+                offset: 0,
+                limit: 50,
+            })
+            .await
+            .expect("catalog should list");
+
+        let embedding = items
+            .iter()
+            .find(|item| item.name == "text-embedding-3-small")
+            .expect("embedding model should be listed");
+        let chat = items
+            .iter()
+            .find(|item| item.name == "gpt-5")
+            .expect("chat model should be listed");
+        assert_eq!(embedding.supports_embedding, Some(true));
+        assert_eq!(embedding.supports_streaming, Some(false));
+        assert_eq!(chat.supports_embedding, Some(false));
     }
 
     #[tokio::test]

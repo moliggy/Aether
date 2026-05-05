@@ -1,6 +1,13 @@
 use crate::handlers::admin::shared::unix_secs_to_rfc3339;
 use aether_data_contracts::repository::global_models::StoredAdminProviderModel;
 
+const EMBEDDING_API_FORMATS: &[&str] = &[
+    "openai:embedding",
+    "jina:embedding",
+    "gemini:embedding",
+    "doubao:embedding",
+];
+
 pub(crate) fn model_tiered_pricing_first_tier_value(
     tiered_pricing: Option<&serde_json::Value>,
     field_name: &str,
@@ -24,6 +31,50 @@ fn model_effective_capability(
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false)
     })
+}
+
+fn value_contains_string(value: &serde_json::Value, expected: &str) -> bool {
+    match value {
+        serde_json::Value::String(value) => value.trim().eq_ignore_ascii_case(expected),
+        serde_json::Value::Array(values) => values
+            .iter()
+            .any(|value| value_contains_string(value, expected)),
+        serde_json::Value::Object(object) => object
+            .values()
+            .any(|value| value_contains_string(value, expected)),
+        _ => false,
+    }
+}
+
+fn value_has_true_key(value: &serde_json::Value, key: &str) -> bool {
+    value
+        .as_object()
+        .and_then(|object| object.get(key))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn value_contains_embedding_metadata(value: &serde_json::Value) -> bool {
+    value_has_true_key(value, "embedding")
+        || value_contains_string(value, "embedding")
+        || EMBEDDING_API_FORMATS
+            .iter()
+            .any(|api_format| value_contains_string(value, api_format))
+}
+
+fn model_effective_embedding_capability(model: &StoredAdminProviderModel) -> bool {
+    model
+        .config
+        .as_ref()
+        .is_some_and(value_contains_embedding_metadata)
+        || model
+            .global_model_supported_capabilities
+            .as_ref()
+            .is_some_and(value_contains_embedding_metadata)
+        || model
+            .global_model_config
+            .as_ref()
+            .is_some_and(value_contains_embedding_metadata)
 }
 
 pub(crate) fn timestamp_or_now(value: Option<u64>, now_unix_secs: u64) -> serde_json::Value {
@@ -110,6 +161,7 @@ pub(crate) fn admin_provider_model_effective_capability(
             model.global_model_config.as_ref(),
             "image_generation",
         ),
+        "embedding" => model_effective_embedding_capability(model),
         _ => false,
     }
 }

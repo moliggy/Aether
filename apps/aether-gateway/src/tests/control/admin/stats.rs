@@ -854,6 +854,187 @@ async fn gateway_handles_admin_stats_performance_percentiles_locally_without_usa
 }
 
 #[tokio::test]
+async fn gateway_handles_admin_stats_provider_performance_locally_with_trusted_admin_principal() {
+    let (_upstream_url, upstream_hits, upstream_handle) =
+        start_stats_upstream("/api/admin/stats/performance/providers").await;
+
+    let mut usage = (1..=10)
+        .map(|index| {
+            let mut row = sample_usage_row(
+                &format!("usage-provider-perf-a-{index}"),
+                &format!("req-provider-perf-a-{index}"),
+                Some("user-1"),
+                Some("key-1"),
+                Some("primary"),
+                "OpenAI",
+                "gpt-5",
+                10,
+                10,
+                0.01,
+                0.01,
+                DAY_1_UNIX_SECS + i64::from(index),
+            );
+            row.response_time_ms = Some((index * 100) as u64);
+            row.first_byte_time_ms = Some((index * 10) as u64);
+            row
+        })
+        .collect::<Vec<_>>();
+    let mut failed = sample_usage_row(
+        "usage-provider-perf-failed",
+        "req-provider-perf-failed",
+        Some("user-1"),
+        Some("key-1"),
+        Some("primary"),
+        "OpenAI",
+        "gpt-5",
+        10,
+        99,
+        0.01,
+        0.01,
+        DAY_1_UNIX_SECS + 20,
+    );
+    failed.status = "failed".to_string();
+    failed.status_code = Some(500);
+    failed.error_message = Some("upstream failed".to_string());
+    usage.push(failed);
+
+    let mut provider_b = sample_usage_row(
+        "usage-provider-perf-b",
+        "req-provider-perf-b",
+        Some("user-1"),
+        Some("key-1"),
+        Some("primary"),
+        "Anthropic",
+        "claude-sonnet",
+        10,
+        20,
+        0.01,
+        0.01,
+        DAY_1_UNIX_SECS + 30,
+    );
+    provider_b.provider_id = Some("provider-2".to_string());
+    provider_b.response_time_ms = Some(1000);
+    provider_b.first_byte_time_ms = None;
+    usage.push(provider_b);
+
+    let mut unknown_provider = sample_usage_row(
+        "usage-provider-perf-unknown",
+        "req-provider-perf-unknown",
+        Some("user-1"),
+        Some("key-1"),
+        Some("primary"),
+        "unknown",
+        "gpt-5",
+        10,
+        999,
+        0.01,
+        0.01,
+        DAY_1_UNIX_SECS + 40,
+    );
+    unknown_provider.provider_id = None;
+    usage.push(unknown_provider);
+
+    let usage_repository = Arc::new(InMemoryUsageReadRepository::seed(usage));
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(GatewayDataState::with_usage_reader_for_tests(
+                usage_repository,
+            )),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = admin_request(reqwest::Client::new().get(format!(
+        "{gateway_url}/api/admin/stats/performance/providers?start_date=2024-03-21&end_date=2024-03-21&granularity=hour&limit=2&tz_offset_minutes=0"
+    )))
+    .send()
+    .await
+    .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["summary"]["request_count"], 12);
+    assert_eq!(payload["summary"]["success_rate"], 91.67);
+    assert_eq!(payload["summary"]["avg_output_tps"], 18.46);
+    assert_eq!(payload["summary"]["avg_first_byte_time_ms"], 55.0);
+    assert_eq!(payload["summary"]["avg_response_time_ms"], 590.91);
+
+    assert_eq!(payload["providers"].as_array().map(Vec::len), Some(2));
+    assert_eq!(payload["providers"][0]["provider_id"], "provider-1");
+    assert_eq!(payload["providers"][0]["provider"], "OpenAI");
+    assert_eq!(payload["providers"][0]["request_count"], 11);
+    assert_eq!(payload["providers"][0]["success_count"], 10);
+    assert_eq!(payload["providers"][0]["error_count"], 1);
+    assert_eq!(payload["providers"][0]["success_rate"], 90.91);
+    assert_eq!(payload["providers"][0]["output_tokens"], 199);
+    assert_eq!(payload["providers"][0]["avg_output_tps"], 18.18);
+    assert_eq!(payload["providers"][0]["avg_first_byte_time_ms"], 55.0);
+    assert_eq!(payload["providers"][0]["avg_response_time_ms"], 550.0);
+    assert_eq!(payload["providers"][0]["p90_response_time_ms"], 910);
+    assert_eq!(payload["providers"][0]["p90_first_byte_time_ms"], 91);
+    assert_eq!(payload["providers"][0]["tps_sample_count"], 10);
+    assert_eq!(payload["providers"][0]["first_byte_sample_count"], 10);
+
+    assert_eq!(payload["providers"][1]["provider_id"], "provider-2");
+    assert_eq!(payload["providers"][1]["provider"], "Anthropic");
+    assert_eq!(payload["providers"][1]["avg_output_tps"], 20.0);
+    assert_eq!(
+        payload["providers"][1]["avg_first_byte_time_ms"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        payload["providers"][1]["p90_response_time_ms"],
+        serde_json::Value::Null
+    );
+
+    assert_eq!(payload["timeline"].as_array().map(Vec::len), Some(2));
+    assert_eq!(payload["timeline"][0]["date"], "2024-03-21T05:00:00+00:00");
+    assert_eq!(payload["timeline"][0]["provider_id"], "provider-1");
+    assert_eq!(payload["timeline"][0]["avg_output_tps"], 18.18);
+    assert_eq!(payload["timeline"][0]["success_rate"], 90.91);
+    assert_eq!(payload["timeline"][1]["provider_id"], "provider-2");
+    assert_eq!(
+        payload["timeline"][1]["avg_first_byte_time_ms"],
+        serde_json::Value::Null
+    );
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_returns_empty_admin_stats_provider_performance_without_usage_reader() {
+    let (_upstream_url, upstream_hits, upstream_handle) =
+        start_stats_upstream("/api/admin/stats/performance/providers").await;
+
+    let gateway = build_router_with_state(AppState::new().expect("gateway should build"));
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = admin_request(reqwest::Client::new().get(format!(
+        "{gateway_url}/api/admin/stats/performance/providers?start_date=2024-03-21&end_date=2024-03-21&limit=2"
+    )))
+    .send()
+    .await
+    .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["summary"]["request_count"], 0);
+    assert_eq!(payload["summary"]["success_rate"], 0.0);
+    assert_eq!(
+        payload["summary"]["avg_output_tps"],
+        serde_json::Value::Null
+    );
+    assert_eq!(payload["providers"].as_array().map(Vec::len), Some(0));
+    assert_eq!(payload["timeline"].as_array().map(Vec::len), Some(0));
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
 async fn gateway_handles_admin_stats_time_series_locally_with_trusted_admin_principal() {
     let (upstream_url, upstream_hits, upstream_handle) =
         start_stats_upstream("/api/admin/stats/time-series").await;

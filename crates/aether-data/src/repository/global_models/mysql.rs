@@ -2,13 +2,13 @@ use async_trait::async_trait;
 use sqlx::{mysql::MySqlRow, Row};
 
 use super::{
-    AdminGlobalModelListQuery, AdminProviderModelListQuery, CreateAdminGlobalModelRecord,
-    GlobalModelReadRepository, GlobalModelWriteRepository, InMemoryGlobalModelReadRepository,
-    PublicCatalogModelListQuery, PublicCatalogModelSearchQuery, PublicGlobalModelQuery,
-    StoredAdminGlobalModel, StoredAdminGlobalModelPage, StoredAdminProviderModel,
-    StoredProviderActiveGlobalModel, StoredProviderModelStats, StoredPublicCatalogModel,
-    StoredPublicGlobalModel, StoredPublicGlobalModelPage, UpdateAdminGlobalModelRecord,
-    UpsertAdminProviderModelRecord,
+    metadata_supports_embedding, AdminGlobalModelListQuery, AdminProviderModelListQuery,
+    CreateAdminGlobalModelRecord, GlobalModelReadRepository, GlobalModelWriteRepository,
+    InMemoryGlobalModelReadRepository, PublicCatalogModelListQuery, PublicCatalogModelSearchQuery,
+    PublicGlobalModelQuery, StoredAdminGlobalModel, StoredAdminGlobalModelPage,
+    StoredAdminProviderModel, StoredProviderActiveGlobalModel, StoredProviderModelStats,
+    StoredPublicCatalogModel, StoredPublicGlobalModel, StoredPublicGlobalModelPage,
+    UpdateAdminGlobalModelRecord, UpsertAdminProviderModelRecord,
 };
 use crate::driver::mysql::MysqlPool;
 use crate::error::SqlResultExt;
@@ -104,6 +104,7 @@ SELECT
   gm.display_name AS global_model_display_name,
   gm.default_price_per_request AS global_model_default_price_per_request,
   gm.default_tiered_pricing AS global_model_default_tiered_pricing,
+  gm.supported_capabilities AS global_model_supported_capabilities,
   gm.config AS global_model_config
 FROM models m
 LEFT JOIN global_models gm ON gm.id = m.global_model_id
@@ -130,6 +131,8 @@ SELECT
   COALESCE(gm.name, m.provider_model_name) AS name,
   COALESCE(NULLIF(gm.display_name, ''), m.provider_model_name) AS display_name,
   gm.config AS global_model_config,
+  gm.supported_capabilities AS global_model_supported_capabilities,
+  m.config AS model_config,
   m.tiered_pricing,
   gm.default_tiered_pricing,
   m.supports_vision,
@@ -782,6 +785,11 @@ fn map_admin_provider_model_row(
             "global_models.default_tiered_pricing",
         )?,
         optional_json_from_string(
+            row.try_get("global_model_supported_capabilities")
+                .map_sql_err()?,
+            "global_models.supported_capabilities",
+        )?,
+        optional_json_from_string(
             row.try_get("global_model_config").map_sql_err()?,
             "global_models.config",
         )?,
@@ -795,6 +803,13 @@ fn map_public_catalog_model_row(
         row.try_get("global_model_config").map_sql_err()?,
         "global_models.config",
     )?;
+    let global_model_supported_capabilities = optional_json_from_string(
+        row.try_get("global_model_supported_capabilities")
+            .map_sql_err()?,
+        "global_models.supported_capabilities",
+    )?;
+    let model_config =
+        optional_json_from_string(row.try_get("model_config").map_sql_err()?, "models.config")?;
     let tiered_pricing = optional_json_from_string(
         row.try_get("tiered_pricing").map_sql_err()?,
         "models.tiered_pricing",
@@ -835,6 +850,11 @@ fn map_public_catalog_model_row(
         row.try_get("supports_vision").map_sql_err()?,
         row.try_get("supports_function_calling").map_sql_err()?,
         row.try_get("supports_streaming").map_sql_err()?,
+        metadata_supports_embedding(
+            global_model_supported_capabilities.as_ref(),
+            global_model_config.as_ref(),
+            model_config.as_ref(),
+        ),
         model_is_active && provider_is_active && global_model_is_active,
     )
 }

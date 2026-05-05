@@ -21,6 +21,66 @@ fn classifies_claude_count_tokens_as_non_execution_runtime_public_route() {
 }
 
 #[test]
+fn classifies_openai_embeddings_as_embedding_not_chat() {
+    let headers = headers(&[("authorization", "Bearer sk-test")]);
+    let uri: Uri = "/v1/embeddings".parse().expect("uri should parse");
+    let decision =
+        classify_control_route(&http::Method::POST, &uri, &headers).expect("route should classify");
+
+    assert_eq!(decision.route_family.as_deref(), Some("openai"));
+    assert_eq!(decision.route_kind.as_deref(), Some("embedding"));
+    assert_ne!(decision.route_kind.as_deref(), Some("chat"));
+    assert_ne!(decision.route_kind.as_deref(), Some("responses"));
+    assert_eq!(
+        decision.auth_endpoint_signature.as_deref(),
+        Some("openai:embedding")
+    );
+    assert!(decision.is_execution_runtime_candidate());
+}
+
+#[test]
+fn classifies_openai_rerank_as_rerank_not_chat() {
+    let headers = headers(&[("authorization", "Bearer sk-test")]);
+    let uri: Uri = "/v1/rerank".parse().expect("uri should parse");
+    let decision =
+        classify_control_route(&http::Method::POST, &uri, &headers).expect("route should classify");
+
+    assert_eq!(decision.route_family.as_deref(), Some("openai"));
+    assert_eq!(decision.route_kind.as_deref(), Some("rerank"));
+    assert_ne!(decision.route_kind.as_deref(), Some("chat"));
+    assert_ne!(decision.route_kind.as_deref(), Some("embedding"));
+    assert_eq!(
+        decision.auth_endpoint_signature.as_deref(),
+        Some("openai:rerank")
+    );
+    assert!(decision.is_execution_runtime_candidate());
+}
+
+#[test]
+fn classifies_openai_chat_and_responses_separately_from_embedding() {
+    let headers = headers(&[("authorization", "Bearer sk-test")]);
+    let chat_uri: Uri = "/v1/chat/completions".parse().expect("uri should parse");
+    let responses_uri: Uri = "/v1/responses".parse().expect("uri should parse");
+
+    let chat = classify_control_route(&http::Method::POST, &chat_uri, &headers)
+        .expect("chat route should classify");
+    assert_eq!(chat.route_family.as_deref(), Some("openai"));
+    assert_eq!(chat.route_kind.as_deref(), Some("chat"));
+    assert_eq!(chat.auth_endpoint_signature.as_deref(), Some("openai:chat"));
+    assert_ne!(chat.route_kind.as_deref(), Some("embedding"));
+
+    let responses = classify_control_route(&http::Method::POST, &responses_uri, &headers)
+        .expect("responses route should classify");
+    assert_eq!(responses.route_family.as_deref(), Some("openai"));
+    assert_eq!(responses.route_kind.as_deref(), Some("responses"));
+    assert_eq!(
+        responses.auth_endpoint_signature.as_deref(),
+        Some("openai:responses")
+    );
+    assert_ne!(responses.route_kind.as_deref(), Some("embedding"));
+}
+
+#[test]
 fn classifies_models_list_as_claude_when_headers_match() {
     let headers = headers(&[
         ("x-api-key", "sk-claude"),

@@ -8,10 +8,16 @@ const ENDPOINT_SORT_ORDER = [
   'openai:chat',
   'openai:responses',
   'openai:responses:compact',
+  'openai:embedding',
+  'openai:rerank',
   'gemini:generate_content',
+  'gemini:embedding',
   'openai:video',
   'gemini:video',
   'gemini:files',
+  'jina:embedding',
+  'jina:rerank',
+  'doubao:embedding',
 ]
 
 /**

@@ -82,6 +82,25 @@ fn classifies_admin_stats_performance_percentiles_as_admin_proxy_route() {
 }
 
 #[test]
+fn classifies_admin_stats_provider_performance_as_admin_proxy_route() {
+    let headers = headers(&[]);
+    let uri: Uri = "/api/admin/stats/performance/providers"
+        .parse()
+        .expect("uri should parse");
+    let decision =
+        classify_control_route(&http::Method::GET, &uri, &headers).expect("route should classify");
+
+    assert_eq!(decision.route_class.as_deref(), Some("admin_proxy"));
+    assert_eq!(decision.route_family.as_deref(), Some("stats_manage"));
+    assert_eq!(decision.route_kind.as_deref(), Some("provider_performance"));
+    assert_eq!(
+        decision.auth_endpoint_signature.as_deref(),
+        Some("admin:stats")
+    );
+    assert!(!decision.is_execution_runtime_candidate());
+}
+
+#[test]
 fn classifies_admin_stats_cost_forecast_as_admin_proxy_route() {
     let headers = headers(&[]);
     let uri: Uri = "/api/admin/stats/cost/forecast"

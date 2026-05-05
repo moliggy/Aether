@@ -8,6 +8,7 @@ pub enum LocalStandardSourceFamily {
 pub enum LocalStandardSourceMode {
     Chat,
     Cli,
+    Embedding,
 }
 
 #[derive(Debug, Clone, Copy)]

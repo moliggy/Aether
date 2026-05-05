@@ -1,7 +1,11 @@
 use serde_json::Value;
 
 use crate::{
-    protocol::canonical::{CanonicalRequest, CanonicalResponse},
+    protocol::canonical::{
+        canonical_to_embedding_request, canonical_to_rerank_request,
+        from_embedding_to_canonical_request, from_rerank_to_canonical_request, CanonicalRequest,
+        CanonicalResponse,
+    },
     protocol::formats::{
         claude_messages, gemini_generate_content, openai_chat, openai_responses, FormatId,
     },
@@ -22,6 +26,11 @@ pub fn parse_request(
         }
         FormatId::ClaudeMessages => claude_messages::request::from(body, ctx),
         FormatId::GeminiGenerateContent => gemini_generate_content::request::from(body, ctx),
+        FormatId::OpenAiEmbedding => from_embedding_to_canonical_request(body, "openai"),
+        FormatId::JinaEmbedding => from_embedding_to_canonical_request(body, "jina"),
+        FormatId::OpenAiRerank => from_rerank_to_canonical_request(body, "openai"),
+        FormatId::JinaRerank => from_rerank_to_canonical_request(body, "jina"),
+        FormatId::GeminiEmbedding | FormatId::DoubaoEmbedding => None,
     }
     .ok_or_else(|| FormatError::RequestParseFailed {
         format: source.as_str().to_string(),
@@ -48,6 +57,36 @@ pub fn emit_request(
         FormatId::OpenAiResponsesCompact => openai_responses::request::to_compact(&request, ctx),
         FormatId::ClaudeMessages => claude_messages::request::to(&request, ctx),
         FormatId::GeminiGenerateContent => gemini_generate_content::request::to(&request, ctx),
+        FormatId::OpenAiEmbedding => canonical_to_embedding_request(
+            &request,
+            ctx.mapped_model_or(request.model.as_str()),
+            "openai",
+        ),
+        FormatId::JinaEmbedding => canonical_to_embedding_request(
+            &request,
+            ctx.mapped_model_or(request.model.as_str()),
+            "jina",
+        ),
+        FormatId::OpenAiRerank => canonical_to_rerank_request(
+            &request,
+            ctx.mapped_model_or(request.model.as_str()),
+            "openai",
+        ),
+        FormatId::JinaRerank => canonical_to_rerank_request(
+            &request,
+            ctx.mapped_model_or(request.model.as_str()),
+            "jina",
+        ),
+        FormatId::GeminiEmbedding => canonical_to_embedding_request(
+            &request,
+            ctx.mapped_model_or(request.model.as_str()),
+            "gemini",
+        ),
+        FormatId::DoubaoEmbedding => canonical_to_embedding_request(
+            &request,
+            ctx.mapped_model_or(request.model.as_str()),
+            "doubao",
+        ),
     }
     .ok_or_else(|| FormatError::RequestEmitFailed {
         format: target.as_str().to_string(),
@@ -77,6 +116,12 @@ pub fn parse_response(
         }
         FormatId::ClaudeMessages => claude_messages::response::from(body, ctx),
         FormatId::GeminiGenerateContent => gemini_generate_content::response::from(body, ctx),
+        FormatId::OpenAiEmbedding
+        | FormatId::JinaEmbedding
+        | FormatId::OpenAiRerank
+        | FormatId::JinaRerank
+        | FormatId::GeminiEmbedding
+        | FormatId::DoubaoEmbedding => None,
     }
     .ok_or_else(|| FormatError::ResponseParseFailed {
         format: source.as_str().to_string(),
@@ -95,6 +140,12 @@ pub fn emit_response(
         FormatId::OpenAiResponsesCompact => openai_responses::response::to_compact(response, ctx),
         FormatId::ClaudeMessages => claude_messages::response::to(response, ctx),
         FormatId::GeminiGenerateContent => gemini_generate_content::response::to(response, ctx),
+        FormatId::OpenAiEmbedding
+        | FormatId::JinaEmbedding
+        | FormatId::OpenAiRerank
+        | FormatId::JinaRerank
+        | FormatId::GeminiEmbedding
+        | FormatId::DoubaoEmbedding => None,
     }
     .ok_or_else(|| FormatError::ResponseEmitFailed {
         format: target.as_str().to_string(),
@@ -167,6 +218,116 @@ mod tests {
         assert_eq!(converted["model"], "gpt-target");
         assert_eq!(converted["input"][0]["type"], "message");
         assert_eq!(converted["input"][0]["content"][0]["type"], "input_text");
+    }
+
+    #[test]
+    fn converts_openai_embedding_to_jina_without_chat_fields() {
+        let body = json!({
+            "model": "text-embedding-3-small",
+            "input": ["alpha", "beta"],
+            "dimensions": 2
+        });
+        let ctx = FormatContext::default().with_mapped_model("jina-embeddings-v3");
+
+        let converted = convert_request("openai:embedding", "jina:embedding", &body, &ctx)
+            .expect("embedding request conversion should succeed");
+
+        assert_eq!(converted["model"], "jina-embeddings-v3");
+        assert_eq!(converted["task"], "text-matching");
+        assert_eq!(converted["input"], json!(["alpha", "beta"]));
+        assert!(converted.get("messages").is_none());
+    }
+
+    #[test]
+    fn converts_openai_embedding_to_gemini_and_doubao_payload_shapes() {
+        let body = json!({
+            "model": "text-embedding-3-small",
+            "input": ["alpha", "beta"],
+            "dimensions": 2
+        });
+
+        let gemini = convert_request(
+            "openai:embedding",
+            "gemini:embedding",
+            &body,
+            &FormatContext::default().with_mapped_model("gemini-embedding-001"),
+        )
+        .expect("gemini embedding conversion should succeed");
+        assert_eq!(gemini["model"], "gemini-embedding-001");
+        assert_eq!(
+            gemini["requests"][0]["content"]["parts"][0]["text"],
+            "alpha"
+        );
+        assert!(gemini.get("messages").is_none());
+
+        let doubao = convert_request(
+            "openai:embedding",
+            "doubao:embedding",
+            &body,
+            &FormatContext::default().with_mapped_model("doubao-embedding-vision"),
+        )
+        .expect("doubao embedding conversion should succeed");
+        assert_eq!(doubao["model"], "doubao-embedding-vision");
+        assert_eq!(doubao["input"][0], json!({"type": "text", "text": "alpha"}));
+        assert!(doubao.get("messages").is_none());
+    }
+
+    #[test]
+    fn embedding_registry_keeps_gemini_and_doubao_emit_only() {
+        let body = json!({
+            "model": "gemini-embedding-001",
+            "content": {"parts": [{"text": "alpha"}]}
+        });
+        let ctx = FormatContext::default();
+
+        assert!(convert_request("gemini:embedding", "openai:embedding", &body, &ctx).is_err());
+        assert!(convert_request("doubao:embedding", "openai:embedding", &body, &ctx).is_err());
+    }
+
+    #[test]
+    fn embedding_registry_rejects_chat_payload_for_embedding_format() {
+        let body = json!({
+            "model": "gpt-5",
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+        let ctx = FormatContext::default();
+
+        assert!(convert_request("openai:embedding", "jina:embedding", &body, &ctx).is_err());
+    }
+
+    #[test]
+    fn converts_openai_rerank_to_jina_without_chat_fields() {
+        let body = json!({
+            "model": "rerank-source",
+            "query": "best document",
+            "documents": ["alpha", {"text": "beta"}],
+            "top_n": 1,
+            "return_documents": true
+        });
+        let ctx = FormatContext::default().with_mapped_model("jina-reranker-v2-base-multilingual");
+
+        let converted = convert_request("openai:rerank", "jina:rerank", &body, &ctx)
+            .expect("rerank request conversion should succeed");
+
+        assert_eq!(converted["model"], "jina-reranker-v2-base-multilingual");
+        assert_eq!(converted["query"], "best document");
+        assert_eq!(converted["documents"], json!(["alpha", {"text": "beta"}]));
+        assert_eq!(converted["top_n"], 1);
+        assert_eq!(converted["return_documents"], true);
+        assert!(converted.get("messages").is_none());
+    }
+
+    #[test]
+    fn rerank_registry_rejects_invalid_payloads() {
+        let ctx = FormatContext::default();
+        for body in [
+            json!({"model": "rerank", "documents": ["alpha"]}),
+            json!({"model": "rerank", "query": "q", "documents": []}),
+            json!({"model": "rerank", "query": "q", "documents": [""]}),
+            json!({"model": "rerank", "query": "q", "documents": ["alpha"], "top_n": 0}),
+        ] {
+            assert!(convert_request("openai:rerank", "jina:rerank", &body, &ctx).is_err());
+        }
     }
 
     #[test]

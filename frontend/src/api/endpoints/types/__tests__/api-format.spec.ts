@@ -15,6 +15,30 @@ describe('api format display helpers', () => {
     expect(normalizeApiFormatAlias('OPENAI_RESPONSES')).toBe(API_FORMATS.OPENAI_RESPONSES)
     expect(normalizeApiFormatAlias('OPENAI_RESPONSES_COMPACT')).toBe(API_FORMATS.OPENAI_RESPONSES_COMPACT)
     expect(normalizeApiFormatAlias('GEMINI_GENERATE_CONTENT')).toBe(API_FORMATS.GEMINI_GENERATE_CONTENT)
+    expect(normalizeApiFormatAlias('OPENAI_EMBEDDING')).toBe(API_FORMATS.OPENAI_EMBEDDING)
+    expect(normalizeApiFormatAlias('OPENAI_RERANK')).toBe(API_FORMATS.OPENAI_RERANK)
+    expect(normalizeApiFormatAlias('GEMINI_EMBEDDING')).toBe(API_FORMATS.GEMINI_EMBEDDING)
+    expect(normalizeApiFormatAlias('JINA_EMBEDDING')).toBe(API_FORMATS.JINA_EMBEDDING)
+    expect(normalizeApiFormatAlias('JINA_RERANK')).toBe(API_FORMATS.JINA_RERANK)
+    expect(normalizeApiFormatAlias('DOUBAO_EMBEDDING')).toBe(API_FORMATS.DOUBAO_EMBEDDING)
+  })
+
+  it('formats rerank api format ids distinctly from chat formats', () => {
+    expect(formatApiFormat(API_FORMATS.OPENAI_RERANK)).toBe('OpenAI Rerank')
+    expect(formatApiFormat(API_FORMATS.JINA_RERANK)).toBe('Jina Rerank')
+    expect(formatApiFormatShort(API_FORMATS.OPENAI_RERANK)).toBe('ORR')
+    expect(formatApiFormatShort(API_FORMATS.JINA_RERANK)).toBe('JR')
+  })
+
+  it('formats embedding api format ids distinctly from chat formats', () => {
+    expect(formatApiFormat(API_FORMATS.OPENAI_EMBEDDING)).toBe('OpenAI Embedding')
+    expect(formatApiFormat(API_FORMATS.GEMINI_EMBEDDING)).toBe('Gemini Embedding')
+    expect(formatApiFormat(API_FORMATS.JINA_EMBEDDING)).toBe('Jina Embedding')
+    expect(formatApiFormat(API_FORMATS.DOUBAO_EMBEDDING)).toBe('Doubao Embedding')
+    expect(formatApiFormatShort(API_FORMATS.OPENAI_EMBEDDING)).toBe('OE')
+    expect(formatApiFormatShort(API_FORMATS.GEMINI_EMBEDDING)).toBe('GE')
+    expect(formatApiFormatShort(API_FORMATS.JINA_EMBEDDING)).toBe('JE')
+    expect(formatApiFormatShort(API_FORMATS.DOUBAO_EMBEDDING)).toBe('DE')
   })
 
   it('does not remap retired api format ids', () => {
@@ -40,12 +64,56 @@ describe('api format display helpers', () => {
   it('sorts only current canonical formats into known slots', () => {
     expect(sortApiFormats([
       'openai:compact',
+      API_FORMATS.DOUBAO_EMBEDDING,
       API_FORMATS.OPENAI,
       API_FORMATS.OPENAI_RESPONSES,
+      API_FORMATS.OPENAI_EMBEDDING,
+      API_FORMATS.OPENAI_RERANK,
+      API_FORMATS.GEMINI_EMBEDDING,
+      API_FORMATS.JINA_EMBEDDING,
+      API_FORMATS.JINA_RERANK,
     ])).toEqual([
       API_FORMATS.OPENAI,
       API_FORMATS.OPENAI_RESPONSES,
+      API_FORMATS.OPENAI_EMBEDDING,
+      API_FORMATS.OPENAI_RERANK,
+      API_FORMATS.GEMINI_EMBEDDING,
+      API_FORMATS.JINA_EMBEDDING,
+      API_FORMATS.JINA_RERANK,
+      API_FORMATS.DOUBAO_EMBEDDING,
       'openai:compact',
+    ])
+  })
+
+  it('keeps embedding formats after chat/generation formats within each family', () => {
+    expect(sortApiFormats([
+      API_FORMATS.GEMINI_EMBEDDING,
+      API_FORMATS.OPENAI_EMBEDDING,
+      API_FORMATS.OPENAI_RERANK,
+      API_FORMATS.GEMINI_GENERATE_CONTENT,
+      API_FORMATS.OPENAI,
+    ])).toEqual([
+      API_FORMATS.OPENAI,
+      API_FORMATS.OPENAI_EMBEDDING,
+      API_FORMATS.OPENAI_RERANK,
+      API_FORMATS.GEMINI_GENERATE_CONTENT,
+      API_FORMATS.GEMINI_EMBEDDING,
+    ])
+  })
+
+  it('groups embedding api formats by provider family', () => {
+    expect(groupApiFormats([
+      API_FORMATS.DOUBAO_EMBEDDING,
+      API_FORMATS.JINA_RERANK,
+      API_FORMATS.JINA_EMBEDDING,
+      API_FORMATS.GEMINI_EMBEDDING,
+      API_FORMATS.OPENAI_EMBEDDING,
+      API_FORMATS.OPENAI_RERANK,
+    ])).toEqual([
+      { family: 'openai', label: 'OpenAI', formats: [API_FORMATS.OPENAI_EMBEDDING, API_FORMATS.OPENAI_RERANK] },
+      { family: 'gemini', label: 'Gemini', formats: [API_FORMATS.GEMINI_EMBEDDING] },
+      { family: 'jina', label: 'Jina', formats: [API_FORMATS.JINA_EMBEDDING, API_FORMATS.JINA_RERANK] },
+      { family: 'doubao', label: 'Doubao', formats: [API_FORMATS.DOUBAO_EMBEDDING] },
     ])
   })
 

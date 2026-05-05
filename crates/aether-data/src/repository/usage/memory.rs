@@ -8,7 +8,9 @@ use aether_data_contracts::repository::usage::{
     StoredUsageCacheAffinityIntervalRow, StoredUsageCacheHitSummary, StoredUsageCostSavingsSummary,
     StoredUsageDashboardDailyBreakdownRow, StoredUsageDashboardProviderCount,
     StoredUsageDashboardSummary, StoredUsageErrorDistributionRow, StoredUsageLeaderboardSummary,
-    StoredUsagePerformancePercentilesRow, StoredUsageSettledCostSummary,
+    StoredUsagePerformancePercentilesRow, StoredUsageProviderPerformance,
+    StoredUsageProviderPerformanceProviderRow, StoredUsageProviderPerformanceSummary,
+    StoredUsageProviderPerformanceTimelineRow, StoredUsageSettledCostSummary,
     StoredUsageTimeSeriesBucket, StoredUsageUserTotals, UsageAuditAggregationGroupBy,
     UsageAuditAggregationQuery, UsageAuditKeywordSearchQuery, UsageAuditSummaryQuery,
     UsageBodyField, UsageBreakdownGroupBy, UsageBreakdownSummaryQuery,
@@ -17,8 +19,8 @@ use aether_data_contracts::repository::usage::{
     UsageDashboardDailyBreakdownQuery, UsageDashboardProviderCountsQuery,
     UsageDashboardSummaryQuery, UsageErrorDistributionQuery, UsageLeaderboardGroupBy,
     UsageLeaderboardQuery, UsageMonitoringErrorCountQuery, UsageMonitoringErrorListQuery,
-    UsagePerformancePercentilesQuery, UsageSettledCostSummaryQuery, UsageTimeSeriesGranularity,
-    UsageTimeSeriesQuery,
+    UsagePerformancePercentilesQuery, UsageProviderPerformanceQuery, UsageSettledCostSummaryQuery,
+    UsageTimeSeriesGranularity, UsageTimeSeriesQuery,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -585,6 +587,38 @@ fn usage_matches_performance_percentiles_query(
     item.created_at_unix_ms >= query.created_from_unix_secs
         && item.created_at_unix_ms < query.created_until_unix_secs
         && item.status == "completed"
+}
+
+fn usage_provider_performance_identity(item: &StoredRequestUsageAudit) -> Option<(String, String)> {
+    let provider_id = item.provider_id.as_deref()?.trim();
+    let provider_id_status = provider_id.to_ascii_lowercase();
+    if provider_id.is_empty() || matches!(provider_id_status.as_str(), "unknown" | "pending") {
+        return None;
+    }
+    let provider_name = item.provider_name.trim();
+    let provider_name_status = provider_name.to_ascii_lowercase();
+    if matches!(provider_name_status.as_str(), "unknown" | "pending") {
+        return None;
+    }
+    let display_name = if provider_name.is_empty() {
+        provider_id
+    } else {
+        provider_name
+    };
+    Some((provider_id.to_string(), display_name.to_string()))
+}
+
+fn usage_matches_provider_performance_query(
+    item: &StoredRequestUsageAudit,
+    query: &UsageProviderPerformanceQuery,
+) -> Option<(String, String)> {
+    if item.created_at_unix_ms < query.created_from_unix_secs
+        || item.created_at_unix_ms >= query.created_until_unix_secs
+        || matches!(item.status.as_str(), "pending" | "streaming")
+    {
+        return None;
+    }
+    usage_provider_performance_identity(item)
 }
 
 fn usage_matches_cost_savings_query(
@@ -1650,6 +1684,218 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
             .collect())
     }
 
+    async fn summarize_usage_provider_performance(
+        &self,
+        query: &UsageProviderPerformanceQuery,
+    ) -> Result<StoredUsageProviderPerformance, DataLayerError> {
+        #[derive(Default)]
+        struct ProviderPerformanceBucket {
+            provider: String,
+            request_count: u64,
+            success_count: u64,
+            output_tokens: u64,
+            tps_output_tokens: u64,
+            tps_response_time_ms_sum: u64,
+            tps_sample_count: u64,
+            first_byte_time_ms_sum: u64,
+            first_byte_sample_count: u64,
+            response_time_ms_sum: u64,
+            response_time_sample_count: u64,
+            response_times: Vec<u64>,
+            first_byte_times: Vec<u64>,
+        }
+
+        impl ProviderPerformanceBucket {
+            fn add(&mut self, item: &StoredRequestUsageAudit) {
+                self.request_count = self.request_count.saturating_add(1);
+                self.output_tokens = self.output_tokens.saturating_add(item.output_tokens);
+                if !usage_is_success(item) {
+                    return;
+                }
+
+                self.success_count = self.success_count.saturating_add(1);
+                if let Some(response_time_ms) = item.response_time_ms {
+                    self.response_time_ms_sum =
+                        self.response_time_ms_sum.saturating_add(response_time_ms);
+                    self.response_time_sample_count =
+                        self.response_time_sample_count.saturating_add(1);
+                    self.response_times.push(response_time_ms);
+                    if response_time_ms > 0 && item.output_tokens > 0 {
+                        self.tps_output_tokens =
+                            self.tps_output_tokens.saturating_add(item.output_tokens);
+                        self.tps_response_time_ms_sum = self
+                            .tps_response_time_ms_sum
+                            .saturating_add(response_time_ms);
+                        self.tps_sample_count = self.tps_sample_count.saturating_add(1);
+                    }
+                }
+                if let Some(first_byte_time_ms) = item.first_byte_time_ms {
+                    self.first_byte_time_ms_sum = self
+                        .first_byte_time_ms_sum
+                        .saturating_add(first_byte_time_ms);
+                    self.first_byte_sample_count = self.first_byte_sample_count.saturating_add(1);
+                    self.first_byte_times.push(first_byte_time_ms);
+                }
+            }
+        }
+
+        fn avg(sum: u64, samples: u64) -> Option<f64> {
+            if samples == 0 {
+                None
+            } else {
+                Some(sum as f64 / samples as f64)
+            }
+        }
+
+        fn avg_tps(tokens: u64, response_time_ms_sum: u64) -> Option<f64> {
+            if response_time_ms_sum == 0 {
+                None
+            } else {
+                Some(tokens as f64 * 1000.0 / response_time_ms_sum as f64)
+            }
+        }
+
+        let usage = self
+            .by_request_id
+            .read()
+            .expect("usage repository lock")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut grouped = BTreeMap::<String, ProviderPerformanceBucket>::new();
+        let mut summary_bucket = ProviderPerformanceBucket::default();
+        for item in &usage {
+            let Some((provider_id, provider)) =
+                usage_matches_provider_performance_query(item, query)
+            else {
+                continue;
+            };
+            summary_bucket.add(item);
+            let bucket = grouped.entry(provider_id).or_default();
+            if bucket.provider.is_empty() {
+                bucket.provider = provider;
+            }
+            bucket.add(item);
+        }
+
+        let summary = StoredUsageProviderPerformanceSummary {
+            request_count: summary_bucket.request_count,
+            success_count: summary_bucket.success_count,
+            avg_output_tps: avg_tps(
+                summary_bucket.tps_output_tokens,
+                summary_bucket.tps_response_time_ms_sum,
+            ),
+            avg_first_byte_time_ms: avg(
+                summary_bucket.first_byte_time_ms_sum,
+                summary_bucket.first_byte_sample_count,
+            ),
+            avg_response_time_ms: avg(
+                summary_bucket.response_time_ms_sum,
+                summary_bucket.response_time_sample_count,
+            ),
+        };
+
+        let mut providers = grouped
+            .into_iter()
+            .map(|(provider_id, mut bucket)| {
+                let p90_response_time_ms = usage_percentile_cont(&mut bucket.response_times, 0.9);
+                let p90_first_byte_time_ms =
+                    usage_percentile_cont(&mut bucket.first_byte_times, 0.9);
+                StoredUsageProviderPerformanceProviderRow {
+                    provider_id,
+                    provider: bucket.provider,
+                    request_count: bucket.request_count,
+                    success_count: bucket.success_count,
+                    output_tokens: bucket.output_tokens,
+                    avg_output_tps: avg_tps(
+                        bucket.tps_output_tokens,
+                        bucket.tps_response_time_ms_sum,
+                    ),
+                    avg_first_byte_time_ms: avg(
+                        bucket.first_byte_time_ms_sum,
+                        bucket.first_byte_sample_count,
+                    ),
+                    avg_response_time_ms: avg(
+                        bucket.response_time_ms_sum,
+                        bucket.response_time_sample_count,
+                    ),
+                    p90_response_time_ms,
+                    p90_first_byte_time_ms,
+                    tps_sample_count: bucket.tps_sample_count,
+                    first_byte_sample_count: bucket.first_byte_sample_count,
+                }
+            })
+            .collect::<Vec<_>>();
+        providers.sort_by(|left, right| {
+            right
+                .request_count
+                .cmp(&left.request_count)
+                .then_with(|| left.provider_id.cmp(&right.provider_id))
+        });
+        providers.truncate(query.limit.max(1));
+
+        let top_provider_ids = providers
+            .iter()
+            .map(|row| row.provider_id.clone())
+            .collect::<Vec<_>>();
+        let mut timeline_grouped = BTreeMap::<(String, String), ProviderPerformanceBucket>::new();
+        for item in &usage {
+            let Some((provider_id, provider)) =
+                usage_matches_provider_performance_query(item, query)
+            else {
+                continue;
+            };
+            if !top_provider_ids.iter().any(|value| value == &provider_id) {
+                continue;
+            }
+            let Some(bucket_key) =
+                usage_time_series_bucket_key(item, query.granularity, query.tz_offset_minutes)
+            else {
+                continue;
+            };
+            let bucket = timeline_grouped
+                .entry((bucket_key, provider_id))
+                .or_default();
+            if bucket.provider.is_empty() {
+                bucket.provider = provider;
+            }
+            bucket.add(item);
+        }
+
+        let timeline = timeline_grouped
+            .into_iter()
+            .map(
+                |((date, provider_id), bucket)| StoredUsageProviderPerformanceTimelineRow {
+                    date,
+                    provider_id,
+                    provider: bucket.provider,
+                    request_count: bucket.request_count,
+                    success_count: bucket.success_count,
+                    output_tokens: bucket.output_tokens,
+                    avg_output_tps: avg_tps(
+                        bucket.tps_output_tokens,
+                        bucket.tps_response_time_ms_sum,
+                    ),
+                    avg_first_byte_time_ms: avg(
+                        bucket.first_byte_time_ms_sum,
+                        bucket.first_byte_sample_count,
+                    ),
+                    avg_response_time_ms: avg(
+                        bucket.response_time_ms_sum,
+                        bucket.response_time_sample_count,
+                    ),
+                },
+            )
+            .collect();
+
+        Ok(StoredUsageProviderPerformance {
+            summary,
+            providers,
+            timeline,
+        })
+    }
+
     async fn summarize_usage_cost_savings(
         &self,
         query: &UsageCostSavingsSummaryQuery,
@@ -2579,7 +2825,9 @@ mod tests {
         StoredProviderUsageWindow, StoredRequestUsageAudit, UpsertUsageRecord, UsageReadRepository,
         UsageWriteRepository,
     };
-    use aether_data_contracts::repository::usage::{usage_body_ref, UsageBodyField};
+    use aether_data_contracts::repository::usage::{
+        usage_body_ref, UsageBodyField, UsageProviderPerformanceQuery, UsageTimeSeriesGranularity,
+    };
     use serde_json::json;
 
     fn sample_usage(request_id: &str, created_at_unix_ms: i64) -> StoredRequestUsageAudit {
@@ -4561,5 +4809,77 @@ mod tests {
         assert_eq!(key.total_requests, 2);
         assert_eq!(key.total_tokens, 300);
         assert_eq!(key.total_cost_usd, 0.24);
+    }
+
+    #[tokio::test]
+    async fn summarize_usage_provider_performance_computes_tps_and_top_provider_timeline() {
+        let mut first = sample_usage("req-provider-perf-1", 1_711_000_000);
+        first.output_tokens = 60;
+        first.response_time_ms = Some(3000);
+        first.first_byte_time_ms = Some(100);
+
+        let mut second = sample_usage("req-provider-perf-2", 1_711_000_300);
+        second.output_tokens = 40;
+        second.response_time_ms = Some(1000);
+        second.first_byte_time_ms = Some(200);
+
+        let mut failed = sample_usage("req-provider-perf-failed", 1_711_000_400);
+        failed.output_tokens = 999;
+        failed.response_time_ms = Some(10);
+        failed.first_byte_time_ms = Some(1);
+        failed.status = "failed".to_string();
+        failed.status_code = Some(500);
+
+        let mut other_provider = sample_usage("req-provider-perf-other", 1_711_003_600);
+        other_provider.provider_id = Some("provider-2".to_string());
+        other_provider.provider_name = "Anthropic".to_string();
+        other_provider.output_tokens = 30;
+        other_provider.response_time_ms = Some(3000);
+        other_provider.first_byte_time_ms = None;
+
+        let repository =
+            InMemoryUsageReadRepository::seed(vec![first, second, failed, other_provider]);
+        let summary = repository
+            .summarize_usage_provider_performance(&UsageProviderPerformanceQuery {
+                created_from_unix_secs: 1_711_000_000,
+                created_until_unix_secs: 1_711_010_000,
+                granularity: UsageTimeSeriesGranularity::Hour,
+                tz_offset_minutes: 0,
+                limit: 1,
+            })
+            .await
+            .expect("provider performance should summarize");
+
+        assert_eq!(summary.summary.request_count, 4);
+        assert_eq!(summary.summary.success_count, 3);
+        assert!((summary.summary.avg_output_tps.expect("summary tps") - 18.571_428).abs() < 0.001);
+        assert_eq!(summary.summary.avg_first_byte_time_ms, Some(150.0));
+        assert!(
+            (summary
+                .summary
+                .avg_response_time_ms
+                .expect("summary response")
+                - 2333.333)
+                .abs()
+                < 0.001
+        );
+
+        assert_eq!(summary.providers.len(), 1);
+        let provider = &summary.providers[0];
+        assert_eq!(provider.provider_id, "provider-1");
+        assert_eq!(provider.request_count, 3);
+        assert_eq!(provider.success_count, 2);
+        assert_eq!(provider.output_tokens, 1099);
+        assert_eq!(provider.avg_output_tps, Some(25.0));
+        assert_eq!(provider.avg_first_byte_time_ms, Some(150.0));
+        assert_eq!(provider.avg_response_time_ms, Some(2000.0));
+        assert_eq!(provider.p90_response_time_ms, None);
+        assert_eq!(provider.tps_sample_count, 2);
+        assert_eq!(provider.first_byte_sample_count, 2);
+
+        assert_eq!(summary.timeline.len(), 1);
+        assert_eq!(summary.timeline[0].date, "2024-03-21T05:00:00+00:00");
+        assert_eq!(summary.timeline[0].provider_id, "provider-1");
+        assert_eq!(summary.timeline[0].avg_output_tps, Some(25.0));
     }
 }

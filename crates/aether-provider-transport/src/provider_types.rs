@@ -225,6 +225,24 @@ pub fn provider_type_supports_local_same_format_transport(provider_type: &str) -
     )
 }
 
+pub fn provider_type_supports_local_embedding_transport(
+    provider_type: &str,
+    api_format: &str,
+) -> bool {
+    let provider_type = provider_type.trim().to_ascii_lowercase();
+    let api_format = aether_ai_formats::normalize_api_format_alias(api_format);
+
+    match api_format.as_str() {
+        "openai:embedding" => matches!(provider_type.as_str(), "custom" | "openai"),
+        "openai:rerank" => matches!(provider_type.as_str(), "custom" | "openai"),
+        "gemini:embedding" => matches!(provider_type.as_str(), "custom" | "gemini" | "google"),
+        "jina:embedding" => matches!(provider_type.as_str(), "custom" | "jina"),
+        "jina:rerank" => matches!(provider_type.as_str(), "custom" | "jina"),
+        "doubao:embedding" => matches!(provider_type.as_str(), "custom" | "doubao" | "volcengine"),
+        _ => false,
+    }
+}
+
 pub fn is_codex_cli_backend_url(url: &str) -> bool {
     let url = url.trim().to_ascii_lowercase();
     url.contains("/codex") && (url.contains("/backend-api/") || url.contains("/backendapi/"))
@@ -301,7 +319,8 @@ pub const ADMIN_PROVIDER_OAUTH_TEMPLATE_TYPES: &[&str] =
 mod tests {
     use super::{
         fixed_provider_endpoint_template_by_api_format, fixed_provider_key_inherits_api_formats,
-        fixed_provider_template, FixedProviderEndpointConfigValue,
+        fixed_provider_template, provider_type_supports_local_embedding_transport,
+        FixedProviderEndpointConfigValue,
     };
 
     #[test]
@@ -353,6 +372,43 @@ mod tests {
         ));
         assert!(!fixed_provider_key_inherits_api_formats(
             "custom", "oauth", None
+        ));
+    }
+
+    #[test]
+    fn provider_type_supports_only_matching_embedding_formats() {
+        for (provider_type, api_format) in [
+            ("openai", "openai:embedding"),
+            ("custom", "openai:embedding"),
+            ("gemini", "gemini:embedding"),
+            ("google", "gemini:embedding"),
+            ("jina", "jina:embedding"),
+            ("doubao", "doubao:embedding"),
+            ("volcengine", "doubao:embedding"),
+        ] {
+            assert!(
+                provider_type_supports_local_embedding_transport(provider_type, api_format),
+                "{provider_type} should support {api_format}"
+            );
+        }
+
+        for (provider_type, api_format) in [
+            ("openai", "gemini:embedding"),
+            ("gemini", "openai:embedding"),
+            ("jina", "doubao:embedding"),
+            ("doubao", "jina:embedding"),
+            ("claude_code", "openai:embedding"),
+            ("openai", "openai:chat"),
+        ] {
+            assert!(
+                !provider_type_supports_local_embedding_transport(provider_type, api_format),
+                "{provider_type} should not support {api_format}"
+            );
+        }
+
+        assert!(provider_type_supports_local_embedding_transport(
+            " Google ",
+            "GEMINI:EMBEDDING"
         ));
     }
 }

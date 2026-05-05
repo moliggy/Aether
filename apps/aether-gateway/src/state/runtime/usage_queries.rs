@@ -251,6 +251,16 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
+    pub(crate) async fn summarize_usage_provider_performance(
+        &self,
+        query: &usage::UsageProviderPerformanceQuery,
+    ) -> Result<usage::StoredUsageProviderPerformance, GatewayError> {
+        self.data
+            .summarize_usage_provider_performance(query)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
     pub(crate) async fn summarize_usage_cost_savings(
         &self,
         query: &usage::UsageCostSavingsSummaryQuery,

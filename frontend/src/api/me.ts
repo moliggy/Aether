@@ -340,6 +340,7 @@ export const meApi = {
       default_price_per_request: number | null
       default_tiered_pricing: TieredPricingConfig | null
       supported_capabilities: string[] | null
+      supports_embedding?: boolean | null
       config: Record<string, unknown> | null
       usage_count: number
     }>

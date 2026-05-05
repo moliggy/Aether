@@ -330,6 +330,7 @@ pub(super) fn sample_admin_provider_model(
                 "output_price_per_1m": 20.0,
             }]
         })),
+        Some(json!(["streaming", "vision"])),
         Some(json!({"streaming": true, "vision": false, "billing": {"currency": "USD"}})),
     )
     .expect("admin provider model should build")

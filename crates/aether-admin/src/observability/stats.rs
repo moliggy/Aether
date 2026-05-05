@@ -4,7 +4,7 @@ use aether_data_contracts::repository::{
     usage::{
         StoredRequestUsageAudit, StoredUsageCostSavingsSummary, StoredUsageErrorDistributionRow,
         StoredUsageLeaderboardSummary, StoredUsagePerformancePercentilesRow,
-        StoredUsageTimeSeriesBucket,
+        StoredUsageProviderPerformance, StoredUsageTimeSeriesBucket,
     },
 };
 use axum::{
@@ -584,6 +584,20 @@ pub fn round_to(value: f64, decimals: u32) -> f64 {
     (value * factor).round() / factor
 }
 
+fn rounded_option(value: Option<f64>, decimals: u32) -> serde_json::Value {
+    value
+        .map(|value| json!(round_to(value, decimals)))
+        .unwrap_or(serde_json::Value::Null)
+}
+
+fn success_rate(request_count: u64, success_count: u64) -> f64 {
+    if request_count == 0 {
+        0.0
+    } else {
+        round_to(success_count as f64 / request_count as f64 * 100.0, 2)
+    }
+}
+
 pub fn admin_stats_provider_quota_usage_empty_response() -> Response<Body> {
     Json(json!({
         "providers": [],
@@ -650,6 +664,21 @@ pub fn admin_stats_error_distribution_empty_response() -> Response<Body> {
 
 pub fn admin_stats_performance_percentiles_empty_response() -> Response<Body> {
     Json(json!([])).into_response()
+}
+
+pub fn admin_stats_provider_performance_empty_response() -> Response<Body> {
+    Json(json!({
+        "summary": {
+            "request_count": 0,
+            "success_rate": 0.0,
+            "avg_output_tps": serde_json::Value::Null,
+            "avg_first_byte_time_ms": serde_json::Value::Null,
+            "avg_response_time_ms": serde_json::Value::Null,
+        },
+        "providers": [],
+        "timeline": [],
+    }))
+    .into_response()
 }
 
 pub fn admin_stats_cost_savings_empty_response() -> Response<Body> {
@@ -1059,6 +1088,64 @@ pub fn build_admin_stats_performance_percentiles_response_from_summaries(
         .collect();
 
     Json(serde_json::Value::Array(payload)).into_response()
+}
+
+pub fn build_admin_stats_provider_performance_response(
+    performance: &StoredUsageProviderPerformance,
+) -> Response<Body> {
+    let summary = &performance.summary;
+    let providers = performance
+        .providers
+        .iter()
+        .map(|row| {
+            json!({
+                "provider_id": row.provider_id.as_str(),
+                "provider": row.provider.as_str(),
+                "request_count": row.request_count,
+                "success_count": row.success_count,
+                "error_count": row.request_count.saturating_sub(row.success_count),
+                "success_rate": success_rate(row.request_count, row.success_count),
+                "output_tokens": row.output_tokens,
+                "avg_output_tps": rounded_option(row.avg_output_tps, 2),
+                "avg_first_byte_time_ms": rounded_option(row.avg_first_byte_time_ms, 2),
+                "avg_response_time_ms": rounded_option(row.avg_response_time_ms, 2),
+                "p90_response_time_ms": row.p90_response_time_ms,
+                "p90_first_byte_time_ms": row.p90_first_byte_time_ms,
+                "tps_sample_count": row.tps_sample_count,
+                "first_byte_sample_count": row.first_byte_sample_count,
+            })
+        })
+        .collect::<Vec<_>>();
+    let timeline = performance
+        .timeline
+        .iter()
+        .map(|row| {
+            json!({
+                "date": row.date.as_str(),
+                "provider_id": row.provider_id.as_str(),
+                "provider": row.provider.as_str(),
+                "request_count": row.request_count,
+                "output_tokens": row.output_tokens,
+                "avg_output_tps": rounded_option(row.avg_output_tps, 2),
+                "avg_first_byte_time_ms": rounded_option(row.avg_first_byte_time_ms, 2),
+                "avg_response_time_ms": rounded_option(row.avg_response_time_ms, 2),
+                "success_rate": success_rate(row.request_count, row.success_count),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Json(json!({
+        "summary": {
+            "request_count": summary.request_count,
+            "success_rate": success_rate(summary.request_count, summary.success_count),
+            "avg_output_tps": rounded_option(summary.avg_output_tps, 2),
+            "avg_first_byte_time_ms": rounded_option(summary.avg_first_byte_time_ms, 2),
+            "avg_response_time_ms": rounded_option(summary.avg_response_time_ms, 2),
+        },
+        "providers": providers,
+        "timeline": timeline,
+    }))
+    .into_response()
 }
 
 pub fn build_admin_stats_time_series_response(

@@ -543,6 +543,7 @@ async function testModelConnection(model: Model) {
   testRequestHeadersDraft.value = testRequestHeadersResetValue.value
   testRequestBodyResetValue.value = buildDefaultModelTestRequestBody(
     model.global_model_name || model.provider_model_name,
+    selectedTestEndpoint.value?.api_format,
   )
   testRequestBodyDraft.value = testRequestBodyResetValue.value
   modelTest.testResult.value = null

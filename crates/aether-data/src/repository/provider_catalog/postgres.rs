@@ -1270,57 +1270,58 @@ INSERT INTO provider_api_keys (
   $23,
   $24,
   $25,
-  CASE
-    WHEN $26::double precision IS NULL THEN NULL
-    ELSE TO_TIMESTAMP($26::double precision)
-  END,
+  $26,
   CASE
     WHEN $27::double precision IS NULL THEN NULL
     ELSE TO_TIMESTAMP($27::double precision)
   END,
-  $28,
-  $29,
-  COALESCE($30, 0),
-  COALESCE($31, 0),
   CASE
-    WHEN $32::double precision IS NULL THEN NULL
-    ELSE TO_TIMESTAMP($32::double precision)
+    WHEN $28::double precision IS NULL THEN NULL
+    ELSE TO_TIMESTAMP($28::double precision)
   END,
-  $33,
+  $29,
+  $30,
+  COALESCE($31, 0),
+  COALESCE($32, 0),
+  CASE
+    WHEN $33::double precision IS NULL THEN NULL
+    ELSE TO_TIMESTAMP($33::double precision)
+  END,
   $34,
   $35,
+  $36,
   CASE
-    WHEN $36::double precision IS NULL THEN NULL
-    ELSE TO_TIMESTAMP($36::double precision)
+    WHEN $37::double precision IS NULL THEN NULL
+    ELSE TO_TIMESTAMP($37::double precision)
   END,
-  $37,
   COALESCE($38, 0),
   COALESCE($39, 0),
   COALESCE($40, 0),
   COALESCE($41, 0),
   COALESCE($42, 0),
   COALESCE($43, 0),
-  CASE
-    WHEN $44::double precision IS NULL THEN NULL
-    ELSE TO_TIMESTAMP($44::double precision)
-  END,
+  COALESCE($44, 0),
   CASE
     WHEN $45::double precision IS NULL THEN NULL
     ELSE TO_TIMESTAMP($45::double precision)
   END,
-  $46,
+  CASE
+    WHEN $46::double precision IS NULL THEN NULL
+    ELSE TO_TIMESTAMP($46::double precision)
+  END,
   $47,
   $48,
   $49,
-  CASE
-    WHEN $50::double precision IS NULL THEN NOW()
-    ELSE TO_TIMESTAMP($50::double precision)
-  END,
+  $50,
   CASE
     WHEN $51::double precision IS NULL THEN NOW()
     ELSE TO_TIMESTAMP($51::double precision)
   END,
-  $52
+  CASE
+    WHEN $52::double precision IS NULL THEN NOW()
+    ELSE TO_TIMESTAMP($52::double precision)
+  END,
+  $53
 )
 "#,
         )
@@ -2612,5 +2613,20 @@ mod tests {
         );
         assert!(source.contains(".bind(&key.allow_auth_channel_mismatch_formats)"));
         assert!(source.contains("row.try_get(\"allow_auth_channel_mismatch_formats\").ok()"));
+    }
+
+    #[test]
+    fn provider_api_keys_create_key_insert_placeholders_match_bind_order() {
+        let source = include_str!("postgres.rs");
+        assert!(source.contains(
+            "  $24,\n  $25,\n  $26,\n  CASE\n    WHEN $27::double precision IS NULL THEN NULL"
+        ));
+        assert!(source.contains("  $29,\n  $30,\n  COALESCE($31, 0),"));
+        assert!(source.contains(
+            "  COALESCE($42, 0),\n  COALESCE($43, 0),\n  COALESCE($44, 0),\n  CASE\n    WHEN $45::double precision IS NULL THEN NULL"
+        ));
+        assert!(source.contains(
+            "  CASE\n    WHEN $52::double precision IS NULL THEN NOW()\n    ELSE TO_TIMESTAMP($52::double precision)\n  END,\n  $53"
+        ));
     }
 }
