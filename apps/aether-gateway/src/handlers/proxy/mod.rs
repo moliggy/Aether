@@ -299,9 +299,17 @@ async fn maybe_forward_public_request_to_tunnel_owner(
     ) else {
         return Ok(None);
     };
+    let body_json =
+        buffered_body.and_then(|body| serde_json::from_slice::<serde_json::Value>(body).ok());
+    let client_session_affinity =
+        crate::client_session_affinity::client_session_affinity_from_parts(
+            parts,
+            body_json.as_ref(),
+        );
     let Some(target) = crate::scheduler::affinity::read_cached_scheduler_affinity_target(
         state,
         &auth_context.api_key_id,
+        client_session_affinity.as_ref(),
         api_format,
         &requested_model,
     ) else {
