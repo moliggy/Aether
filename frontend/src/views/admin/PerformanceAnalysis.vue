@@ -594,7 +594,7 @@
                   {{ formatProviderPerformanceMetric(provider.success_rate, '%') }}
                 </td>
                 <td class="px-3 py-2 text-right">
-                  {{ formatProviderPerformanceMetric(provider.avg_output_tps, '/s') }}
+                  {{ formatProviderPerformanceMetric(provider.avg_output_tps, ' tps') }}
                 </td>
                 <td class="px-3 py-2 text-right">
                   {{ formatProviderPerformanceMetric(provider.avg_first_byte_time_ms, 'ms') }}
@@ -1093,7 +1093,7 @@ const providerPerformanceSummaryCards = computed(() => {
   return [
     {
       title: '输出 TPS',
-      value: formatProviderPerformanceMetric(summary?.avg_output_tps, '/s'),
+      value: formatProviderPerformanceMetric(summary?.avg_output_tps, ' tps'),
       hint: `请求 ${formatMetricNumber(summary?.request_count)}`,
       icon: Zap,
       iconClass: 'text-amber-500',
@@ -1142,7 +1142,7 @@ const providerTpsChartOptions = computed(() => ({
   scales: {
     y: {
       ticks: {
-        callback: (value: string | number) => `${value}/s`,
+        callback: (value: string | number) => `${value} tps`,
       },
     },
   },

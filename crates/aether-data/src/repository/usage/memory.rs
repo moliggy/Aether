@@ -902,6 +902,32 @@ fn usage_is_success(item: &StoredRequestUsageAudit) -> bool {
     ) && item.status_code.is_none_or(|code| code < 400)
 }
 
+fn usage_output_tps_uses_generation_time(item: &StoredRequestUsageAudit) -> bool {
+    item.request_metadata
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get("upstream_is_stream"))
+        .and_then(Value::as_bool)
+        .unwrap_or(item.is_stream)
+}
+
+fn usage_output_tps_duration_ms(item: &StoredRequestUsageAudit) -> Option<u64> {
+    let response_time_ms = item.response_time_ms?;
+    if response_time_ms == 0 {
+        return None;
+    }
+
+    if !usage_output_tps_uses_generation_time(item) {
+        return Some(response_time_ms);
+    }
+
+    let first_byte_time_ms = item.first_byte_time_ms?;
+    if first_byte_time_ms >= response_time_ms {
+        return None;
+    }
+    Some(response_time_ms - first_byte_time_ms)
+}
+
 fn usage_provider_display_name(item: &StoredRequestUsageAudit) -> Option<String> {
     let provider_name = item.provider_name.trim();
     if provider_name.is_empty() || matches!(provider_name, "unknown" | "pending") {
@@ -1720,13 +1746,15 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                     self.response_time_sample_count =
                         self.response_time_sample_count.saturating_add(1);
                     self.response_times.push(response_time_ms);
-                    if response_time_ms > 0 && item.output_tokens > 0 {
-                        self.tps_output_tokens =
-                            self.tps_output_tokens.saturating_add(item.output_tokens);
-                        self.tps_response_time_ms_sum = self
-                            .tps_response_time_ms_sum
-                            .saturating_add(response_time_ms);
-                        self.tps_sample_count = self.tps_sample_count.saturating_add(1);
+                    if let Some(output_tps_duration_ms) = usage_output_tps_duration_ms(item) {
+                        if item.output_tokens > 0 {
+                            self.tps_output_tokens =
+                                self.tps_output_tokens.saturating_add(item.output_tokens);
+                            self.tps_response_time_ms_sum = self
+                                .tps_response_time_ms_sum
+                                .saturating_add(output_tps_duration_ms);
+                            self.tps_sample_count = self.tps_sample_count.saturating_add(1);
+                        }
                     }
                 }
                 if let Some(first_byte_time_ms) = item.first_byte_time_ms {
@@ -4822,6 +4850,7 @@ mod tests {
         second.output_tokens = 40;
         second.response_time_ms = Some(1000);
         second.first_byte_time_ms = Some(200);
+        second.request_metadata = Some(json!({ "upstream_is_stream": true }));
 
         let mut failed = sample_usage("req-provider-perf-failed", 1_711_000_400);
         failed.output_tokens = 999;
@@ -4852,7 +4881,7 @@ mod tests {
 
         assert_eq!(summary.summary.request_count, 4);
         assert_eq!(summary.summary.success_count, 3);
-        assert!((summary.summary.avg_output_tps.expect("summary tps") - 18.571_428).abs() < 0.001);
+        assert!((summary.summary.avg_output_tps.expect("summary tps") - 19.117_647).abs() < 0.001);
         assert_eq!(summary.summary.avg_first_byte_time_ms, Some(150.0));
         assert!(
             (summary
@@ -4870,7 +4899,7 @@ mod tests {
         assert_eq!(provider.request_count, 3);
         assert_eq!(provider.success_count, 2);
         assert_eq!(provider.output_tokens, 1099);
-        assert_eq!(provider.avg_output_tps, Some(25.0));
+        assert!((provider.avg_output_tps.expect("provider tps") - 26.315_789).abs() < 0.001);
         assert_eq!(provider.avg_first_byte_time_ms, Some(150.0));
         assert_eq!(provider.avg_response_time_ms, Some(2000.0));
         assert_eq!(provider.p90_response_time_ms, None);
@@ -4880,6 +4909,8 @@ mod tests {
         assert_eq!(summary.timeline.len(), 1);
         assert_eq!(summary.timeline[0].date, "2024-03-21T05:00:00+00:00");
         assert_eq!(summary.timeline[0].provider_id, "provider-1");
-        assert_eq!(summary.timeline[0].avg_output_tps, Some(25.0));
+        assert!(
+            (summary.timeline[0].avg_output_tps.expect("timeline tps") - 26.315_789).abs() < 0.001
+        );
     }
 }

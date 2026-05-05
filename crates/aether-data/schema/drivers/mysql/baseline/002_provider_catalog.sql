@@ -293,4 +293,3 @@ CREATE TABLE IF NOT EXISTS global_models (
     updated_at BIGINT NOT NULL,
     UNIQUE KEY global_models_name_key (name)
 );
-

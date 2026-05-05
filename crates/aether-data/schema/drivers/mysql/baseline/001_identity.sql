@@ -118,4 +118,3 @@ CREATE TABLE IF NOT EXISTS management_tokens (
     UNIQUE KEY uq_management_tokens_user_name (user_id, name),
     KEY management_tokens_user_id_idx (user_id)
 );
-

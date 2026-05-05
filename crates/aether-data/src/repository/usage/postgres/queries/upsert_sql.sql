@@ -20,6 +20,7 @@ INSERT INTO "usage" (
   provider_endpoint_kind,
   has_format_conversion,
   is_stream,
+  upstream_is_stream,
   input_tokens,
   output_tokens,
   total_tokens,
@@ -76,6 +77,14 @@ INSERT INTO "usage" (
   $19,
   COALESCE($20, FALSE),
   COALESCE($21, FALSE),
+  COALESCE(
+    CASE
+      WHEN ($53::json->>'upstream_is_stream') IN ('true', 'false')
+      THEN ($53::json->>'upstream_is_stream')::boolean
+      ELSE NULL
+    END,
+    COALESCE($21, FALSE)
+  ),
   COALESCE($22, 0),
   COALESCE($23, 0),
   COALESCE($24, COALESCE($22, 0) + COALESCE($23, 0)),
@@ -135,6 +144,7 @@ DO UPDATE SET
   provider_endpoint_kind = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.provider_endpoint_kind, "usage".provider_endpoint_kind) ELSE "usage".provider_endpoint_kind END,
   has_format_conversion = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.has_format_conversion, "usage".has_format_conversion) ELSE "usage".has_format_conversion END,
   is_stream = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.is_stream, "usage".is_stream) ELSE "usage".is_stream END,
+  upstream_is_stream = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.upstream_is_stream, "usage".upstream_is_stream, "usage".is_stream, false) ELSE "usage".upstream_is_stream END,
   input_tokens = CASE WHEN "usage".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST("usage".input_tokens, EXCLUDED.input_tokens) ELSE "usage".input_tokens END,
   output_tokens = CASE WHEN "usage".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST("usage".output_tokens, EXCLUDED.output_tokens) ELSE "usage".output_tokens END,
   total_tokens = CASE WHEN "usage".billing_status = 'pending' AND EXCLUDED.status IN ('completed', 'failed', 'cancelled') THEN GREATEST("usage".total_tokens, EXCLUDED.total_tokens) ELSE "usage".total_tokens END,

@@ -4620,7 +4620,6 @@ EXCEPTION
   WHEN duplicate_table THEN NULL;
   WHEN invalid_table_definition THEN NULL;
 END $mig$;
-
 -- Restore a normal lookup path before sqlx records this migration in the
 -- same transaction. sqlx inserts into `_sqlx_migrations` unqualified.
 SELECT pg_catalog.set_config('search_path', 'public', true);

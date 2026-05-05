@@ -37,4 +37,3 @@ CREATE TABLE IF NOT EXISTS proxy_node_events (
     detail TEXT,
     created_at INTEGER NOT NULL
 );
-

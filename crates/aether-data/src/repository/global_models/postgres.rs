@@ -1205,7 +1205,10 @@ fn map_provider_active_global_model_row(
 
 #[cfg(test)]
 mod tests {
-    use super::{SqlxGlobalModelReadRepository, LIST_ADMIN_PROVIDER_MODELS_PREFIX};
+    use super::{
+        SqlxGlobalModelReadRepository, LIST_ADMIN_GLOBAL_MODELS_PREFIX,
+        LIST_ADMIN_PROVIDER_MODELS_PREFIX,
+    };
     use crate::driver::postgres::{PostgresPoolConfig, PostgresPoolFactory};
 
     const ADMIN_PROVIDER_MODEL_REQUIRED_COLUMNS: &[&str] = &[
@@ -1238,6 +1241,66 @@ mod tests {
                 .matches(&supported_capabilities_projection)
                 .count(),
             4
+        );
+    }
+
+    #[test]
+    fn admin_global_model_sql_projects_usage_count_from_billing_facts() {
+        let source = include_str!("postgres.rs");
+
+        assert!(
+            !LIST_ADMIN_GLOBAL_MODELS_PREFIX.contains("usage_billing_facts"),
+            "admin global model list should read the maintained usage_count field"
+        );
+        assert!(
+            source.contains("WHERE usage.model = gm.name"),
+            "admin global model detail lookups should count usage facts for the selected model"
+        );
+        assert!(
+            source.contains("AND usage.status NOT IN ('pending', 'streaming')"),
+            "admin global model detail usage_count should use the maintained read-model status scope"
+        );
+        assert!(
+            source.contains("COALESCE(usage_stats.usage_count, gm.usage_count, 0)::bigint AS usage_count"),
+            "admin global model usage_count should prefer actual usage facts with stored-count fallback"
+        );
+    }
+
+    #[test]
+    fn admin_global_model_list_sql_counts_usage_without_full_fact_aggregate() {
+        assert!(
+            LIST_ADMIN_GLOBAL_MODELS_PREFIX.contains("COALESCE(gm.usage_count, 0)::bigint AS usage_count"),
+            "admin global model list should read maintained usage_count without per-request fact scans"
+        );
+        assert!(
+            !LIST_ADMIN_GLOBAL_MODELS_PREFIX.contains("GROUP BY usage.model"),
+            "admin global model list must not aggregate the full usage fact table before pagination"
+        );
+    }
+
+    #[test]
+    fn global_model_usage_count_read_model_has_backfill_and_delta_maintenance() {
+        let backfill_sql = include_str!(
+            "../../../backfills/postgres/20260505120000_rebuild_global_model_usage_count.sql"
+        );
+        let delta_sql =
+            include_str!("../usage/postgres/queries/apply_global_model_usage_delta_sql.sql");
+
+        assert!(
+            backfill_sql.contains("UPDATE global_models AS gm"),
+            "global model usage_count backfill should refresh the read model"
+        );
+        assert!(
+            backfill_sql.contains("FROM usage_billing_facts AS usage"),
+            "global model usage_count backfill should rebuild from canonical usage facts"
+        );
+        assert!(
+            delta_sql.contains("UPDATE global_models"),
+            "usage writes should maintain the global model usage_count read model"
+        );
+        assert!(
+            delta_sql.contains("WHERE name = $1"),
+            "global model usage_count delta should target models by canonical model name"
         );
     }
 

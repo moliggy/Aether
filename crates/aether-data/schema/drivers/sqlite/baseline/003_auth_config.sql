@@ -65,4 +65,3 @@ CREATE TABLE IF NOT EXISTS user_oauth_links (
 );
 CREATE INDEX IF NOT EXISTS user_oauth_links_provider_type_idx ON user_oauth_links (provider_type);
 CREATE INDEX IF NOT EXISTS user_oauth_links_user_id_idx ON user_oauth_links (user_id);
-

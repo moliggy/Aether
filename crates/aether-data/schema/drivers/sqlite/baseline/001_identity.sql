@@ -114,4 +114,3 @@ CREATE TABLE IF NOT EXISTS management_tokens (
     UNIQUE (user_id, name)
 );
 CREATE INDEX IF NOT EXISTS management_tokens_user_id_idx ON management_tokens (user_id);
-

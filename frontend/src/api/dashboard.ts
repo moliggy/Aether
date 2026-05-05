@@ -207,6 +207,7 @@ export interface RequestDetail {
   errors?: RequestErrorDomains | null
   error_flow?: RequestErrorFlow | null
   response_time_ms: number
+  first_byte_time_ms?: number | null
   created_at: string
   request_headers?: Record<string, unknown>
   request_body?: Record<string, unknown>

@@ -322,4 +322,3 @@ ALTER TABLE public.stats_hourly_user
     ADD COLUMN IF NOT EXISTS settled_cache_read_tokens bigint DEFAULT 0 NOT NULL,
     ADD COLUMN IF NOT EXISTS settled_first_finalized_at_unix_secs bigint,
     ADD COLUMN IF NOT EXISTS settled_last_finalized_at_unix_secs bigint;
-

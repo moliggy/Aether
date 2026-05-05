@@ -7,4 +7,3 @@ SELECT pg_catalog.set_config('search_path', 'public', true);
 --
 -- PostgreSQL database dump complete
 --
-

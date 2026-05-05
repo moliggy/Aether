@@ -67,4 +67,3 @@ CREATE TABLE IF NOT EXISTS user_oauth_links (
     KEY user_oauth_links_provider_type_idx (provider_type),
     KEY user_oauth_links_user_id_idx (user_id)
 );
-

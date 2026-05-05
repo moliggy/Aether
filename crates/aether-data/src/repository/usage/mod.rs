@@ -444,6 +444,41 @@ impl ApiKeyUsageDelta {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct ModelUsageContribution {
+    pub model: String,
+    pub request_count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct ModelUsageDelta {
+    pub request_count: i64,
+}
+
+impl ModelUsageDelta {
+    pub(crate) fn between(before: &ModelUsageContribution, after: &ModelUsageContribution) -> Self {
+        Self {
+            request_count: after.request_count - before.request_count,
+        }
+    }
+
+    pub(crate) fn addition(after: &ModelUsageContribution) -> Self {
+        Self {
+            request_count: after.request_count,
+        }
+    }
+
+    pub(crate) fn removal(before: &ModelUsageContribution) -> Self {
+        Self {
+            request_count: -before.request_count,
+        }
+    }
+
+    pub(crate) fn is_noop(&self) -> bool {
+        self.request_count == 0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct ProviderApiKeyUsageContribution {
     pub key_id: String,
@@ -620,6 +655,23 @@ pub(crate) fn provider_api_key_usage_contribution(
     })
 }
 
+pub(crate) fn model_usage_contribution(
+    usage: &StoredRequestUsageAudit,
+) -> Option<ModelUsageContribution> {
+    if matches!(usage.status.as_str(), "pending" | "streaming") {
+        return None;
+    }
+    let model = usage.model.trim();
+    if model.is_empty() {
+        return None;
+    }
+
+    Some(ModelUsageContribution {
+        model: model.to_string(),
+        request_count: 1,
+    })
+}
+
 pub(crate) fn api_key_usage_contribution(
     usage: &StoredRequestUsageAudit,
 ) -> Option<ApiKeyUsageContribution> {
@@ -647,9 +699,10 @@ pub(crate) fn api_key_usage_contribution(
 mod tests {
     use super::{
         api_key_usage_contribution, incoming_usage_can_recover_terminal_failure,
-        provider_api_key_usage_contribution, provider_api_key_usage_is_error,
-        provider_api_key_usage_is_success, strip_deprecated_usage_display_fields,
-        usage_can_recover_terminal_failure, StoredRequestUsageAudit, UpsertUsageRecord,
+        model_usage_contribution, provider_api_key_usage_contribution,
+        provider_api_key_usage_is_error, provider_api_key_usage_is_success,
+        strip_deprecated_usage_display_fields, usage_can_recover_terminal_failure, ModelUsageDelta,
+        StoredRequestUsageAudit, UpsertUsageRecord,
     };
 
     #[test]
@@ -924,5 +977,76 @@ mod tests {
         assert_eq!(contribution.total_tokens, 20);
         assert_eq!(contribution.total_cost_usd, 0.25);
         assert_eq!(contribution.last_used_at_unix_secs, Some(123));
+    }
+
+    #[test]
+    fn model_usage_contribution_tracks_terminal_requests_only() {
+        let completed = StoredRequestUsageAudit::new(
+            "usage-1".to_string(),
+            "request-1".to_string(),
+            Some("user-1".to_string()),
+            Some("api-key-1".to_string()),
+            None,
+            None,
+            "OpenAI".to_string(),
+            " gpt-5.5 ".to_string(),
+            None,
+            Some("provider-1".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            12,
+            8,
+            20,
+            0.25,
+            0.25,
+            Some(200),
+            None,
+            None,
+            Some(120),
+            None,
+            "completed".to_string(),
+            "settled".to_string(),
+            123,
+            124,
+            Some(125),
+        )
+        .expect("usage should build");
+        let contribution =
+            model_usage_contribution(&completed).expect("completed usage should count");
+        assert_eq!(contribution.model, "gpt-5.5");
+        assert_eq!(contribution.request_count, 1);
+
+        let mut streaming = completed.clone();
+        streaming.status = "streaming".to_string();
+        assert!(model_usage_contribution(&streaming).is_none());
+
+        let mut pending = completed;
+        pending.status = "pending".to_string();
+        assert!(model_usage_contribution(&pending).is_none());
+    }
+
+    #[test]
+    fn model_usage_delta_handles_model_changes() {
+        let before = super::ModelUsageContribution {
+            model: "gpt-5.4".to_string(),
+            request_count: 1,
+        };
+        let after = super::ModelUsageContribution {
+            model: "gpt-5.5".to_string(),
+            request_count: 1,
+        };
+
+        assert_eq!(ModelUsageDelta::removal(&before).request_count, -1);
+        assert_eq!(ModelUsageDelta::addition(&after).request_count, 1);
+        assert!(ModelUsageDelta::between(&before, &before).is_noop());
     }
 }

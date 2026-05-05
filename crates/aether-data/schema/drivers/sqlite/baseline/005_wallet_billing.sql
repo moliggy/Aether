@@ -200,4 +200,3 @@ CREATE INDEX IF NOT EXISTS idx_redeem_codes_redeemed_user
     ON redeem_codes (redeemed_by_user_id, redeemed_at);
 CREATE INDEX IF NOT EXISTS idx_redeem_codes_redeemed_order
     ON redeem_codes (redeemed_payment_order_id);
-

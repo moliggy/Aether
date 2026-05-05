@@ -849,4 +849,3 @@ EXCEPTION
   WHEN duplicate_table THEN NULL;
   WHEN invalid_table_definition THEN NULL;
 END $mig$;
-

@@ -1083,6 +1083,7 @@ CREATE TABLE IF NOT EXISTS public.usage (
     request_type character varying(50),
     api_format character varying(50),
     is_stream boolean DEFAULT false,
+    upstream_is_stream boolean,
     status_code integer,
     error_message text,
     response_time_ms integer,

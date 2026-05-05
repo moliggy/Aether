@@ -181,4 +181,3 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
     KEY idx_redeem_codes_redeemed_user (redeemed_by_user_id, redeemed_at),
     KEY idx_redeem_codes_redeemed_order (redeemed_payment_order_id)
 );
-

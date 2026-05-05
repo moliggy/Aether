@@ -130,4 +130,3 @@ ALTER TABLE public.stats_hourly_user
     ADD COLUMN IF NOT EXISTS actual_total_cost numeric(20,8) DEFAULT '0'::double precision NOT NULL,
     ADD COLUMN IF NOT EXISTS response_time_sum_ms double precision DEFAULT '0'::double precision NOT NULL,
     ADD COLUMN IF NOT EXISTS response_time_samples bigint DEFAULT 0 NOT NULL;
-

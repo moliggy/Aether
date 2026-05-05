@@ -36,7 +36,8 @@ use uuid::Uuid;
 
 use super::{
     api_key_usage_contribution, incoming_usage_can_recover_terminal_failure,
-    provider_api_key_usage_contribution, strip_deprecated_usage_display_fields, ApiKeyUsageDelta,
+    model_usage_contribution, provider_api_key_usage_contribution,
+    strip_deprecated_usage_display_fields, ApiKeyUsageDelta, ModelUsageDelta,
     PendingUsageCleanupSummary, ProviderApiKeyUsageDelta, StoredProviderApiKeyUsageSummary,
     StoredProviderUsageSummary, StoredRequestUsageAudit, StoredUsageDailySummary,
     UpsertUsageRecord, UsageAuditListQuery, UsageDailyHeatmapQuery, UsageReadRepository,
@@ -885,6 +886,67 @@ fn decode_usage_audit_summary_row(row: &PgRow) -> Result<StoredUsageAuditSummary
     })
 }
 
+fn decode_usage_audit_aggregation_row(
+    row: &PgRow,
+) -> Result<StoredUsageAuditAggregation, DataLayerError> {
+    Ok(StoredUsageAuditAggregation {
+        group_key: row.try_get::<String, _>("group_key").map_postgres_err()?,
+        display_name: row
+            .try_get::<Option<String>, _>("display_name")
+            .map_postgres_err()?,
+        secondary_name: row
+            .try_get::<Option<String>, _>("secondary_name")
+            .map_postgres_err()?,
+        request_count: row
+            .try_get::<i64, _>("request_count")
+            .map_postgres_err()?
+            .max(0) as u64,
+        total_tokens: row
+            .try_get::<i64, _>("total_tokens")
+            .map_postgres_err()?
+            .max(0) as u64,
+        output_tokens: row
+            .try_get::<i64, _>("output_tokens")
+            .map_postgres_err()?
+            .max(0) as u64,
+        effective_input_tokens: row
+            .try_get::<i64, _>("effective_input_tokens")
+            .map_postgres_err()?
+            .max(0) as u64,
+        total_input_context: row
+            .try_get::<i64, _>("total_input_context")
+            .map_postgres_err()?
+            .max(0) as u64,
+        cache_creation_tokens: row
+            .try_get::<i64, _>("cache_creation_tokens")
+            .map_postgres_err()?
+            .max(0) as u64,
+        cache_creation_ephemeral_5m_tokens: row
+            .try_get::<i64, _>("cache_creation_ephemeral_5m_tokens")
+            .map_postgres_err()?
+            .max(0) as u64,
+        cache_creation_ephemeral_1h_tokens: row
+            .try_get::<i64, _>("cache_creation_ephemeral_1h_tokens")
+            .map_postgres_err()?
+            .max(0) as u64,
+        cache_read_tokens: row
+            .try_get::<i64, _>("cache_read_tokens")
+            .map_postgres_err()?
+            .max(0) as u64,
+        total_cost_usd: row.try_get::<f64, _>("total_cost_usd").map_postgres_err()?,
+        actual_total_cost_usd: row
+            .try_get::<f64, _>("actual_total_cost_usd")
+            .map_postgres_err()?,
+        avg_response_time_ms: row
+            .try_get::<Option<f64>, _>("avg_response_time_ms")
+            .map_postgres_err()?,
+        success_count: row
+            .try_get::<Option<i64>, _>("success_count")
+            .map_postgres_err()?
+            .map(|value| value.max(0) as u64),
+    })
+}
+
 fn decode_usage_error_distribution_row(
     row: &PgRow,
 ) -> Result<StoredUsageErrorDistributionRow, DataLayerError> {
@@ -1212,6 +1274,9 @@ const SUMMARIZE_USAGE_BY_PROVIDER_API_KEY_IDS_SQL: &str =
 
 const APPLY_API_KEY_USAGE_DELTA_SQL: &str =
     include_str!("queries/apply_api_key_usage_delta_sql.sql");
+
+const APPLY_GLOBAL_MODEL_USAGE_DELTA_SQL: &str =
+    include_str!("queries/apply_global_model_usage_delta_sql.sql");
 
 const RESET_API_KEY_USAGE_STATS_SQL: &str =
     include_str!("queries/reset_api_key_usage_stats_sql.sql");
@@ -4790,6 +4855,17 @@ WITH filtered_usage AS (
     "usage".response_time_ms IS NOT NULL AS has_response_time,
     "usage".first_byte_time_ms IS NOT NULL AS has_first_byte_time,
     CASE
+      WHEN COALESCE("usage".upstream_is_stream, "usage".is_stream, false)
+      THEN CASE
+        WHEN "usage".response_time_ms IS NOT NULL
+             AND "usage".first_byte_time_ms IS NOT NULL
+             AND GREATEST(COALESCE("usage".response_time_ms, 0), 0) > GREATEST(COALESCE("usage".first_byte_time_ms, 0), 0)
+        THEN GREATEST(COALESCE("usage".response_time_ms, 0), 0) - GREATEST(COALESCE("usage".first_byte_time_ms, 0), 0)
+        ELSE 0
+      END
+      ELSE GREATEST(COALESCE("usage".response_time_ms, 0), 0)
+    END AS output_tps_duration_ms,
+    CASE
       WHEN lower(COALESCE("usage".status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
            AND ("usage".status_code IS NULL OR "usage".status_code < 400)
       THEN 1
@@ -4862,6 +4938,17 @@ WITH filtered_usage AS (
     GREATEST(COALESCE("usage".first_byte_time_ms, 0), 0) AS first_byte_time_ms,
     "usage".response_time_ms IS NOT NULL AS has_response_time,
     "usage".first_byte_time_ms IS NOT NULL AS has_first_byte_time,
+    CASE
+      WHEN COALESCE("usage".upstream_is_stream, "usage".is_stream, false)
+      THEN CASE
+        WHEN "usage".response_time_ms IS NOT NULL
+             AND "usage".first_byte_time_ms IS NOT NULL
+             AND GREATEST(COALESCE("usage".response_time_ms, 0), 0) > GREATEST(COALESCE("usage".first_byte_time_ms, 0), 0)
+        THEN GREATEST(COALESCE("usage".response_time_ms, 0), 0) - GREATEST(COALESCE("usage".first_byte_time_ms, 0), 0)
+        ELSE 0
+      END
+      ELSE GREATEST(COALESCE("usage".response_time_ms, 0), 0)
+    END AS output_tps_duration_ms,
     CASE
       WHEN lower(COALESCE("usage".status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
            AND ("usage".status_code IS NULL OR "usage".status_code < 400)
@@ -4977,6 +5064,17 @@ ORDER BY request_count DESC, provider_id ASC
     GREATEST(COALESCE("usage".first_byte_time_ms, 0), 0) AS first_byte_time_ms,
     "usage".response_time_ms IS NOT NULL AS has_response_time,
     "usage".first_byte_time_ms IS NOT NULL AS has_first_byte_time,
+    CASE
+      WHEN COALESCE("usage".upstream_is_stream, "usage".is_stream, false)
+      THEN CASE
+        WHEN "usage".response_time_ms IS NOT NULL
+             AND "usage".first_byte_time_ms IS NOT NULL
+             AND GREATEST(COALESCE("usage".response_time_ms, 0), 0) > GREATEST(COALESCE("usage".first_byte_time_ms, 0), 0)
+        THEN GREATEST(COALESCE("usage".response_time_ms, 0), 0) - GREATEST(COALESCE("usage".first_byte_time_ms, 0), 0)
+        ELSE 0
+      END
+      ELSE GREATEST(COALESCE("usage".response_time_ms, 0), 0)
+    END AS output_tps_duration_ms,
     CASE
       WHEN lower(COALESCE("usage".status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
            AND ("usage".status_code IS NULL OR "usage".status_code < 400)
@@ -6216,6 +6314,11 @@ WHERE date >= $1
 GROUP BY {group_column}
 ORDER BY request_count DESC, group_key ASC
 "#,
+            group_column = group_column,
+            display_name_expr = display_name_expr,
+            avg_response_time_expr = avg_response_time_expr,
+            success_count_expr = success_count_expr,
+            table_name = table_name,
         );
 
         let mut rows = sqlx::query(&sql)
@@ -7326,6 +7429,40 @@ ORDER BY "usage".user_id ASC
                         }
                     }
 
+                    let before_model_contribution =
+                        previous_usage.as_ref().and_then(model_usage_contribution);
+                    let after_model_contribution = model_usage_contribution(&stored);
+                    match (
+                        before_model_contribution.as_ref(),
+                        after_model_contribution.as_ref(),
+                    ) {
+                        (Some(before), Some(after)) if before.model == after.model => {
+                            let delta = ModelUsageDelta::between(before, after);
+                            apply_global_model_usage_delta_in_tx(tx, before.model.as_str(), &delta)
+                                .await?;
+                        }
+                        _ => {
+                            if let Some(before) = before_model_contribution.as_ref() {
+                                let delta = ModelUsageDelta::removal(before);
+                                apply_global_model_usage_delta_in_tx(
+                                    tx,
+                                    before.model.as_str(),
+                                    &delta,
+                                )
+                                .await?;
+                            }
+                            if let Some(after) = after_model_contribution.as_ref() {
+                                let delta = ModelUsageDelta::addition(after);
+                                apply_global_model_usage_delta_in_tx(
+                                    tx,
+                                    after.model.as_str(),
+                                    &delta,
+                                )
+                                .await?;
+                            }
+                        }
+                    }
+
                     let before_provider_contribution = previous_usage
                         .as_ref()
                         .and_then(provider_api_key_usage_contribution);
@@ -7878,6 +8015,32 @@ async fn apply_api_key_usage_delta_in_tx(
                 .removed_last_used_at_unix_secs
                 .map(|value| value as f64),
         )
+        .execute(&mut **tx)
+        .await
+        .map_postgres_err()?;
+    Ok(())
+}
+
+async fn apply_global_model_usage_delta_in_tx(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    model: &str,
+    delta: &ModelUsageDelta,
+) -> Result<(), DataLayerError> {
+    if model.trim().is_empty() {
+        return Ok(());
+    }
+    if delta.is_noop() {
+        return Ok(());
+    }
+
+    sqlx::query(APPLY_GLOBAL_MODEL_USAGE_DELTA_SQL)
+        .bind(model)
+        .bind(i32::try_from(delta.request_count).map_err(|_| {
+            DataLayerError::UnexpectedValue(format!(
+                "global_models.usage_count delta exceeds i32: {}",
+                delta.request_count
+            ))
+        })?)
         .execute(&mut **tx)
         .await
         .map_postgres_err()?;

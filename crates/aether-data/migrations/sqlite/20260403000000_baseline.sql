@@ -114,7 +114,6 @@ CREATE TABLE IF NOT EXISTS management_tokens (
     UNIQUE (user_id, name)
 );
 CREATE INDEX IF NOT EXISTS management_tokens_user_id_idx ON management_tokens (user_id);
-
 CREATE TABLE IF NOT EXISTS billing_rules (
     id TEXT PRIMARY KEY,
     global_model_id TEXT,
@@ -414,7 +413,6 @@ CREATE TABLE IF NOT EXISTS global_models (
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS system_configs (
     id TEXT PRIMARY KEY,
     key TEXT NOT NULL UNIQUE,
@@ -482,7 +480,6 @@ CREATE TABLE IF NOT EXISTS user_oauth_links (
 );
 CREATE INDEX IF NOT EXISTS user_oauth_links_provider_type_idx ON user_oauth_links (provider_type);
 CREATE INDEX IF NOT EXISTS user_oauth_links_user_id_idx ON user_oauth_links (user_id);
-
 CREATE TABLE IF NOT EXISTS proxy_nodes (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -522,7 +519,6 @@ CREATE TABLE IF NOT EXISTS proxy_node_events (
     detail TEXT,
     created_at INTEGER NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS wallets (
     id TEXT PRIMARY KEY,
     user_id TEXT UNIQUE,
@@ -725,7 +721,6 @@ CREATE INDEX IF NOT EXISTS idx_redeem_codes_redeemed_user
     ON redeem_codes (redeemed_by_user_id, redeemed_at);
 CREATE INDEX IF NOT EXISTS idx_redeem_codes_redeemed_order
     ON redeem_codes (redeemed_payment_order_id);
-
 CREATE TABLE IF NOT EXISTS "usage" (
     request_id TEXT PRIMARY KEY,
     id TEXT,

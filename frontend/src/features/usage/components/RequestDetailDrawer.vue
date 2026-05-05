@@ -179,6 +179,47 @@
                       <span class="text-lg font-bold">{{ detail.response_time_ms ? formatResponseTime(detail.response_time_ms).value : 'N/A' }}</span>
                       <span class="text-sm text-muted-foreground ml-1">{{ detail.response_time_ms ? formatResponseTime(detail.response_time_ms).unit : '' }}</span>
                     </div>
+                    <template v-if="detailOutputRate != null">
+                      <Separator
+                        orientation="vertical"
+                        class="h-6 mx-6"
+                      />
+                      <div class="flex items-center">
+                        <span class="text-xs text-muted-foreground w-[56px]">输出速度</span>
+                        <span class="text-lg font-bold text-primary">{{ formatOutputRateValue(detailOutputRate) }}</span>
+                        <span class="text-sm text-muted-foreground ml-1">tps</span>
+                      </div>
+                    </template>
+                  </div>
+
+                  <div
+                    v-if="hasDetailPerformanceBreakdown"
+                    class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4 text-xs"
+                  >
+                    <div class="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
+                      <div class="text-muted-foreground mb-1">
+                        首字时间
+                      </div>
+                      <div class="font-mono text-foreground">
+                        {{ formatDurationMs(detail.first_byte_time_ms) }}
+                      </div>
+                    </div>
+                    <div class="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
+                      <div class="text-muted-foreground mb-1">
+                        生成耗时
+                      </div>
+                      <div class="font-mono text-foreground">
+                        {{ formatDurationMs(detailGenerationTimeMs) }}
+                      </div>
+                    </div>
+                    <div class="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
+                      <div class="text-muted-foreground mb-1">
+                        输出 Tokens
+                      </div>
+                      <div class="font-mono text-foreground">
+                        {{ formatNumber(detailOutputTokens) }}
+                      </div>
+                    </div>
                   </div>
 
                   <!-- 分隔线 -->
@@ -715,6 +756,13 @@ import { formatShortRequestId } from '@/utils/format'
 import { log } from '@/utils/logger'
 import { getEffectiveInputTokens } from '../token-normalization'
 import {
+  formatDurationMs,
+  formatOutputRate,
+  formatOutputRateValue,
+  getDisplayOutputRate,
+  getGenerationTimeMs,
+} from '../performance'
+import {
   formatUsageStreamLabel,
   isUsageUpstreamStream,
   resolveDisplayRequestStatus,
@@ -890,6 +938,37 @@ const displayInputTokens = computed(() => {
     api_format: detail.value.api_format,
     endpoint_api_format: detail.value.endpoint_api_format,
   })
+})
+
+const detailOutputTokens = computed(() => {
+  if (!detail.value) return 0
+  return detail.value.tokens?.output ?? detail.value.output_tokens ?? 0
+})
+
+const detailGenerationTimeMs = computed(() => {
+  if (!detail.value) return null
+  return getGenerationTimeMs({
+    response_time_ms: detail.value.response_time_ms,
+    first_byte_time_ms: detail.value.first_byte_time_ms,
+    is_stream: detail.value.is_stream,
+    upstream_is_stream: detail.value.upstream_is_stream,
+  })
+})
+
+const detailOutputRate = computed(() => {
+  if (!detail.value) return null
+  return getDisplayOutputRate({
+    output_tokens: detailOutputTokens.value,
+    response_time_ms: detail.value.response_time_ms,
+    first_byte_time_ms: detail.value.first_byte_time_ms,
+    is_stream: detail.value.is_stream,
+    upstream_is_stream: detail.value.upstream_is_stream,
+  })
+})
+
+const hasDetailPerformanceBreakdown = computed(() => {
+  if (!detail.value) return false
+  return detail.value.first_byte_time_ms != null || detailGenerationTimeMs.value != null || detailOutputTokens.value > 0
 })
 
 // 监听标签页切换

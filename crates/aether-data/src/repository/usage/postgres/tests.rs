@@ -444,6 +444,33 @@ fn usage_sql_raw_aggregates_use_canonical_billing_facts() {
 }
 
 #[test]
+fn usage_sql_provider_performance_reads_upstream_stream_from_billing_facts() {
+    let source = include_str!("mod.rs");
+    assert!(source.contains("\"usage\".upstream_is_stream"));
+    assert!(
+        !source.contains("usage_base.request_metadata->>'upstream_is_stream'"),
+        "provider performance queries should not rejoin public.usage to resolve upstream stream mode"
+    );
+    assert!(
+        !source.contains("LEFT JOIN public.usage AS usage_base"),
+        "provider performance queries should stay on usage_billing_facts to avoid an extra usage scan"
+    );
+}
+
+#[test]
+fn usage_billing_facts_projects_upstream_stream_mode() {
+    let migration = include_str!(
+        "../../../../migrations/postgres/20260505130000_project_upstream_stream_in_usage_billing_facts.sql"
+    );
+
+    assert!(migration.contains("AS upstream_is_stream"));
+    assert!(migration.contains("COALESCE(usage_rows.upstream_is_stream"));
+    assert!(migration.contains("COALESCE(usage_rows.is_stream, FALSE)"));
+    assert!(migration.contains("ADD COLUMN IF NOT EXISTS upstream_is_stream boolean"));
+    assert!(migration.contains("request_metadata->>'upstream_is_stream'"));
+}
+
+#[test]
 fn usage_sql_reads_http_audits_for_single_record_fetches() {
     assert!(super::FIND_BY_REQUEST_ID_SQL.contains("LEFT JOIN usage_http_audits"));
     assert!(super::FIND_BY_ID_SQL.contains("LEFT JOIN usage_http_audits"));
@@ -575,6 +602,14 @@ fn usage_sql_insert_values_aligns_request_metadata_and_timestamps() {
     assert!(super::UPSERT_SQL.contains("\n  $51::json,\n  $52,\n  $53::json,\n  CASE"));
     assert!(super::UPSERT_SQL.contains("WHEN $54 IS NULL THEN NULL"));
     assert!(super::UPSERT_SQL.contains("TO_TIMESTAMP($55::double precision)"));
+}
+
+#[test]
+fn usage_sql_upsert_materializes_upstream_stream_mode() {
+    assert!(super::UPSERT_SQL.contains("upstream_is_stream,"));
+    assert!(super::UPSERT_SQL.contains("$53::json->>'upstream_is_stream'"));
+    assert!(super::UPSERT_SQL.contains("COALESCE($21, FALSE)"));
+    assert!(super::UPSERT_SQL.contains("upstream_is_stream = CASE"));
 }
 
 #[test]

@@ -118,7 +118,6 @@ CREATE TABLE IF NOT EXISTS management_tokens (
     UNIQUE KEY uq_management_tokens_user_name (user_id, name),
     KEY management_tokens_user_id_idx (user_id)
 );
-
 CREATE TABLE IF NOT EXISTS billing_rules (
     id VARCHAR(64) PRIMARY KEY,
     global_model_id VARCHAR(64),
@@ -414,7 +413,6 @@ CREATE TABLE IF NOT EXISTS global_models (
     updated_at BIGINT NOT NULL,
     UNIQUE KEY global_models_name_key (name)
 );
-
 CREATE TABLE IF NOT EXISTS system_configs (
     id VARCHAR(64) PRIMARY KEY,
     `key` VARCHAR(255) NOT NULL,
@@ -484,7 +482,6 @@ CREATE TABLE IF NOT EXISTS user_oauth_links (
     KEY user_oauth_links_provider_type_idx (provider_type),
     KEY user_oauth_links_user_id_idx (user_id)
 );
-
 CREATE TABLE IF NOT EXISTS proxy_nodes (
     id VARCHAR(64) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -524,7 +521,6 @@ CREATE TABLE IF NOT EXISTS proxy_node_events (
     detail VARCHAR(500),
     created_at BIGINT NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS wallets (
     id VARCHAR(64) PRIMARY KEY,
     user_id VARCHAR(64),
@@ -708,7 +704,6 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
     KEY idx_redeem_codes_redeemed_user (redeemed_by_user_id, redeemed_at),
     KEY idx_redeem_codes_redeemed_order (redeemed_payment_order_id)
 );
-
 CREATE TABLE IF NOT EXISTS `usage` (
     request_id VARCHAR(128) PRIMARY KEY,
     id VARCHAR(128),
