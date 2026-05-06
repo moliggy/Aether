@@ -221,7 +221,7 @@
                   <div class="flex-1" />
                   <div class="flex items-center gap-1 shrink-0">
                     <Button
-                      v-if="hasRulesChanges(endpoint) || hasBodyRulesChanges(endpoint) || hasResponseHeaderRulesChanges(endpoint)"
+                      v-if="hasRulePanelChanges(endpoint)"
                       variant="ghost"
                       size="icon"
                       class="h-7 w-7"
@@ -235,6 +235,28 @@
                       variant="ghost"
                       size="sm"
                       class="h-7 text-xs px-2"
+                      :title="isEndpointRulesJsonMode(endpoint.id) ? '切回表单视图' : '切到 JSON 视图'"
+                      @click="toggleEndpointRulesJsonMode(endpoint)"
+                    >
+                      <Code2 class="w-3 h-3 mr-1" />
+                      {{ isEndpointRulesJsonMode(endpoint.id) ? '表单' : 'JSON' }}
+                    </Button>
+                    <Button
+                      v-if="isEndpointRulesJsonMode(endpoint.id)"
+                      variant="ghost"
+                      size="sm"
+                      class="h-7 px-2 text-xs"
+                      title="格式化 JSON"
+                      @click="formatEndpointRulesJson(endpoint.id)"
+                    >
+                      <AlignLeft class="w-3 h-3 mr-1" />
+                      格式化
+                    </Button>
+                    <Button
+                      v-if="!isEndpointRulesJsonMode(endpoint.id)"
+                      variant="ghost"
+                      size="sm"
+                      class="h-7 text-xs px-2"
                       title="添加请求头规则"
                       @click="handleAddEndpointRule(endpoint.id)"
                     >
@@ -242,6 +264,7 @@
                       请求头
                     </Button>
                     <Button
+                      v-if="!isEndpointRulesJsonMode(endpoint.id)"
                       variant="ghost"
                       size="sm"
                       class="h-7 text-xs px-2"
@@ -252,6 +275,7 @@
                       请求体
                     </Button>
                     <Button
+                      v-if="!isEndpointRulesJsonMode(endpoint.id)"
                       variant="ghost"
                       size="sm"
                       class="h-7 text-xs px-2"
@@ -276,7 +300,28 @@
                   </div>
                 </div>
                 <CollapsibleContent class="pt-3">
-                  <div class="space-y-2">
+                  <div
+                    v-if="isEndpointRulesJsonMode(endpoint.id)"
+                    class="space-y-2"
+                  >
+                    <Textarea
+                      :model-value="getEndpointRulesJsonDraft(endpoint)"
+                      class="min-h-[360px] font-mono text-xs leading-relaxed"
+                      spellcheck="false"
+                      placeholder="{ &quot;header_rules&quot;: [], &quot;body_rules&quot;: [], &quot;response_header_rules&quot;: [] }"
+                      @update:model-value="(value) => updateEndpointRulesJsonDraft(endpoint.id, value)"
+                    />
+                    <div
+                      v-if="endpointRulesJsonError[endpoint.id]"
+                      class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+                    >
+                      {{ endpointRulesJsonError[endpoint.id] }}
+                    </div>
+                  </div>
+                  <div
+                    v-else
+                    class="space-y-2"
+                  >
                     <div
                       v-if="getEndpointRulesCount(endpoint) > 1 || getEndpointBodyRulesCount(endpoint) > 1 || getEndpointResponseRulesCount(endpoint) > 1"
                       class="flex items-center gap-1.5 text-xs text-muted-foreground px-2"
@@ -988,6 +1033,7 @@ import {
   Dialog,
   Button,
   Input,
+  Textarea,
   Label,
   Badge,
   Select,
@@ -1002,7 +1048,7 @@ import {
   PopoverTrigger,
   PopoverContent,
 } from '@/components/ui'
-import { Settings, Trash2, Check, X, Power, ChevronRight, Plus, Shuffle, RotateCcw, Radio, CheckCircle, Save, Filter, HelpCircle, GripVertical, Globe } from 'lucide-vue-next'
+import { Settings, Trash2, Check, X, Power, ChevronRight, Plus, Shuffle, RotateCcw, Radio, CheckCircle, Save, Filter, HelpCircle, GripVertical, Globe, Code2, AlignLeft } from 'lucide-vue-next'
 import { useToast } from '@/composables/useToast'
 import { parseApiError } from '@/utils/errorParser'
 import { log } from '@/utils/logger'
@@ -1070,6 +1116,12 @@ interface EndpointEditState {
   rules: EditableRule[]
   responseRules: EditableRule[]
   bodyRules: EditableBodyRule[]
+}
+
+interface EndpointRulesJsonPayload {
+  header_rules: HeaderRule[]
+  body_rules: BodyRule[]
+  response_header_rules: HeaderRule[]
 }
 
 const props = defineProps<{
@@ -1378,6 +1430,10 @@ const endpointToDelete = ref<ProviderEndpoint | null>(null)
 
 // 请求规则折叠状态
 const endpointRulesExpanded = ref<Record<string, boolean>>({})
+const endpointRulesJsonMode = ref<Record<string, boolean>>({})
+const endpointRulesJsonDraft = ref<Record<string, string>>({})
+const endpointRulesJsonError = ref<Record<string, string | null>>({})
+const endpointRulesJsonDirty = ref<Record<string, boolean>>({})
 
 // 请求体规则 Select 的展开状态
 const bodyRuleSelectOpen = ref<Record<string, boolean>>({})
@@ -1424,6 +1480,220 @@ const RESPONSE_HEADER_RULES_CAMEL_CONFIG_KEY = 'responseHeaderRules'
 const RESERVED_BODY_FIELDS = new Set([
   'stream',
 ])
+
+const BODY_RULE_JSON_ACTIONS = new Set(['set', 'drop', 'rename', 'append', 'insert', 'regex_replace', 'name_style'])
+const BODY_RULE_JSON_STYLES = new Set(['snake_case', 'camelCase', 'PascalCase', 'kebab-case', 'capitalize'])
+const CONDITION_JSON_OPS = new Set(['eq', 'neq', 'gt', 'lt', 'gte', 'lte', 'starts_with', 'ends_with', 'contains', 'matches', 'exists', 'not_exists', 'in', 'type_is'])
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function readJsonRulesArray(root: Record<string, unknown>, key: keyof EndpointRulesJsonPayload, label: string): { value: unknown[]; error: string | null } {
+  const raw = root[key]
+  if (raw === undefined || raw === null) return { value: [], error: null }
+  if (!Array.isArray(raw)) return { value: [], error: `${label} 必须是数组或 null` }
+  return { value: raw, error: null }
+}
+
+function validateJsonCondition(rule: Record<string, unknown>, label: string, index: number): string | null {
+  const raw = rule.condition
+  if (raw === undefined || raw === null) return null
+  if (!isJsonObject(raw)) return `${label}第 ${index + 1} 条：condition 必须是对象`
+  const shapeError = validateJsonConditionShape(raw, `${label}第 ${index + 1} 条：condition`)
+  if (shapeError) return shapeError
+  const editable = conditionToEditable(raw as BodyRule['condition'])
+  const err = validateEditableCondition(editable)
+  return err ? `${label}第 ${index + 1} 条：${err}` : null
+}
+
+function validateJsonConditionShape(condition: Record<string, unknown>, label: string): string | null {
+  if (Object.prototype.hasOwnProperty.call(condition, 'all')) {
+    if (!Array.isArray(condition.all)) return `${label}.all 必须是数组`
+    for (let i = 0; i < condition.all.length; i++) {
+      const child = condition.all[i]
+      if (!isJsonObject(child)) return `${label}.all[${i}] 必须是对象`
+      const err = validateJsonConditionShape(child, `${label}.all[${i}]`)
+      if (err) return err
+    }
+    return null
+  }
+  if (Object.prototype.hasOwnProperty.call(condition, 'any')) {
+    if (!Array.isArray(condition.any)) return `${label}.any 必须是数组`
+    for (let i = 0; i < condition.any.length; i++) {
+      const child = condition.any[i]
+      if (!isJsonObject(child)) return `${label}.any[${i}] 必须是对象`
+      const err = validateJsonConditionShape(child, `${label}.any[${i}]`)
+      if (err) return err
+    }
+    return null
+  }
+
+  if (typeof condition.path !== 'string') return `${label}.path 必须是字符串`
+  if (typeof condition.op !== 'string' || !CONDITION_JSON_OPS.has(condition.op)) {
+    return `${label}.op 无效`
+  }
+  if (condition.source !== undefined && condition.source !== 'original' && condition.source !== 'current') {
+    return `${label}.source 只能是 original/current`
+  }
+  return null
+}
+
+function requireJsonString(rule: Record<string, unknown>, key: string, label: string, index: number): string | null {
+  return typeof rule[key] === 'string' ? null : `${label}第 ${index + 1} 条：${key} 必须是字符串`
+}
+
+function validateHeaderRuleJson(rule: unknown, label: string, index: number): string | null {
+  if (!isJsonObject(rule)) return `${label}第 ${index + 1} 条必须是对象`
+  const action = rule.action
+  if (action !== 'set' && action !== 'drop' && action !== 'rename') {
+    return `${label}第 ${index + 1} 条：action 必须是 set/drop/rename`
+  }
+  if (action === 'set') {
+    return requireJsonString(rule, 'key', label, index)
+      || requireJsonString(rule, 'value', label, index)
+      || validateJsonCondition(rule, label, index)
+  }
+  if (action === 'drop') {
+    return requireJsonString(rule, 'key', label, index)
+      || validateJsonCondition(rule, label, index)
+  }
+  return requireJsonString(rule, 'from', label, index)
+    || requireJsonString(rule, 'to', label, index)
+    || validateJsonCondition(rule, label, index)
+}
+
+function validateBodyRuleJson(rule: unknown, label: string, index: number): string | null {
+  if (!isJsonObject(rule)) return `${label}第 ${index + 1} 条必须是对象`
+  const action = typeof rule.action === 'string' ? rule.action : ''
+  if (!BODY_RULE_JSON_ACTIONS.has(action)) {
+    return `${label}第 ${index + 1} 条：action 无效`
+  }
+
+  if (action === 'set' || action === 'append') {
+    return requireJsonString(rule, 'path', label, index)
+      || (Object.prototype.hasOwnProperty.call(rule, 'value') ? null : `${label}第 ${index + 1} 条：value 不能为空`)
+      || validateJsonCondition(rule, label, index)
+  }
+  if (action === 'drop') {
+    return requireJsonString(rule, 'path', label, index)
+      || validateJsonCondition(rule, label, index)
+  }
+  if (action === 'rename') {
+    return requireJsonString(rule, 'from', label, index)
+      || requireJsonString(rule, 'to', label, index)
+      || validateJsonCondition(rule, label, index)
+  }
+  if (action === 'insert') {
+    if (requireJsonString(rule, 'path', label, index)) return requireJsonString(rule, 'path', label, index)
+    if (!Number.isInteger(rule.index)) return `${label}第 ${index + 1} 条：index 必须是整数`
+    if (!Object.prototype.hasOwnProperty.call(rule, 'value')) return `${label}第 ${index + 1} 条：value 不能为空`
+    return validateJsonCondition(rule, label, index)
+  }
+  if (action === 'regex_replace') {
+    if (requireJsonString(rule, 'path', label, index)) return requireJsonString(rule, 'path', label, index)
+    if (requireJsonString(rule, 'pattern', label, index)) return requireJsonString(rule, 'pattern', label, index)
+    if (typeof rule.replacement !== 'string') return `${label}第 ${index + 1} 条：replacement 必须是字符串`
+    if (rule.flags !== undefined && typeof rule.flags !== 'string') return `${label}第 ${index + 1} 条：flags 必须是字符串`
+    if (rule.count !== undefined && !Number.isInteger(rule.count)) return `${label}第 ${index + 1} 条：count 必须是整数`
+    return validateJsonCondition(rule, label, index)
+  }
+  if (requireJsonString(rule, 'path', label, index)) return requireJsonString(rule, 'path', label, index)
+  if (typeof rule.style !== 'string' || !BODY_RULE_JSON_STYLES.has(rule.style)) {
+    return `${label}第 ${index + 1} 条：style 无效`
+  }
+  return validateJsonCondition(rule, label, index)
+}
+
+function parseEndpointRulesJsonDraft(draft: string): { value: EndpointRulesJsonPayload | null; error: string | null } {
+  const raw = draft.trim()
+  if (!raw) {
+    return { value: { header_rules: [], body_rules: [], response_header_rules: [] }, error: null }
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (error: unknown) {
+    return { value: null, error: error instanceof Error ? error.message : 'JSON 格式无效' }
+  }
+  if (!isJsonObject(parsed)) return { value: null, error: '规则 JSON 必须是对象' }
+
+  const header = readJsonRulesArray(parsed, 'header_rules', 'header_rules')
+  if (header.error) return { value: null, error: header.error }
+  const body = readJsonRulesArray(parsed, 'body_rules', 'body_rules')
+  if (body.error) return { value: null, error: body.error }
+  const response = readJsonRulesArray(parsed, 'response_header_rules', 'response_header_rules')
+  if (response.error) return { value: null, error: response.error }
+
+  for (let i = 0; i < header.value.length; i++) {
+    const error = validateHeaderRuleJson(header.value[i], 'header_rules ', i)
+    if (error) return { value: null, error }
+  }
+  for (let i = 0; i < body.value.length; i++) {
+    const error = validateBodyRuleJson(body.value[i], 'body_rules ', i)
+    if (error) return { value: null, error }
+  }
+  for (let i = 0; i < response.value.length; i++) {
+    const error = validateHeaderRuleJson(response.value[i], 'response_header_rules ', i)
+    if (error) return { value: null, error }
+  }
+
+  return {
+    value: {
+      header_rules: header.value as HeaderRule[],
+      body_rules: body.value as BodyRule[],
+      response_header_rules: response.value as HeaderRule[],
+    },
+    error: null,
+  }
+}
+
+function applyEndpointRulesJsonDraft(
+  endpointId: string,
+  options: { notify?: boolean; notifyError?: boolean } = {},
+): boolean {
+  const notifyError = options.notifyError !== false
+  const parsed = parseEndpointRulesJsonDraft(endpointRulesJsonDraft.value[endpointId] ?? '')
+  if (!parsed.value) {
+    endpointRulesJsonError.value[endpointId] = parsed.error
+    if (notifyError) showError(parsed.error || '规则 JSON 无效')
+    return false
+  }
+
+  const state = ensureEndpointEditState(endpointId)
+  if (!state) {
+    endpointRulesJsonError.value[endpointId] = '端点编辑状态不可用'
+    if (notifyError) showError('端点编辑状态不可用')
+    return false
+  }
+
+  state.rules = editableHeaderRulesFromRules(parsed.value.header_rules)
+  state.bodyRules = editableBodyRulesFromRules(parsed.value.body_rules)
+  state.responseRules = editableHeaderRulesFromRules(parsed.value.response_header_rules)
+
+  clearHeaderRuleSelectOpen(endpointId)
+  clearResponseRuleSelectOpen(endpointId)
+  clearBodyRuleSelectOpen(endpointId)
+  clearHeaderRuleDragState(endpointId)
+  clearResponseRuleDragState(endpointId)
+  clearBodyRuleDragState(endpointId)
+
+  const validationError = getHeaderValidationErrorForEndpoint(endpointId)
+    || getResponseHeaderValidationErrorForEndpoint(endpointId)
+    || getBodyValidationErrorForEndpoint(endpointId)
+  if (validationError) {
+    endpointRulesJsonError.value[endpointId] = validationError
+    if (notifyError) showError(validationError)
+    return false
+  }
+
+  endpointRulesJsonDraft.value[endpointId] = stringifyEndpointRulesJsonPayload(parsed.value)
+  endpointRulesJsonError.value[endpointId] = null
+  endpointRulesJsonDirty.value[endpointId] = false
+  if (options.notify !== false) success('JSON 规则已应用')
+  return true
+}
 
 // {{$original}} 占位符处理
 const ORIGINAL_PLACEHOLDER = '{{$original}}'
@@ -1758,42 +2028,46 @@ function emptyBodyRule(action: BodyRuleAction = 'set'): EditableBodyRule {
   }
 }
 
+function editableBodyRulesFromRules(rules: BodyRule[] | null | undefined): EditableBodyRule[] {
+  const bodyRules: EditableBodyRule[] = []
+  if (!Array.isArray(rules)) return bodyRules
+
+  for (const rule of rules) {
+    if (rule.action === 'set') {
+      const { value } = initBodyRuleSetValueForEditor(rule.value)
+      bodyRules.push({ ...emptyBodyRule('set'), path: rule.path, value, condition: conditionToEditable(rule.condition) })
+    } else if (rule.action === 'drop') {
+      bodyRules.push({ ...emptyBodyRule('drop'), path: rule.path, condition: conditionToEditable(rule.condition) })
+    } else if (rule.action === 'rename') {
+      bodyRules.push({ ...emptyBodyRule('rename'), from: rule.from, to: rule.to, condition: conditionToEditable(rule.condition) })
+    } else if (rule.action === 'append') {
+      const { value } = initBodyRuleSetValueForEditor(rule.value)
+      bodyRules.push({ ...emptyBodyRule('append'), path: rule.path || '', value, condition: conditionToEditable(rule.condition) })
+    } else if (rule.action === 'insert') {
+      const { value } = initBodyRuleSetValueForEditor(rule.value)
+      bodyRules.push({ ...emptyBodyRule('insert'), path: rule.path || '', value, index: String(rule.index ?? ''), condition: conditionToEditable(rule.condition) })
+    } else if (rule.action === 'regex_replace') {
+      bodyRules.push({
+        ...emptyBodyRule('regex_replace'),
+        path: rule.path || '',
+        pattern: rule.pattern || '',
+        replacement: rule.replacement || '',
+        flags: rule.flags || '',
+        count: rule.count === undefined || rule.count === null ? '' : String(rule.count),
+        condition: conditionToEditable(rule.condition),
+      })
+    } else if (rule.action === 'name_style') {
+      bodyRules.push({ ...emptyBodyRule('name_style'), path: rule.path || '', style: rule.style || 'capitalize', condition: conditionToEditable(rule.condition) })
+    }
+  }
+  return bodyRules
+}
+
 // 初始化端点的编辑状态
 function initEndpointEditState(endpoint: ProviderEndpoint): EndpointEditState {
   const rules = editableHeaderRulesFromRules(endpoint.header_rules)
   const responseRules = editableHeaderRulesFromRules(getEndpointResponseHeaderRules(endpoint))
-
-  const bodyRules: EditableBodyRule[] = []
-  if (endpoint.body_rules && endpoint.body_rules.length > 0) {
-    for (const rule of endpoint.body_rules) {
-      if (rule.action === 'set') {
-        const { value } = initBodyRuleSetValueForEditor(rule.value)
-        bodyRules.push({ ...emptyBodyRule('set'), path: rule.path, value, condition: conditionToEditable(rule.condition) })
-      } else if (rule.action === 'drop') {
-        bodyRules.push({ ...emptyBodyRule('drop'), path: rule.path, condition: conditionToEditable(rule.condition) })
-      } else if (rule.action === 'rename') {
-        bodyRules.push({ ...emptyBodyRule('rename'), from: rule.from, to: rule.to, condition: conditionToEditable(rule.condition) })
-      } else if (rule.action === 'append') {
-        const { value } = initBodyRuleSetValueForEditor(rule.value)
-        bodyRules.push({ ...emptyBodyRule('append'), path: rule.path || '', value, condition: conditionToEditable(rule.condition) })
-      } else if (rule.action === 'insert') {
-        const { value } = initBodyRuleSetValueForEditor(rule.value)
-        bodyRules.push({ ...emptyBodyRule('insert'), path: rule.path || '', value, index: String(rule.index ?? ''), condition: conditionToEditable(rule.condition) })
-      } else if (rule.action === 'regex_replace') {
-        bodyRules.push({
-          ...emptyBodyRule('regex_replace'),
-          path: rule.path || '',
-          pattern: rule.pattern || '',
-          replacement: rule.replacement || '',
-          flags: rule.flags || '',
-          count: rule.count === undefined || rule.count === null ? '' : String(rule.count),
-          condition: conditionToEditable(rule.condition),
-        })
-      } else if (rule.action === 'name_style') {
-        bodyRules.push({ ...emptyBodyRule('name_style'), path: rule.path || '', style: rule.style || 'capitalize', condition: conditionToEditable(rule.condition) })
-      }
-    }
-  }
+  const bodyRules = editableBodyRulesFromRules(endpoint.body_rules)
 
   return {
     url: endpoint.base_url,
@@ -1810,14 +2084,92 @@ function getEndpointEditState(endpointId: string): EndpointEditState | undefined
   return endpointEditStates.value[endpointId]
 }
 
-// 更新端点字段
-function updateEndpointField(endpointId: string, field: 'url' | 'path', value: string) {
+function ensureEndpointEditState(endpointId: string): EndpointEditState | null {
   if (!endpointEditStates.value[endpointId]) {
     const endpoint = localEndpoints.value.find(e => e.id === endpointId)
     if (endpoint) {
       endpointEditStates.value[endpointId] = initEndpointEditState(endpoint)
     }
   }
+  return endpointEditStates.value[endpointId] ?? null
+}
+
+function isEndpointRulesJsonMode(endpointId: string): boolean {
+  return endpointRulesJsonMode.value[endpointId] === true
+}
+
+function buildEndpointRulesJsonPayload(endpointId: string): EndpointRulesJsonPayload {
+  const state = ensureEndpointEditState(endpointId)
+  return {
+    header_rules: state ? (rulesToHeaderRules(state.rules) ?? []) : [],
+    body_rules: state ? (rulesToBodyRules(state.bodyRules) ?? []) : [],
+    response_header_rules: state ? (rulesToHeaderRules(state.responseRules) ?? []) : [],
+  }
+}
+
+function stringifyEndpointRulesJsonPayload(payload: EndpointRulesJsonPayload): string {
+  return JSON.stringify(payload, null, 2)
+}
+
+function refreshEndpointRulesJsonDraft(endpointId: string) {
+  endpointRulesJsonDraft.value[endpointId] = stringifyEndpointRulesJsonPayload(
+    buildEndpointRulesJsonPayload(endpointId),
+  )
+  endpointRulesJsonError.value[endpointId] = null
+  endpointRulesJsonDirty.value[endpointId] = false
+}
+
+function enterEndpointRulesJsonMode(endpoint: ProviderEndpoint) {
+  ensureEndpointEditState(endpoint.id)
+  refreshEndpointRulesJsonDraft(endpoint.id)
+  endpointRulesJsonMode.value[endpoint.id] = true
+  endpointRulesExpanded.value[endpoint.id] = true
+}
+
+function toggleEndpointRulesJsonMode(endpoint: ProviderEndpoint) {
+  if (isEndpointRulesJsonMode(endpoint.id)) {
+    if (endpointRulesJsonDirty.value[endpoint.id] && !applyEndpointRulesJsonDraft(endpoint.id, { notify: false })) {
+      return
+    }
+    endpointRulesJsonMode.value[endpoint.id] = false
+    return
+  }
+  enterEndpointRulesJsonMode(endpoint)
+}
+
+function getEndpointRulesJsonDraft(endpoint: ProviderEndpoint): string {
+  if (endpointRulesJsonDraft.value[endpoint.id] === undefined) {
+    endpointRulesJsonDraft.value[endpoint.id] = stringifyEndpointRulesJsonPayload(
+      buildEndpointRulesJsonPayload(endpoint.id),
+    )
+  }
+  return endpointRulesJsonDraft.value[endpoint.id]
+}
+
+function updateEndpointRulesJsonDraft(endpointId: string, value: string) {
+  endpointRulesJsonDraft.value[endpointId] = value
+  endpointRulesJsonDirty.value[endpointId] = true
+  endpointRulesJsonError.value[endpointId] = null
+}
+
+function formatEndpointRulesJson(endpointId: string) {
+  const currentDraft = endpointRulesJsonDraft.value[endpointId] ?? ''
+  const parsed = parseEndpointRulesJsonDraft(endpointRulesJsonDraft.value[endpointId] ?? '')
+  if (!parsed.value) {
+    endpointRulesJsonError.value[endpointId] = parsed.error
+    return
+  }
+  const formattedDraft = stringifyEndpointRulesJsonPayload(parsed.value)
+  endpointRulesJsonDraft.value[endpointId] = formattedDraft
+  endpointRulesJsonError.value[endpointId] = null
+  if (formattedDraft !== currentDraft) {
+    endpointRulesJsonDirty.value[endpointId] = true
+  }
+}
+
+// 更新端点字段
+function updateEndpointField(endpointId: string, field: 'url' | 'path', value: string) {
+  ensureEndpointEditState(endpointId)
   if (endpointEditStates.value[endpointId]) {
     endpointEditStates.value[endpointId][field] = value
   }
@@ -2610,15 +2962,28 @@ function hasResponseHeaderRulesChanges(endpoint: ProviderEndpoint): boolean {
   return editableHeaderRulesChanged(state.responseRules, getEndpointResponseHeaderRules(endpoint))
 }
 
+function hasRulePanelChanges(endpoint: ProviderEndpoint): boolean {
+  return hasRulesChanges(endpoint)
+    || hasBodyRulesChanges(endpoint)
+    || hasResponseHeaderRulesChanges(endpoint)
+    || (isEndpointRulesJsonMode(endpoint.id) && endpointRulesJsonDirty.value[endpoint.id] === true)
+}
+
 // 检查端点是否有修改（URL、路径或规则）
 // 注：当前模板直接使用各子函数，此聚合函数保留供未来使用
 function _hasEndpointChanges(endpoint: ProviderEndpoint): boolean {
-  return hasUrlChanges(endpoint) || hasRulesChanges(endpoint) || hasBodyRulesChanges(endpoint) || hasResponseHeaderRulesChanges(endpoint)
+  return hasUrlChanges(endpoint) || hasRulePanelChanges(endpoint)
 }
 
 // 重置端点修改
 function resetEndpointChanges(endpoint: ProviderEndpoint) {
   endpointEditStates.value[endpoint.id] = initEndpointEditState(endpoint)
+  if (isEndpointRulesJsonMode(endpoint.id)) {
+    refreshEndpointRulesJsonDraft(endpoint.id)
+  } else {
+    endpointRulesJsonError.value[endpoint.id] = null
+    endpointRulesJsonDirty.value[endpoint.id] = false
+  }
 }
 
 async function handleResetBodyRulesToDefault(endpoint: ProviderEndpoint) {
@@ -2644,6 +3009,9 @@ async function handleResetBodyRulesToDefault(endpoint: ProviderEndpoint) {
     endpointRulesExpanded.value[endpoint.id] = (state.rules.length + state.responseRules.length + state.bodyRules.length) > 0
     clearBodyRuleDragState(endpoint.id)
     clearBodyRuleSelectOpen(endpoint.id)
+    if (isEndpointRulesJsonMode(endpoint.id)) {
+      refreshEndpointRulesJsonDraft(endpoint.id)
+    }
     success('已重置请求体为默认规则，请点击保存生效')
   } catch (error: unknown) {
     showError(parseApiError(error, '重置失败'), '错误')
@@ -2777,6 +3145,10 @@ watch(() => props.modelValue, (open) => {
   responseRuleDragOverIndex.value = {}
   bodyRuleDraggedIndex.value = {}
   bodyRuleDragOverIndex.value = {}
+  endpointRulesJsonMode.value = {}
+  endpointRulesJsonDraft.value = {}
+  endpointRulesJsonError.value = {}
+  endpointRulesJsonDirty.value = {}
   if (open) {
     localEndpoints.value = [...(props.endpoints || [])]
     // 清空编辑状态，重新从端点加载
@@ -2804,6 +3176,9 @@ watch(() => props.endpoints, (endpoints) => {
       if (!endpointEditStates.value[endpoint.id]) {
         endpointEditStates.value[endpoint.id] = initEndpointEditState(endpoint)
       }
+      if (isEndpointRulesJsonMode(endpoint.id) && !endpointRulesJsonDirty.value[endpoint.id]) {
+        refreshEndpointRulesJsonDraft(endpoint.id)
+      }
     }
     const newFormats = localEndpoints.value
       .filter(e => e.api_format && !defaultBodyRulesLoaded.value[defaultBodyRulesCacheKey(e.api_format)])
@@ -2816,6 +3191,10 @@ watch(() => props.endpoints, (endpoints) => {
 
 // 保存端点
 async function saveEndpoint(endpoint: ProviderEndpoint) {
+  if (isEndpointRulesJsonMode(endpoint.id) && endpointRulesJsonDirty.value[endpoint.id]) {
+    if (!applyEndpointRulesJsonDraft(endpoint.id, { notify: false })) return
+  }
+
   const state = endpointEditStates.value[endpoint.id]
   if (!state || !state.url) return
 
