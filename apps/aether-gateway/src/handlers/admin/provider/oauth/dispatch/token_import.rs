@@ -95,7 +95,15 @@ pub(super) fn decode_access_token_expires_at(access_token: &str) -> Option<u64> 
     json_u64_value(claims.get("exp"))
 }
 
-pub(super) fn build_codex_access_token_import_auth_config(
+pub(super) fn provider_type_supports_access_token_import(provider_type: &str) -> bool {
+    matches!(
+        provider_type.trim().to_ascii_lowercase().as_str(),
+        "codex" | "chatgpt_web"
+    )
+}
+
+pub(super) fn build_provider_access_token_import_auth_config(
+    provider_type: &str,
     access_token: &str,
     refresh_token: Option<&str>,
     imported_expires_at: Option<u64>,
@@ -106,7 +114,7 @@ pub(super) fn build_codex_access_token_import_auth_config(
         "token_type": "Bearer",
     });
     let (mut auth_config, _, _, _) =
-        build_provider_oauth_auth_config_from_token_payload("codex", &token_payload);
+        build_provider_oauth_auth_config_from_token_payload(provider_type, &token_payload);
 
     let refresh_token = refresh_token
         .map(str::trim)
@@ -140,7 +148,7 @@ pub(super) fn build_codex_access_token_import_auth_config(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_codex_access_token_import_auth_config, decode_access_token_expires_at,
+        build_provider_access_token_import_auth_config, decode_access_token_expires_at,
         looks_like_access_token, normalize_single_import_tokens,
     };
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -178,7 +186,7 @@ mod tests {
         }));
 
         let (auth_config, expires_at) =
-            build_codex_access_token_import_auth_config(&token, None, None, None);
+            build_provider_access_token_import_auth_config("codex", &token, None, None, None);
 
         assert_eq!(expires_at, Some(2_000_000_000));
         assert_eq!(decode_access_token_expires_at(&token), Some(2_000_000_000));
@@ -197,13 +205,49 @@ mod tests {
             "aud": ["https://api.openai.com/v1"]
         }));
 
-        let (auth_config, expires_at) =
-            build_codex_access_token_import_auth_config(&token, None, Some(2_100_000_000), None);
+        let (auth_config, expires_at) = build_provider_access_token_import_auth_config(
+            "codex",
+            &token,
+            None,
+            Some(2_100_000_000),
+            None,
+        );
 
         assert_eq!(expires_at, Some(2_100_000_000));
         assert_eq!(
             auth_config.get("expires_at"),
             Some(&json!(2_100_000_000u64))
+        );
+    }
+
+    #[test]
+    fn builds_chatgpt_web_temporary_auth_config_from_access_token() {
+        let token = unsigned_jwt(json!({
+            "exp": 2_000_000_000u64,
+            "https://api.openai.com/profile": {
+                "email": "image@example.com"
+            },
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "acct-image-123"
+            },
+        }));
+
+        let (auth_config, expires_at) =
+            build_provider_access_token_import_auth_config("chatgpt_web", &token, None, None, None);
+
+        assert_eq!(expires_at, Some(2_000_000_000));
+        assert_eq!(
+            auth_config.get("provider_type"),
+            Some(&json!("chatgpt_web"))
+        );
+        assert_eq!(auth_config.get("email"), Some(&json!("image@example.com")));
+        assert_eq!(
+            auth_config.get("account_id"),
+            Some(&json!("acct-image-123"))
+        );
+        assert_eq!(
+            auth_config.get("access_token_import_temporary"),
+            Some(&json!(true))
         );
     }
 }

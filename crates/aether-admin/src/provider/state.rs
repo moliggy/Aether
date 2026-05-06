@@ -115,7 +115,16 @@ fn first_json_non_empty_string(values: impl IntoIterator<Item = Option<Value>>) 
     })
 }
 
-fn extract_codex_auth_fields_from_object(source: &Map<String, Value>) -> Map<String, Value> {
+fn provider_type_uses_openai_chatgpt_identity(provider_type: &str) -> bool {
+    matches!(
+        provider_type.trim().to_ascii_lowercase().as_str(),
+        "codex" | "chatgpt_web"
+    )
+}
+
+fn extract_openai_chatgpt_auth_fields_from_object(
+    source: &Map<String, Value>,
+) -> Map<String, Value> {
     let auth = source
         .get("https://api.openai.com/auth")
         .and_then(Value::as_object);
@@ -226,14 +235,14 @@ pub fn enrich_admin_provider_oauth_auth_config(
         ],
     );
 
-    if !provider_type.eq_ignore_ascii_case("codex") {
+    if !provider_type_uses_openai_chatgpt_identity(provider_type) {
         return;
     }
 
-    let codex_fields = extract_codex_auth_fields_from_object(token_payload_object);
+    let chatgpt_fields = extract_openai_chatgpt_auth_fields_from_object(token_payload_object);
     merge_missing_auth_config_fields(
         auth_config,
-        &codex_fields,
+        &chatgpt_fields,
         &[
             "email",
             "account_id",
@@ -263,10 +272,10 @@ pub fn enrich_admin_provider_oauth_auth_config(
                 "account_name",
             ],
         );
-        let codex_claim_fields = extract_codex_auth_fields_from_object(&claims);
+        let chatgpt_claim_fields = extract_openai_chatgpt_auth_fields_from_object(&claims);
         merge_missing_auth_config_fields(
             auth_config,
-            &codex_claim_fields,
+            &chatgpt_claim_fields,
             &[
                 "email",
                 "account_id",
@@ -318,7 +327,15 @@ pub fn build_kiro_device_key_name(email: Option<&str>, refresh_token: Option<&st
 
 #[cfg(test)]
 mod tests {
-    use super::parse_provider_oauth_callback_params;
+    use super::{enrich_admin_provider_oauth_auth_config, parse_provider_oauth_callback_params};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use serde_json::json;
+
+    fn sample_unsigned_jwt(payload: serde_json::Value) -> String {
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"none","typ":"JWT"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(payload.to_string());
+        format!("{header}.{payload}.sig")
+    }
 
     #[test]
     fn parse_provider_oauth_callback_params_reads_openai_query_state() {
@@ -358,5 +375,35 @@ mod tests {
 
         assert_eq!(params.get("code").map(String::as_str), Some("code-value"));
         assert_eq!(params.get("state").map(String::as_str), Some("nonce-value"));
+    }
+
+    #[test]
+    fn chatgpt_web_enrichment_extracts_identity_from_openai_claims() {
+        let access_token = sample_unsigned_jwt(json!({
+            "https://api.openai.com/profile": {
+                "email": "image@example.com",
+            },
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "acc-image",
+                "chatgpt_account_user_id": "user-image__acc-image",
+                "chatgpt_plan_type": "plus",
+                "chatgpt_user_id": "user-image",
+            },
+        }));
+        let token_payload = json!({
+            "access_token": access_token,
+        });
+        let mut auth_config = serde_json::Map::new();
+
+        enrich_admin_provider_oauth_auth_config("chatgpt_web", &mut auth_config, &token_payload);
+
+        assert_eq!(auth_config.get("email"), Some(&json!("image@example.com")));
+        assert_eq!(auth_config.get("account_id"), Some(&json!("acc-image")));
+        assert_eq!(
+            auth_config.get("account_user_id"),
+            Some(&json!("user-image__acc-image"))
+        );
+        assert_eq!(auth_config.get("plan_type"), Some(&json!("plus")));
+        assert_eq!(auth_config.get("user_id"), Some(&json!("user-image")));
     }
 }

@@ -15,7 +15,8 @@ use super::super::state::{
     json_u64_value,
 };
 use super::token_import::{
-    build_codex_access_token_import_auth_config, normalize_single_import_tokens,
+    build_provider_access_token_import_auth_config, normalize_single_import_tokens,
+    provider_type_supports_access_token_import,
 };
 use crate::handlers::admin::provider::shared::paths::admin_provider_oauth_import_provider_id;
 use crate::handlers::admin::request::{
@@ -43,9 +44,15 @@ fn import_payload_string(
     snake_case: &str,
     camel_case: &str,
 ) -> Option<String> {
-    payload
-        .get(snake_case)
-        .or_else(|| payload.get(camel_case))
+    import_payload_string_any(payload, &[snake_case, camel_case])
+}
+
+fn import_payload_string_any(
+    payload: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<String> {
+    keys.iter()
+        .find_map(|key| payload.get(*key))
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -58,6 +65,59 @@ fn import_payload_u64(
     camel_case: &str,
 ) -> Option<u64> {
     json_u64_value(payload.get(snake_case).or_else(|| payload.get(camel_case)))
+}
+
+fn apply_single_import_hints(
+    provider_type: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+    auth_config: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    if !provider_type_supports_access_token_import(provider_type) {
+        return;
+    }
+
+    for (target, keys) in [
+        ("email", &["email", "oauth_email"][..]),
+        (
+            "account_id",
+            &[
+                "account_id",
+                "accountId",
+                "chatgpt_account_id",
+                "chatgptAccountId",
+            ][..],
+        ),
+        (
+            "account_user_id",
+            &[
+                "account_user_id",
+                "accountUserId",
+                "chatgpt_account_user_id",
+                "chatgptAccountUserId",
+            ][..],
+        ),
+        (
+            "plan_type",
+            &[
+                "plan_type",
+                "planType",
+                "chatgpt_plan_type",
+                "chatgptPlanType",
+            ][..],
+        ),
+        (
+            "user_id",
+            &["user_id", "userId", "chatgpt_user_id", "chatgptUserId"][..],
+        ),
+        ("account_name", &["account_name", "accountName"][..]),
+    ] {
+        let Some(value) = import_payload_string_any(payload, keys) else {
+            continue;
+        };
+        auth_config
+            .entry(target.to_string())
+            .or_insert_with(|| json!(value));
+    }
 }
 
 async fn resolve_admin_provider_oauth_single_import_tokens(
@@ -83,17 +143,19 @@ async fn resolve_admin_provider_oauth_single_import_tokens(
         {
             Ok(payload) => payload,
             Err(response) => {
-                if provider_type.eq_ignore_ascii_case("codex") {
+                if provider_type_supports_access_token_import(provider_type) {
                     if let Some(access_token) = access_token
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
                     {
-                        let (auth_config, expires_at) = build_codex_access_token_import_auth_config(
-                            access_token,
-                            Some(refresh_token),
-                            imported_expires_at,
-                            Some("Refresh Token 验证失败，已回退为 Access Token 导入"),
-                        );
+                        let (auth_config, expires_at) =
+                            build_provider_access_token_import_auth_config(
+                                provider_type,
+                                access_token,
+                                Some(refresh_token),
+                                imported_expires_at,
+                                Some("Refresh Token 验证失败，已回退为 Access Token 导入"),
+                            );
                         return Ok(AdminProviderOAuthSingleImportTokens {
                             access_token: access_token.to_string(),
                             auth_config,
@@ -135,15 +197,20 @@ async fn resolve_admin_provider_oauth_single_import_tokens(
             "Refresh Token 或 Access Token 不能为空",
         ));
     };
-    if !provider_type.eq_ignore_ascii_case("codex") {
+    if !provider_type_supports_access_token_import(provider_type) {
         return Err(build_internal_control_error_response(
             http::StatusCode::BAD_REQUEST,
-            "Access Token 导入仅支持 Codex Provider",
+            "Access Token 导入仅支持 Codex / ChatGPT Web Provider",
         ));
     }
 
-    let (auth_config, expires_at) =
-        build_codex_access_token_import_auth_config(access_token, None, imported_expires_at, None);
+    let (auth_config, expires_at) = build_provider_access_token_import_auth_config(
+        provider_type,
+        access_token,
+        None,
+        imported_expires_at,
+        None,
+    );
     Ok(AdminProviderOAuthSingleImportTokens {
         access_token: access_token.to_string(),
         auth_config,
@@ -266,9 +333,10 @@ pub(super) async fn handle_admin_provider_oauth_import_refresh_token(
     };
     let AdminProviderOAuthSingleImportTokens {
         access_token,
-        auth_config,
+        mut auth_config,
         expires_at,
     } = resolved_import;
+    apply_single_import_hints(&provider_type, &raw_payload, &mut auth_config);
     let has_refresh_token = auth_config
         .get("refresh_token")
         .and_then(serde_json::Value::as_str)

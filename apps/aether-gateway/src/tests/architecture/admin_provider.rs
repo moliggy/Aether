@@ -1881,7 +1881,7 @@ fn admin_provider_oauth_refresh_helpers_use_specific_local_owners() {
     for pattern in [
         "fn normalize_codex_plan_group_for_provider_oauth(",
         "fn normalize_provider_oauth_identity_value(",
-        "fn is_codex_provider_oauth_provider_type(",
+        "fn is_openai_provider_oauth_provider_type(",
         "fn match_codex_provider_oauth_identity(",
         "fn is_codex_cross_plan_group_non_duplicate(",
         "pub(crate) async fn find_duplicate_provider_oauth_key(",

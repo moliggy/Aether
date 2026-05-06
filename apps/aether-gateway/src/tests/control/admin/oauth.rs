@@ -1523,6 +1523,130 @@ async fn gateway_batch_imports_admin_provider_oauth_locally_with_trusted_admin_p
 }
 
 #[tokio::test]
+async fn gateway_batch_imports_chatgpt_web_access_tokens_with_pool_hints() {
+    let token_hits = Arc::new(Mutex::new(0usize));
+    let token_hits_clone = Arc::clone(&token_hits);
+    let token_server = Router::new().route(
+        "/oauth/token",
+        any(move |_request: Request| {
+            let token_hits_inner = Arc::clone(&token_hits_clone);
+            async move {
+                *token_hits_inner.lock().expect("mutex should lock") += 1;
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": "unexpected refresh exchange"})),
+                )
+            }
+        }),
+    );
+
+    let mut provider = sample_provider("provider-chatgpt-web", "chatgpt_web", 10);
+    provider.provider_type = "chatgpt_web".to_string();
+    let endpoint = sample_endpoint(
+        "endpoint-chatgpt-web-image",
+        "provider-chatgpt-web",
+        "openai:image",
+        "https://chatgpt.com",
+    );
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        vec![endpoint],
+        vec![],
+    ));
+
+    let (token_url, token_handle) = start_server(token_server).await;
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(
+                    provider_catalog_repository.clone(),
+                )
+                .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
+            )
+            .with_provider_oauth_token_url_for_tests(
+                "chatgpt_web",
+                format!("{token_url}/oauth/token"),
+            ),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+    let credentials = json!([
+        {
+            "accessToken": "chatgpt-web-batch-access-token",
+            "expiresAt": 2_100_000_000u64,
+            "email": "pool-image@example.com",
+            "accountId": "acct-pool-image",
+            "accountUserId": "user-pool-image__acct-pool-image",
+            "planType": "plus",
+            "userId": "user-pool-image"
+        }
+    ])
+    .to_string();
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{gateway_url}/api/admin/provider-oauth/providers/provider-chatgpt-web/batch-import"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "credentials": credentials,
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(status, StatusCode::OK, "payload={payload}");
+    assert_eq!(payload["total"], 1);
+    assert_eq!(payload["success"], 1);
+    assert_eq!(payload["failed"], 0);
+    assert_eq!(*token_hits.lock().expect("mutex should lock"), 0);
+
+    let reloaded = provider_catalog_repository
+        .list_keys_by_provider_ids(&["provider-chatgpt-web".to_string()])
+        .await
+        .expect("keys should load");
+    let persisted = reloaded.first().expect("persisted key should exist");
+    assert_eq!(persisted.expires_at_unix_secs, Some(2_100_000_000));
+    let decrypted_api_key = decrypt_python_fernet_ciphertext(
+        DEVELOPMENT_ENCRYPTION_KEY,
+        persisted
+            .encrypted_api_key
+            .as_deref()
+            .expect("api key should be present"),
+    )
+    .expect("api key should decrypt");
+    assert_eq!(decrypted_api_key, "chatgpt-web-batch-access-token");
+    let decrypted_auth_config = decrypt_python_fernet_ciphertext(
+        DEVELOPMENT_ENCRYPTION_KEY,
+        persisted
+            .encrypted_auth_config
+            .as_deref()
+            .expect("auth config should be stored"),
+    )
+    .expect("auth config should decrypt");
+    let auth_config: serde_json::Value =
+        serde_json::from_str(&decrypted_auth_config).expect("auth config json should parse");
+    assert_eq!(auth_config["provider_type"], "chatgpt_web");
+    assert_eq!(auth_config["access_token_import_temporary"], true);
+    assert_eq!(auth_config["email"], "pool-image@example.com");
+    assert_eq!(auth_config["account_id"], "acct-pool-image");
+    assert_eq!(
+        auth_config["account_user_id"],
+        "user-pool-image__acct-pool-image"
+    );
+    assert_eq!(auth_config["plan_type"], "plus");
+    assert_eq!(auth_config["user_id"], "user-pool-image");
+
+    gateway_handle.abort();
+    token_handle.abort();
+}
+
+#[tokio::test]
 async fn gateway_starts_admin_provider_oauth_batch_import_task_locally_with_trusted_admin_principal(
 ) {
     let upstream_hits = Arc::new(Mutex::new(0usize));
@@ -2462,6 +2586,117 @@ async fn gateway_imports_codex_access_token_without_refresh_token_as_temporary_a
     assert_eq!(auth_config["access_token_import_temporary"], true);
     assert_eq!(auth_config["email"], "profile@example.com");
     assert_eq!(auth_config["account_id"], "acct-profile-123");
+    assert!(auth_config.get("refresh_token").is_none());
+
+    gateway_handle.abort();
+    token_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_imports_chatgpt_web_access_token_without_refresh_token_as_temporary_account() {
+    let token_hits = Arc::new(Mutex::new(0usize));
+    let token_hits_clone = Arc::clone(&token_hits);
+    let token_server = Router::new().route(
+        "/oauth/token",
+        post(move || {
+            let token_hits_inner = Arc::clone(&token_hits_clone);
+            async move {
+                *token_hits_inner.lock().expect("mutex should lock") += 1;
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": "unexpected refresh exchange"})),
+                )
+            }
+        }),
+    );
+
+    let mut provider = sample_provider("provider-chatgpt-web", "chatgpt_web", 10);
+    provider.provider_type = "chatgpt_web".to_string();
+    let endpoint = sample_endpoint(
+        "endpoint-chatgpt-web-image",
+        "provider-chatgpt-web",
+        "openai:image",
+        "https://chatgpt.com",
+    );
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        vec![endpoint],
+        vec![],
+    ));
+
+    let (token_url, token_handle) = start_server(token_server).await;
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(
+                    provider_catalog_repository.clone(),
+                )
+                .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
+            )
+            .with_provider_oauth_token_url_for_tests(
+                "chatgpt_web",
+                format!("{token_url}/oauth/token"),
+            ),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+    let access_token =
+        sample_codex_access_token_with_profile_email("image@example.com", "acct-image-123");
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{gateway_url}/api/admin/provider-oauth/providers/provider-chatgpt-web/import-refresh-token"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "access_token": access_token,
+            "name": "temporary-chatgpt-web-access-token",
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(status, StatusCode::OK, "payload={payload}");
+    assert_eq!(payload["provider_type"], "chatgpt_web");
+    assert_eq!(payload["has_refresh_token"], false);
+    assert_eq!(payload["temporary"], true);
+    assert_eq!(payload["email"], "image@example.com");
+    assert_eq!(*token_hits.lock().expect("mutex should lock"), 0);
+
+    let reloaded = provider_catalog_repository
+        .list_keys_by_provider_ids(&["provider-chatgpt-web".to_string()])
+        .await
+        .expect("keys should load");
+    let persisted = reloaded.first().expect("persisted key should exist");
+    assert_eq!(persisted.expires_at_unix_secs, Some(2_000_000_000));
+    let decrypted_api_key = decrypt_python_fernet_ciphertext(
+        DEVELOPMENT_ENCRYPTION_KEY,
+        persisted
+            .encrypted_api_key
+            .as_deref()
+            .expect("api key should be present"),
+    )
+    .expect("api key should decrypt");
+    assert_eq!(decrypted_api_key, access_token);
+    let decrypted_auth_config = decrypt_python_fernet_ciphertext(
+        DEVELOPMENT_ENCRYPTION_KEY,
+        persisted
+            .encrypted_auth_config
+            .as_deref()
+            .expect("auth config should be stored"),
+    )
+    .expect("auth config should decrypt");
+    let auth_config: serde_json::Value =
+        serde_json::from_str(&decrypted_auth_config).expect("auth config json should parse");
+    assert_eq!(auth_config["provider_type"], "chatgpt_web");
+    assert_eq!(auth_config["access_token_import_temporary"], true);
+    assert_eq!(auth_config["email"], "image@example.com");
+    assert_eq!(auth_config["account_id"], "acct-image-123");
     assert!(auth_config.get("refresh_token").is_none());
 
     gateway_handle.abort();

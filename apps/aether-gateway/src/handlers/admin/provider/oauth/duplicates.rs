@@ -26,11 +26,14 @@ fn normalize_provider_oauth_identity_value(value: Option<&serde_json::Value>) ->
         .map(ToOwned::to_owned)
 }
 
-fn is_codex_provider_oauth_provider_type(value: Option<&serde_json::Value>) -> bool {
+fn is_openai_provider_oauth_provider_type(value: Option<&serde_json::Value>) -> bool {
     value
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
-        .is_some_and(|provider_type| provider_type.eq_ignore_ascii_case("codex"))
+        .is_some_and(|provider_type| {
+            provider_type.eq_ignore_ascii_case("codex")
+                || provider_type.eq_ignore_ascii_case("chatgpt_web")
+        })
 }
 
 fn match_codex_provider_oauth_identity(
@@ -39,8 +42,8 @@ fn match_codex_provider_oauth_identity(
 ) -> Option<bool> {
     let new_provider_type = new_auth_config.get("provider_type");
     let existing_provider_type = existing_auth_config.get("provider_type");
-    if !is_codex_provider_oauth_provider_type(new_provider_type)
-        && !is_codex_provider_oauth_provider_type(existing_provider_type)
+    if !is_openai_provider_oauth_provider_type(new_provider_type)
+        && !is_openai_provider_oauth_provider_type(existing_provider_type)
     {
         return None;
     }
@@ -109,8 +112,8 @@ fn is_codex_cross_plan_group_non_duplicate(
 ) -> bool {
     let new_provider_type = new_auth_config.get("provider_type");
     let existing_provider_type = existing_auth_config.get("provider_type");
-    if !is_codex_provider_oauth_provider_type(new_provider_type)
-        && !is_codex_provider_oauth_provider_type(existing_provider_type)
+    if !is_openai_provider_oauth_provider_type(new_provider_type)
+        && !is_openai_provider_oauth_provider_type(existing_provider_type)
     {
         return false;
     }

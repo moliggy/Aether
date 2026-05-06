@@ -204,7 +204,10 @@ pub(super) fn apply_admin_provider_oauth_batch_import_hints(
     entry: &AdminProviderOAuthBatchImportEntry,
     auth_config: &mut serde_json::Map<String, serde_json::Value>,
 ) {
-    if !provider_type.eq_ignore_ascii_case("codex") {
+    if !matches!(
+        provider_type.trim().to_ascii_lowercase().as_str(),
+        "codex" | "chatgpt_web"
+    ) {
         return;
     }
     if let Some(account_id) = entry.account_id.as_ref() {

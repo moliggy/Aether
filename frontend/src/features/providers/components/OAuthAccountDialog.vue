@@ -949,7 +949,18 @@ function isBatchImport(text: string): boolean {
   return lines.length > 1
 }
 
-function parseImportText(text: string): { refresh_token?: string; access_token?: string; name?: string } | null {
+function parseImportText(text: string): {
+  refresh_token?: string
+  access_token?: string
+  expires_at?: number
+  name?: string
+  email?: string
+  account_id?: string
+  account_user_id?: string
+  plan_type?: string
+  user_id?: string
+  account_name?: string
+} | null {
   const trimmed = text.trim()
   if (!trimmed) return null
 
@@ -976,7 +987,14 @@ function parseImportText(text: string): { refresh_token?: string; access_token?:
         return {
           refresh_token: normalizedRefreshToken,
           access_token: normalizedAccessToken,
+          expires_at: normalizeNumberField(obj.expires_at) ?? normalizeNumberField(obj.expiresAt),
           name: (typeof obj.name === 'string' ? obj.name : undefined) || (typeof obj.oauth_email === 'string' ? obj.oauth_email : undefined),
+          email: normalizeStringField(obj.email) ?? normalizeStringField(obj.oauth_email),
+          account_id: normalizeStringField(obj.account_id) ?? normalizeStringField(obj.accountId) ?? normalizeStringField(obj.chatgpt_account_id) ?? normalizeStringField(obj.chatgptAccountId),
+          account_user_id: normalizeStringField(obj.account_user_id) ?? normalizeStringField(obj.accountUserId) ?? normalizeStringField(obj.chatgpt_account_user_id) ?? normalizeStringField(obj.chatgptAccountUserId),
+          plan_type: normalizeStringField(obj.plan_type) ?? normalizeStringField(obj.planType) ?? normalizeStringField(obj.chatgpt_plan_type) ?? normalizeStringField(obj.chatgptPlanType),
+          user_id: normalizeStringField(obj.user_id) ?? normalizeStringField(obj.userId) ?? normalizeStringField(obj.chatgpt_user_id) ?? normalizeStringField(obj.chatgptUserId),
+          account_name: normalizeStringField(obj.account_name) ?? normalizeStringField(obj.accountName),
         }
       }
       return null
@@ -990,6 +1008,23 @@ function parseImportText(text: string): { refresh_token?: string; access_token?:
   }
 
   return { refresh_token: trimmed }
+}
+
+function normalizeStringField(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function normalizeNumberField(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.floor(value)
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value.trim())
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.floor(parsed)
+    }
+  }
+  return undefined
 }
 
 function isLikelyJwtToken(token: string): boolean {

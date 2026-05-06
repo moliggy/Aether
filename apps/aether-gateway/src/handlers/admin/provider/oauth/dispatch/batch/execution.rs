@@ -1,4 +1,6 @@
-use super::super::token_import::build_codex_access_token_import_auth_config;
+use super::super::token_import::{
+    build_provider_access_token_import_auth_config, provider_type_supports_access_token_import,
+};
 use super::kiro_import::execute_admin_provider_oauth_kiro_batch_import;
 use super::parse::{
     apply_admin_provider_oauth_batch_import_hints, extract_admin_provider_oauth_batch_error_detail,
@@ -108,14 +110,16 @@ async fn resolve_admin_provider_oauth_batch_import_tokens(
             Ok(payload) => payload,
             Err(response) => {
                 let detail = extract_admin_provider_oauth_batch_error_detail(response).await;
-                if provider_type.eq_ignore_ascii_case("codex") {
+                if provider_type_supports_access_token_import(provider_type) {
                     if let Some(access_token) = access_token {
-                        let (auth_config, expires_at) = build_codex_access_token_import_auth_config(
-                            access_token,
-                            Some(refresh_token),
-                            entry.expires_at,
-                            Some(detail.as_str()),
-                        );
+                        let (auth_config, expires_at) =
+                            build_provider_access_token_import_auth_config(
+                                provider_type,
+                                access_token,
+                                Some(refresh_token),
+                                entry.expires_at,
+                                Some(detail.as_str()),
+                            );
                         return Ok(AdminProviderOAuthResolvedBatchImport {
                             access_token: access_token.to_string(),
                             auth_config,
@@ -147,11 +151,16 @@ async fn resolve_admin_provider_oauth_batch_import_tokens(
     }
 
     if let Some(access_token) = access_token {
-        if !provider_type.eq_ignore_ascii_case("codex") {
-            return Err("Access Token 导入仅支持 Codex Provider".to_string());
+        if !provider_type_supports_access_token_import(provider_type) {
+            return Err("Access Token 导入仅支持 Codex / ChatGPT Web Provider".to_string());
         }
-        let (auth_config, expires_at) =
-            build_codex_access_token_import_auth_config(access_token, None, entry.expires_at, None);
+        let (auth_config, expires_at) = build_provider_access_token_import_auth_config(
+            provider_type,
+            access_token,
+            None,
+            entry.expires_at,
+            None,
+        );
         return Ok(AdminProviderOAuthResolvedBatchImport {
             access_token: access_token.to_string(),
             auth_config,

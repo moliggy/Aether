@@ -469,7 +469,10 @@ fn enrich_generic_identity(
             }
         }
     }
-    if !provider_type.eq_ignore_ascii_case("codex") {
+    if !matches!(
+        provider_type.trim().to_ascii_lowercase().as_str(),
+        "codex" | "chatgpt_web"
+    ) {
         return;
     }
     if let Some(access_token) = token_payload
