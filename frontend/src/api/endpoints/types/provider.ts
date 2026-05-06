@@ -348,10 +348,30 @@ export interface KiroUpstreamMetadata {
   banned_at?: number  // 封禁时间（Unix 时间戳，秒）
 }
 
+export interface ChatGPTWebUpstreamMetadata {
+  updated_at?: number  // Unix 时间戳（秒）
+  plan_type?: string | null
+  default_model_slug?: string | null
+  blocked_features?: string[] | null
+  image_quota_feature_name?: string | null
+  image_quota_remaining?: number | null
+  image_quota_total?: number | null
+  image_quota_used?: number | null
+  image_quota_reset_at?: number | null
+  image_quota_reset_after?: string | null
+  image_quota_blocked?: boolean | null
+  limits_progress?: Array<Record<string, unknown>> | null
+  email?: string | null
+  account_id?: string | null
+  account_user_id?: string | null
+  user_id?: string | null
+}
+
 export interface UpstreamMetadata {
   codex?: CodexUpstreamMetadata
   antigravity?: AntigravityUpstreamMetadata
   kiro?: KiroUpstreamMetadata
+  chatgpt_web?: ChatGPTWebUpstreamMetadata
 }
 
 // 按格式的健康度数据

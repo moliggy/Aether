@@ -19,6 +19,7 @@ class ProviderType(str, Enum):
     CLAUDE_CODE = "claude_code"
     KIRO = "kiro"
     CODEX = "codex"
+    CHATGPT_WEB = "chatgpt_web"
     GEMINI_CLI = "gemini_cli"
     ANTIGRAVITY = "antigravity"
     VERTEX_AI = "vertex_ai"

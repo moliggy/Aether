@@ -247,6 +247,23 @@ pub fn admin_pool_key_account_quota_exhausted(
                 _ => false,
             }
         }
+        "chatgpt_web" => {
+            if admin_pool_json_bool(bucket.get("image_quota_blocked")) == Some(true) {
+                return true;
+            }
+            if admin_pool_json_f64(bucket.get("image_quota_remaining")).is_some_and(|value| {
+                value <= 0.0
+            }) {
+                return true;
+            }
+            match (
+                admin_pool_json_f64(bucket.get("image_quota_total")),
+                admin_pool_json_f64(bucket.get("image_quota_used")),
+            ) {
+                (Some(limit), Some(used)) if limit > 0.0 => used >= limit,
+                _ => false,
+            }
+        }
         _ => false,
     }
 }

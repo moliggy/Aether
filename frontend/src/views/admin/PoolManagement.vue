@@ -1498,6 +1498,7 @@ const showAccountQuotaColumn = computed(() => {
     || selectedProviderType.value === 'gemini_cli'
     || selectedProviderType.value === 'kiro'
     || selectedProviderType.value === 'antigravity'
+    || selectedProviderType.value === 'chatgpt_web'
 })
 
 const desktopColumnWidths = computed(() => {
@@ -1794,6 +1795,7 @@ const quotaRefreshSupported = computed(() => {
   return selectedProviderType.value === 'codex'
     || selectedProviderType.value === 'kiro'
     || selectedProviderType.value === 'antigravity'
+    || selectedProviderType.value === 'chatgpt_web'
 })
 
 const refreshCurrentPageLoading = computed(() => {
@@ -2875,6 +2877,7 @@ function getQuotaLabelOrder(label: string): number {
   if (label === '周') return 1
   if (label === '剩余') return 2
   if (label === '最低') return 3
+  if (label === '生图') return 4
   return 10
 }
 
@@ -3058,6 +3061,34 @@ function buildQuotaProgressItemsFromSnapshot(key: PoolKeyDetail): QuotaProgressI
       detail: `${windows.length} 模型`,
       resetAtSeconds: null,
       resetSeconds: null,
+      updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+    }]
+  }
+
+  if (providerType === 'chatgpt_web') {
+    const window = getQuotaSnapshotWindow(quota, 'image_gen')
+      ?? getQuotaSnapshotWindowsByScope(quota, 'account')[0]
+      ?? null
+    const remainingPercent = getQuotaWindowRemainingPercent(window)
+    if (remainingPercent == null) return []
+
+    const remainingValue = typeof window?.remaining_value === 'number' ? window.remaining_value : null
+    const limitValue = typeof window?.limit_value === 'number' ? window.limit_value : null
+    const usedValue = typeof window?.used_value === 'number' ? window.used_value : null
+    const detail = usedValue != null && limitValue != null
+      ? `${formatQuotaValue(usedValue)}/${formatQuotaValue(limitValue)}`
+      : remainingValue != null && limitValue != null
+        ? `${formatQuotaValue(Math.max(limitValue - remainingValue, 0))}/${formatQuotaValue(limitValue)}`
+        : remainingValue != null
+          ? `剩余 ${formatQuotaValue(remainingValue)}`
+          : undefined
+
+    return [{
+      label: '生图',
+      remainingPercent,
+      detail,
+      resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? null),
+      resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? null),
       updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
     }]
   }

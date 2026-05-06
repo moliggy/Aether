@@ -14,6 +14,7 @@ use serde_json::json;
 use std::collections::BTreeSet;
 
 use super::super::oauth::quota::antigravity::refresh_antigravity_provider_quota_locally;
+use super::super::oauth::quota::chatgpt_web::refresh_chatgpt_web_provider_quota_locally;
 use super::super::oauth::quota::codex::refresh_codex_provider_quota_locally;
 use super::super::oauth::quota::kiro::refresh_kiro_provider_quota_locally;
 use super::super::oauth::quota::shared::normalize_string_id_list;
@@ -110,6 +111,13 @@ pub(super) async fn maybe_handle(
             })
             .cloned()
             .or_else(|| endpoints.into_iter().find(|endpoint| endpoint.is_active)),
+        "chatgpt_web" => endpoints.into_iter().find(|endpoint| {
+            endpoint.is_active
+                && endpoint
+                    .api_format
+                    .trim()
+                    .eq_ignore_ascii_case("openai:image")
+        }),
         _ => return Ok(None),
     };
 
@@ -118,6 +126,7 @@ pub(super) async fn maybe_handle(
             "codex" => "找不到有效的 openai:responses 端点",
             "antigravity" => "找不到有效的 gemini:generate_content 端点",
             "kiro" => "找不到有效的 Kiro 端点",
+            "chatgpt_web" => "找不到有效的 openai:image 端点",
             _ => "找不到有效端点",
         };
         return Ok(Some(
@@ -196,6 +205,10 @@ pub(super) async fn maybe_handle(
         }
         "antigravity" => {
             refresh_antigravity_provider_quota_locally(state, &provider, &endpoint, keys, None)
+                .await?
+        }
+        "chatgpt_web" => {
+            refresh_chatgpt_web_provider_quota_locally(state, &provider, &endpoint, keys, None)
                 .await?
         }
         _ => None,

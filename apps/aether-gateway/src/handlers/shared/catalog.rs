@@ -425,6 +425,31 @@ fn quota_window_reset_seconds(
         .map(|(observed_at, reset_at)| reset_at.saturating_sub(observed_at))
 }
 
+fn chatgpt_web_image_quota_limit(
+    metadata: &Map<String, Value>,
+    remaining: Option<f64>,
+) -> Option<f64> {
+    let plan_type = metadata
+        .get("plan_type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+    if plan_type.as_deref() == Some("free") {
+        return Some(25.0);
+    }
+
+    let explicit_limit = metadata
+        .get("image_quota_total")
+        .and_then(admin_provider_quota_pure::coerce_json_f64)
+        .filter(|value| *value > 0.0);
+    if let Some(limit) = explicit_limit {
+        return Some(limit);
+    }
+
+    remaining.filter(|value| *value > 0.0)
+}
+
 fn model_quota_window_snapshot(
     model_name: &str,
     item: &Map<String, Value>,
@@ -813,6 +838,95 @@ fn build_kiro_quota_status_snapshot(
     }))
 }
 
+fn build_chatgpt_web_quota_status_snapshot(
+    upstream_metadata: Option<&Value>,
+    source: &str,
+) -> Option<Value> {
+    let metadata = provider_quota_metadata_bucket(upstream_metadata, "chatgpt_web")?;
+    let observed_at_unix_secs = provider_quota_timestamp_unix_secs(metadata.get("updated_at"));
+    let remaining = metadata
+        .get("image_quota_remaining")
+        .and_then(admin_provider_quota_pure::coerce_json_f64);
+    let limit = chatgpt_web_image_quota_limit(metadata, remaining);
+    let used = metadata
+        .get("image_quota_used")
+        .and_then(admin_provider_quota_pure::coerce_json_f64)
+        .or_else(|| limit.zip(remaining).map(|(limit, remaining)| (limit - remaining).max(0.0)));
+    let reset_at =
+        provider_quota_timestamp_unix_secs(metadata.get("image_quota_reset_at"));
+    let reset_seconds = quota_window_reset_seconds(observed_at_unix_secs, reset_at);
+    let plan_type = metadata
+        .get("plan_type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+    let image_blocked = metadata
+        .get("image_quota_blocked")
+        .and_then(admin_provider_quota_pure::coerce_json_bool)
+        == Some(true);
+    let usage_ratio = used.zip(limit).and_then(|(used, limit)| {
+        (limit > 0.0).then_some((used / limit).clamp(0.0, 1.0))
+    });
+    let remaining_ratio = remaining.zip(limit).and_then(|(remaining, limit)| {
+        (limit > 0.0).then_some((remaining / limit).clamp(0.0, 1.0))
+    });
+
+    let mut windows = Vec::new();
+    if remaining.is_some()
+        || limit.is_some()
+        || used.is_some()
+        || reset_at.is_some()
+        || image_blocked
+    {
+        windows.push(json!({
+            "code": "image_gen",
+            "label": "生图",
+            "scope": "account",
+            "unit": "count",
+            "used_ratio": usage_ratio,
+            "remaining_ratio": remaining_ratio,
+            "used_value": used,
+            "remaining_value": remaining,
+            "limit_value": limit,
+            "reset_at": reset_at,
+            "reset_seconds": reset_seconds,
+            "is_exhausted": image_blocked || remaining.is_some_and(|value| value <= 0.0),
+        }));
+    }
+
+    if windows.is_empty() && plan_type.is_none() && observed_at_unix_secs.is_none() {
+        return None;
+    }
+
+    let exhausted = image_blocked
+        || remaining.is_some_and(|value| value <= 0.0)
+        || usage_ratio.is_some_and(|value| value >= 1.0 - 1e-6);
+    let reason = if exhausted {
+        Some("生图额度已耗尽")
+    } else {
+        None
+    };
+
+    Some(json!({
+        "version": 2,
+        "provider_type": "chatgpt_web",
+        "code": if exhausted { "exhausted" } else { "ok" },
+        "label": if exhausted { Some("额度耗尽") } else { None::<&str> },
+        "reason": reason,
+        "freshness": "fresh",
+        "source": source,
+        "observed_at": observed_at_unix_secs,
+        "exhausted": exhausted,
+        "usage_ratio": usage_ratio,
+        "updated_at": observed_at_unix_secs,
+        "reset_at": reset_at,
+        "reset_seconds": reset_seconds,
+        "plan_type": plan_type,
+        "windows": windows,
+    }))
+}
+
 fn build_antigravity_quota_status_snapshot(
     upstream_metadata: Option<&Value>,
     source: &str,
@@ -993,6 +1107,7 @@ pub(crate) fn sync_provider_key_quota_status_snapshot(
     let quota = match normalized_provider_type.as_str() {
         "codex" => build_codex_quota_status_snapshot(upstream_metadata, source),
         "kiro" => build_kiro_quota_status_snapshot(upstream_metadata, source),
+        "chatgpt_web" => build_chatgpt_web_quota_status_snapshot(upstream_metadata, source),
         "antigravity" => build_antigravity_quota_status_snapshot(upstream_metadata, source),
         "gemini_cli" => build_gemini_cli_quota_status_snapshot(upstream_metadata, source),
         _ => None,
@@ -1782,6 +1897,42 @@ mod tests {
         assert_eq!(quota.get("reset_seconds"), Some(&json!(3_600u64)));
         assert_eq!(window.get("reset_at"), Some(&json!(1_775_556_885u64)));
         assert_eq!(window.get("reset_seconds"), Some(&json!(3_600u64)));
+    }
+
+    #[test]
+    fn provider_key_status_snapshot_payload_backfills_chatgpt_web_image_quota() {
+        let mut key = sample_catalog_key();
+        key.upstream_metadata = Some(json!({
+            "chatgpt_web": {
+                "updated_at": 1_778_067_246u64,
+                "plan_type": "free",
+                "image_quota_remaining": 24.0,
+                "image_quota_reset_at": 1_778_157_172u64
+            }
+        }));
+
+        let payload = provider_key_status_snapshot_payload(&key, "chatgpt_web");
+        let quota = payload
+            .get("quota")
+            .and_then(Value::as_object)
+            .expect("quota snapshot should be object");
+        let window = quota
+            .get("windows")
+            .and_then(Value::as_array)
+            .and_then(|windows| windows.first())
+            .and_then(Value::as_object)
+            .expect("image quota window should exist");
+
+        assert_eq!(quota.get("provider_type"), Some(&json!("chatgpt_web")));
+        assert_eq!(quota.get("code"), Some(&json!("ok")));
+        assert_eq!(quota.get("plan_type"), Some(&json!("free")));
+        assert_eq!(quota.get("reset_at"), Some(&json!(1_778_157_172u64)));
+        assert_eq!(quota.get("usage_ratio"), Some(&json!(0.04)));
+        assert_eq!(window.get("code"), Some(&json!("image_gen")));
+        assert_eq!(window.get("remaining_value"), Some(&json!(24.0)));
+        assert_eq!(window.get("limit_value"), Some(&json!(25.0)));
+        assert_eq!(window.get("used_value"), Some(&json!(1.0)));
+        assert_eq!(window.get("remaining_ratio"), Some(&json!(0.96)));
     }
 
     #[test]

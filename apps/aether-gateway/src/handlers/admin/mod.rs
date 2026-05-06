@@ -26,6 +26,7 @@ pub(crate) use self::provider::oauth::provisioning::{
     create_provider_oauth_catalog_key, update_existing_provider_oauth_catalog_key,
 };
 pub(crate) use self::provider::oauth::quota::antigravity::refresh_antigravity_provider_quota_locally;
+pub(crate) use self::provider::oauth::quota::chatgpt_web::refresh_chatgpt_web_provider_quota_locally;
 pub(crate) use self::provider::oauth::quota::codex::refresh_codex_provider_quota_locally;
 pub(crate) use self::provider::oauth::quota::kiro::refresh_kiro_provider_quota_locally;
 pub(crate) use self::provider::oauth::runtime::{

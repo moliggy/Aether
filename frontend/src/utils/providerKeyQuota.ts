@@ -189,6 +189,31 @@ function getGeminiCliQuotaText(quota: QuotaStatusSnapshot): string | null {
   return `最低剩余 ${formatPercent(minimumRemaining)} (${remainingList.length} 模型)`
 }
 
+function getChatGPTWebQuotaText(quota: QuotaStatusSnapshot): string | null {
+  const window = getQuotaWindow(quota, 'image_gen') ?? getQuotaWindowsByScope(quota, 'account')[0] ?? null
+  if (!window) return normalizeText(quota.label)
+
+  const remainingPercent = getQuotaWindowRemainingPercent(window)
+  if (typeof window.remaining_value === 'number' && typeof window.limit_value === 'number' && window.limit_value > 0 && window.remaining_value <= 0) {
+    return `生图剩余 ${formatQuotaValue(window.remaining_value)}/${formatQuotaValue(window.limit_value)}`
+  }
+  if (remainingPercent != null) {
+    if (typeof window.used_value === 'number' && typeof window.limit_value === 'number' && window.limit_value > 0) {
+      return `生图剩余 ${formatPercent(remainingPercent)} (${formatQuotaValue(window.used_value)}/${formatQuotaValue(window.limit_value)})`
+    }
+    return `生图剩余 ${formatPercent(remainingPercent)}`
+  }
+
+  if (typeof window.remaining_value === 'number' && typeof window.limit_value === 'number' && window.limit_value > 0) {
+    return `生图剩余 ${formatQuotaValue(window.remaining_value)}/${formatQuotaValue(window.limit_value)}`
+  }
+  if (typeof window.remaining_value === 'number') {
+    return `生图剩余 ${formatQuotaValue(window.remaining_value)}`
+  }
+
+  return normalizeText(quota.label)
+}
+
 export function getLegacyAccountQuotaText(
   input: ProviderKeyQuotaCarrier,
 ): string | null {
@@ -212,6 +237,8 @@ export function getQuotaSnapshotFallbackText(
       return getAntigravityQuotaText(quota)
     case 'gemini_cli':
       return getGeminiCliQuotaText(quota)
+    case 'chatgpt_web':
+      return getChatGPTWebQuotaText(quota)
     default:
       return normalizeText(quota.label)
   }

@@ -1,4 +1,5 @@
 use super::quota::antigravity::refresh_antigravity_provider_quota_locally;
+use super::quota::chatgpt_web::refresh_chatgpt_web_provider_quota_locally;
 use super::quota::codex::refresh_codex_provider_quota_locally;
 use super::quota::kiro::refresh_kiro_provider_quota_locally;
 use crate::handlers::admin::request::AdminAppState;
@@ -72,7 +73,10 @@ pub(crate) async fn refresh_provider_oauth_account_state_after_update(
     proxy_override: Option<&ProxySnapshot>,
 ) -> Result<(bool, Option<String>), GatewayError> {
     let provider_type = provider.provider_type.trim().to_ascii_lowercase();
-    if !matches!(provider_type.as_str(), "codex" | "kiro" | "antigravity") {
+    if !matches!(
+        provider_type.as_str(),
+        "codex" | "kiro" | "antigravity" | "chatgpt_web"
+    ) {
         return Ok((false, None));
     }
 
@@ -119,6 +123,16 @@ pub(crate) async fn refresh_provider_oauth_account_state_after_update(
         }
         "antigravity" => {
             refresh_antigravity_provider_quota_locally(
+                state,
+                provider,
+                &endpoint,
+                vec![key],
+                proxy_override,
+            )
+            .await?
+        }
+        "chatgpt_web" => {
+            refresh_chatgpt_web_provider_quota_locally(
                 state,
                 provider,
                 &endpoint,

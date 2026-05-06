@@ -818,6 +818,51 @@
                         </div>
                       </template>
                     </div>
+                    <!-- ChatGPT Web 上游额度信息（生图配额） -->
+                    <div
+                      v-if="provider.provider_type === 'chatgpt_web' && hasChatGPTWebQuotaDisplayData(key)"
+                      class="mt-2 p-2 rounded-md bg-muted/30"
+                    >
+                      <div class="flex items-center justify-between mb-1">
+                        <span class="text-[10px] text-muted-foreground">账号配额</span>
+                        <div class="flex items-center gap-1">
+                          <RefreshCw
+                            v-if="refreshingQuota"
+                            class="w-3 h-3 text-muted-foreground/70 animate-spin"
+                          />
+                          <span
+                            v-if="getChatGPTWebQuotaDisplay(key)?.updated_at"
+                            class="text-[9px] text-muted-foreground/70"
+                          >
+                            {{ formatKiroUpdatedAt(getChatGPTWebQuotaDisplay(key)?.updated_at || 0) }}
+                          </span>
+                        </div>
+                      </div>
+                      <div>
+                        <div class="flex items-center justify-between text-[10px] mb-0.5">
+                          <span class="text-muted-foreground">使用额度</span>
+                          <span :class="getQuotaRemainingClass(getChatGPTWebQuotaUsedPercent(key))">
+                            {{ getChatGPTWebQuotaRemainingPercent(key).toFixed(1) }}%
+                          </span>
+                        </div>
+                        <div class="relative w-full h-1.5 bg-border rounded-full overflow-hidden">
+                          <div
+                            class="absolute left-0 top-0 h-full transition-all duration-300"
+                            :class="getQuotaRemainingBarColor(getChatGPTWebQuotaUsedPercent(key))"
+                            :style="{ width: `${Math.max(getChatGPTWebQuotaRemainingPercent(key), 0)}%` }"
+                          />
+                        </div>
+                        <div class="flex items-center justify-between text-[9px] text-muted-foreground/70 mt-0.5">
+                          <span>
+                            {{ formatChatGPTWebUsage(getChatGPTWebQuotaDisplay(key)?.image_quota_used) }} /
+                            {{ formatChatGPTWebUsage(getChatGPTWebQuotaDisplay(key)?.image_quota_total) }}
+                          </span>
+                          <span v-if="getChatGPTWebQuotaDisplay(key)?.image_quota_reset_at">
+                            {{ formatKiroResetTime(getChatGPTWebQuotaDisplay(key)?.image_quota_reset_at) }}重置
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                     <!-- 第二行：优先级 + API 格式（展开显示） + 统计信息 -->
                     <div class="flex items-center gap-1.5 mt-1 text-[11px] text-muted-foreground">
                       <!-- 优先级放最前面，支持点击编辑 -->
@@ -1165,6 +1210,7 @@ import type {
   AntigravityModelQuota,
   AntigravityUpstreamMetadata,
   CodexUpstreamMetadata,
+  ChatGPTWebUpstreamMetadata,
   KiroUpstreamMetadata,
   QuotaStatusSnapshot,
   QuotaWindowSnapshot,
@@ -1815,7 +1861,7 @@ async function handleClearOAuthInvalid(key: EndpointAPIKey) {
   }
 }
 
-// Codex / Antigravity / Kiro：打开抽屉后自动后台刷新（配额缓存缺失/过期，或 Token 即将过期时触发）
+// Codex / Antigravity / Kiro / ChatGPT Web：打开抽屉后自动后台刷新（配额缓存缺失/过期，或 Token 即将过期时触发）
 const AUTO_QUOTA_REFRESH_STALE_SECONDS = 5 * 60
 // 与后端 OAuth 懒刷新阈值对齐：到期前 2 分钟内视为需要刷新
 const AUTO_TOKEN_REFRESH_SKEW_SECONDS = 2 * 60
@@ -1834,7 +1880,7 @@ function quotaSnapshotHasDisplayData(quota: QuotaStatusSnapshot | null | undefin
 
 function getQuotaSnapshotForProvider(
   key: EndpointAPIKey,
-  providerType: 'codex' | 'kiro' | 'antigravity' | 'gemini_cli',
+  providerType: 'codex' | 'kiro' | 'antigravity' | 'chatgpt_web' | 'gemini_cli',
 ): QuotaStatusSnapshot | null {
   const quota = key.status_snapshot?.quota
   if (!quota) return null
@@ -2006,6 +2052,86 @@ function hasKiroQuotaDisplayData(key: EndpointAPIKey): boolean {
   return !!kiro && (kiro.usage_percentage !== undefined || kiro.usage_limit !== undefined)
 }
 
+type ChatGPTWebQuotaDisplay = ChatGPTWebUpstreamMetadata & {
+  image_quota_remaining_percent?: number
+  image_quota_used_percent?: number
+}
+
+function getChatGPTWebQuotaDisplay(key: EndpointAPIKey): ChatGPTWebQuotaDisplay | null {
+  const quota = getQuotaSnapshotForProvider(key, 'chatgpt_web')
+  if (!quota) return null
+
+  const display: ChatGPTWebQuotaDisplay = {}
+  const updatedAt = getQuotaSnapshotUpdatedAt(quota)
+  if (updatedAt !== undefined) display.updated_at = updatedAt
+  if (quota.plan_type) display.plan_type = quota.plan_type
+  if (quota.code === 'exhausted' || quota.code === 'banned') display.image_quota_blocked = true
+
+  const imageWindow =
+    getQuotaWindow(quota, 'image_gen')
+    ?? getQuotaWindowByScope(quota, 'account')[0]
+    ?? null
+  if (imageWindow) {
+    const remainingValue = typeof imageWindow.remaining_value === 'number' ? imageWindow.remaining_value : undefined
+    const limitValue = typeof imageWindow.limit_value === 'number' ? imageWindow.limit_value : undefined
+    const usedValue = typeof imageWindow.used_value === 'number' ? imageWindow.used_value : undefined
+    const remainingPercent = getQuotaWindowRemainingPercent(imageWindow)
+    const usedPercent = getQuotaWindowUsedPercent(imageWindow)
+
+    if (remainingValue !== undefined) display.image_quota_remaining = remainingValue
+    if (limitValue !== undefined) display.image_quota_total = limitValue
+    if (usedValue !== undefined) display.image_quota_used = usedValue
+    if (remainingPercent !== undefined) display.image_quota_remaining_percent = remainingPercent
+    if (usedPercent !== undefined) display.image_quota_used_percent = usedPercent
+    if (typeof imageWindow.reset_at === 'number') display.image_quota_reset_at = imageWindow.reset_at
+    if (typeof imageWindow.reset_seconds === 'number') {
+      const resetAt = updatedAt === undefined ? undefined : updatedAt + imageWindow.reset_seconds
+      if (resetAt !== undefined && display.image_quota_reset_at === undefined) {
+        display.image_quota_reset_at = resetAt
+      }
+    }
+  }
+
+  return Object.keys(display).length > 0 ? display : null
+}
+
+function hasChatGPTWebQuotaDisplayData(key: EndpointAPIKey): boolean {
+  const display = getChatGPTWebQuotaDisplay(key)
+  return !!display && (
+    display.image_quota_remaining_percent !== undefined
+    || display.image_quota_total !== undefined
+    || display.image_quota_used !== undefined
+  )
+}
+
+function getChatGPTWebQuotaUsedPercent(key: EndpointAPIKey): number {
+  const display = getChatGPTWebQuotaDisplay(key)
+  if (!display) return 0
+  if (typeof display.image_quota_used_percent === 'number') return display.image_quota_used_percent
+  if (typeof display.image_quota_remaining_percent === 'number') {
+    return Math.max(100 - display.image_quota_remaining_percent, 0)
+  }
+  return 0
+}
+
+function getChatGPTWebQuotaRemainingPercent(key: EndpointAPIKey): number {
+  const display = getChatGPTWebQuotaDisplay(key)
+  if (!display) return 0
+  if (typeof display.image_quota_remaining_percent === 'number') return display.image_quota_remaining_percent
+  if (typeof display.image_quota_used_percent === 'number') {
+    return Math.max(100 - display.image_quota_used_percent, 0)
+  }
+  return 0
+}
+
+function formatChatGPTWebUsage(value: number | null | undefined): string {
+  if (value === undefined || value === null) return '-'
+  if (Math.abs(value - Math.round(value)) < 1e-6) {
+    return String(Math.round(value))
+  }
+  return value.toFixed(1)
+}
+
 function isKiroBannedKey(key: EndpointAPIKey): boolean {
   const quota = getQuotaSnapshotForProvider(key, 'kiro')
   return String(quota?.code || '').trim().toLowerCase() === 'banned'
@@ -2138,7 +2264,7 @@ function shouldAutoRefreshCodexQuota(): boolean {
   return false
 }
 
-// 检查 OAuth Token 是否即将过期（Codex / Antigravity / Kiro）
+// 检查 OAuth Token 是否即将过期（Codex / Antigravity / Kiro / ChatGPT Web）
 function isTokenExpiringSoon(key: EndpointAPIKey, now: number): boolean {
   const oauthCode = String(key.status_snapshot?.oauth?.code || '').trim().toLowerCase()
   if (oauthCode && oauthCode !== 'valid' && oauthCode !== 'expiring') {
@@ -2185,6 +2311,28 @@ function shouldAutoRefreshKiroQuota(): boolean {
     }
     // 配额数据超过 5 分钟未更新，也触发刷新
     const updatedAt = getKiroQuotaDisplay(key)?.updated_at
+    if (typeof updatedAt !== 'number' || (now - updatedAt) > AUTO_QUOTA_REFRESH_STALE_SECONDS) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function shouldAutoRefreshChatGPTWebQuota(): boolean {
+  if (provider.value?.provider_type !== 'chatgpt_web') return false
+  const now = Math.floor(Date.now() / 1000)
+
+  for (const { key } of allKeys.value) {
+    if (!key.is_active) continue
+
+    if (isTokenExpiringSoon(key, now)) return true
+
+    if (!hasChatGPTWebQuotaDisplayData(key)) {
+      return true
+    }
+
+    const updatedAt = getChatGPTWebQuotaDisplay(key)?.updated_at
     if (typeof updatedAt !== 'number' || (now - updatedAt) > AUTO_QUOTA_REFRESH_STALE_SECONDS) {
       return true
     }
@@ -2270,14 +2418,14 @@ function applyQuotaResults(
   return applied
 }
 
-// 通用的自动刷新配额函数（支持 Codex、Antigravity 和 Kiro）
+// 通用的自动刷新配额函数（支持 Codex、Antigravity、Kiro 和 ChatGPT Web）
 async function autoRefreshQuotaInBackground(options: { ignoreCooldown?: boolean } = {}) {
   const providerId = props.providerId
   if (!providerId) return
   if (refreshingQuota.value) return
 
   const providerType = provider.value?.provider_type
-  if (providerType !== 'codex' && providerType !== 'antigravity' && providerType !== 'kiro') return
+  if (providerType !== 'codex' && providerType !== 'antigravity' && providerType !== 'kiro' && providerType !== 'chatgpt_web') return
 
   // 检查是否需要刷新
   let shouldRefresh = false
@@ -2287,6 +2435,8 @@ async function autoRefreshQuotaInBackground(options: { ignoreCooldown?: boolean 
     shouldRefresh = shouldAutoRefreshAntigravityQuota()
   } else if (providerType === 'kiro') {
     shouldRefresh = shouldAutoRefreshKiroQuota()
+  } else if (providerType === 'chatgpt_web') {
+    shouldRefresh = shouldAutoRefreshChatGPTWebQuota()
   }
   if (!shouldRefresh) return
   if (!options.ignoreCooldown && isProviderQuotaAutoRefreshCoolingDown(providerId)) return
@@ -2298,6 +2448,8 @@ async function autoRefreshQuotaInBackground(options: { ignoreCooldown?: boolean 
     hadCachedQuota = allKeys.value.some(({ key }) => key.is_active && hasAntigravityQuotaDisplayData(key))
   } else if (providerType === 'kiro') {
     hadCachedQuota = allKeys.value.some(({ key }) => key.is_active && hasKiroQuotaDisplayData(key))
+  } else if (providerType === 'chatgpt_web') {
+    hadCachedQuota = allKeys.value.some(({ key }) => key.is_active && hasChatGPTWebQuotaDisplayData(key))
   }
 
   refreshingQuota.value = true

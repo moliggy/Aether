@@ -10,8 +10,8 @@ use tracing::{debug, info, warn};
 
 use crate::admin_api::{
     admin_provider_pool_config, provider_oauth_runtime_endpoint_for_provider,
-    refresh_antigravity_provider_quota_locally, refresh_codex_provider_quota_locally,
-    refresh_kiro_provider_quota_locally, AdminAppState,
+    refresh_antigravity_provider_quota_locally, refresh_chatgpt_web_provider_quota_locally,
+    refresh_codex_provider_quota_locally, refresh_kiro_provider_quota_locally, AdminAppState,
 };
 use crate::{AppState, GatewayError};
 
@@ -94,7 +94,7 @@ fn now_unix_secs() -> u64 {
 fn provider_supports_quota_probe(provider_type: &str) -> bool {
     matches!(
         provider_type.trim().to_ascii_lowercase().as_str(),
-        "codex" | "kiro" | "antigravity"
+        "codex" | "kiro" | "antigravity" | "chatgpt_web"
     )
 }
 
@@ -116,6 +116,7 @@ fn extract_quota_updated_at(provider_type: &str, upstream_metadata: Option<&Valu
         "codex" => "codex",
         "kiro" => "kiro",
         "antigravity" => "antigravity",
+        "chatgpt_web" => "chatgpt_web",
         _ => return None,
     };
     let bucket = metadata.get(bucket_name)?.as_object()?;
@@ -380,6 +381,10 @@ async fn refresh_provider_probe_keys(
         }
         "antigravity" => {
             refresh_antigravity_provider_quota_locally(admin_state, provider, endpoint, keys, None)
+                .await
+        }
+        "chatgpt_web" => {
+            refresh_chatgpt_web_provider_quota_locally(admin_state, provider, endpoint, keys, None)
                 .await
         }
         _ => Ok(None),

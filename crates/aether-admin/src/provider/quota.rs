@@ -655,9 +655,213 @@ pub fn parse_kiro_usage_response(
     Some(serde_json::Value::Object(result))
 }
 
+fn chatgpt_web_quota_feature_name(value: &serde_json::Value) -> Option<String> {
+    coerce_json_string(
+        value
+            .get("feature_name")
+            .or_else(|| value.get("featureName"))
+            .or_else(|| value.get("feature"))
+            .or_else(|| value.get("name")),
+    )
+}
+
+fn chatgpt_web_is_image_quota_feature(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "image_gen" | "image_generation" | "image_edit" | "img_gen"
+    )
+}
+
+fn chatgpt_web_feature_number(
+    feature: &serde_json::Value,
+    fields: &[&str],
+) -> Option<f64> {
+    fields
+        .iter()
+        .find_map(|field| feature.get(*field).and_then(coerce_json_f64))
+}
+
+fn parse_chatgpt_web_reset_timestamp(value: Option<&serde_json::Value>, observed_at: u64) -> Option<u64> {
+    let value = value?;
+    if let Some(text) = value.as_str().map(str::trim).filter(|value| !value.is_empty()) {
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(text) {
+            return u64::try_from(parsed.timestamp()).ok();
+        }
+        if let Ok(parsed) = text.parse::<f64>() {
+            return normalize_chatgpt_web_numeric_reset(parsed, observed_at);
+        }
+        return None;
+    }
+    value
+        .as_f64()
+        .and_then(|parsed| normalize_chatgpt_web_numeric_reset(parsed, observed_at))
+}
+
+fn normalize_chatgpt_web_numeric_reset(value: f64, observed_at: u64) -> Option<u64> {
+    if !value.is_finite() || value <= 0.0 {
+        return None;
+    }
+    if value > 1_000_000_000_000.0 {
+        return Some((value / 1000.0).floor() as u64);
+    }
+    if value > 1_000_000_000.0 {
+        return Some(value.floor() as u64);
+    }
+    Some(observed_at.saturating_add(value.floor() as u64))
+}
+
+fn chatgpt_web_blocked_features(value: &serde_json::Value) -> Vec<String> {
+    value
+        .get("blocked_features")
+        .or_else(|| value.get("blockedFeatures"))
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+pub fn parse_chatgpt_web_conversation_init_response(
+    value: &serde_json::Value,
+    updated_at_unix_secs: u64,
+) -> Option<serde_json::Value> {
+    let root = value.as_object()?;
+    let limits_progress = root
+        .get("limits_progress")
+        .or_else(|| root.get("limitsProgress"))
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let image_limit = limits_progress
+        .iter()
+        .find(|item| {
+            chatgpt_web_quota_feature_name(item)
+                .as_deref()
+                .is_some_and(chatgpt_web_is_image_quota_feature)
+        })
+        .cloned();
+    let blocked_features = chatgpt_web_blocked_features(value);
+    let image_blocked = blocked_features
+        .iter()
+        .any(|feature| chatgpt_web_is_image_quota_feature(feature));
+
+    if image_limit.is_none() && !image_blocked {
+        return None;
+    }
+
+    let mut result = serde_json::Map::new();
+    result.insert("updated_at".to_string(), json!(updated_at_unix_secs));
+
+    if let Some(default_model_slug) = coerce_json_string(
+        root.get("default_model_slug")
+            .or_else(|| root.get("defaultModelSlug")),
+    ) {
+        result.insert("default_model_slug".to_string(), json!(default_model_slug));
+    }
+    if let Some(plan_type) = coerce_json_string(
+        root.get("plan_type")
+            .or_else(|| root.get("planType"))
+            .or_else(|| root.get("subscription_plan")),
+    ) {
+        result.insert("plan_type".to_string(), json!(plan_type.to_ascii_lowercase()));
+    }
+    result.insert("blocked_features".to_string(), json!(blocked_features));
+    result.insert("limits_progress".to_string(), serde_json::Value::Array(limits_progress));
+
+    if image_blocked {
+        result.insert("image_quota_blocked".to_string(), json!(true));
+    }
+
+    if let Some(image_limit) = image_limit.as_ref() {
+        if let Some(feature_name) = chatgpt_web_quota_feature_name(image_limit) {
+            result.insert("image_quota_feature_name".to_string(), json!(feature_name));
+        }
+
+        let remaining = chatgpt_web_feature_number(
+            image_limit,
+            &[
+                "remaining",
+                "remaining_value",
+                "remainingValue",
+                "remaining_count",
+                "remainingCount",
+            ],
+        );
+        let total = chatgpt_web_feature_number(
+            image_limit,
+            &[
+                "max_value",
+                "maxValue",
+                "cap",
+                "total",
+                "limit",
+                "quota",
+                "usage_limit",
+                "usageLimit",
+            ],
+        );
+        let used = chatgpt_web_feature_number(
+            image_limit,
+            &[
+                "used",
+                "used_value",
+                "usedValue",
+                "consumed",
+                "current_usage",
+                "currentUsage",
+            ],
+        )
+        .or_else(|| total.zip(remaining).map(|(total, remaining)| (total - remaining).max(0.0)));
+        let reset_source = image_limit
+            .get("reset_at")
+            .or_else(|| image_limit.get("resetAt"))
+            .or_else(|| image_limit.get("next_reset_at"))
+            .or_else(|| image_limit.get("nextResetAt"))
+            .or_else(|| image_limit.get("reset_after"))
+            .or_else(|| image_limit.get("resetAfter"));
+        let reset_at = parse_chatgpt_web_reset_timestamp(reset_source, updated_at_unix_secs);
+
+        if let Some(remaining) = remaining {
+            result.insert("image_quota_remaining".to_string(), json!(remaining));
+        } else if image_blocked {
+            result.insert("image_quota_remaining".to_string(), json!(0.0));
+        }
+        if let Some(total) = total {
+            result.insert("image_quota_total".to_string(), json!(total));
+        }
+        if let Some(used) = used {
+            result.insert("image_quota_used".to_string(), json!(used));
+        }
+        if let Some(reset_at) = reset_at {
+            result.insert("image_quota_reset_at".to_string(), json!(reset_at));
+        }
+        if let Some(reset_after) = coerce_json_string(
+            image_limit
+                .get("reset_after")
+                .or_else(|| image_limit.get("resetAfter")),
+        ) {
+            result.insert("image_quota_reset_after".to_string(), json!(reset_after));
+        }
+    } else if image_blocked {
+        result.insert("image_quota_remaining".to_string(), json!(0.0));
+    }
+
+    Some(serde_json::Value::Object(result))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{codex_runtime_invalid_reason, OAUTH_ACCOUNT_BLOCK_PREFIX, OAUTH_EXPIRED_PREFIX};
+    use super::{
+        codex_runtime_invalid_reason, parse_chatgpt_web_conversation_init_response,
+        OAUTH_ACCOUNT_BLOCK_PREFIX, OAUTH_EXPIRED_PREFIX,
+    };
+    use serde_json::json;
 
     #[test]
     fn codex_runtime_invalid_reason_marks_401_as_expired() {
@@ -680,5 +884,46 @@ mod tests {
     #[test]
     fn codex_runtime_invalid_reason_ignores_generic_403() {
         assert_eq!(codex_runtime_invalid_reason(403, Some("forbidden")), None);
+    }
+
+    #[test]
+    fn parses_chatgpt_web_image_quota_from_conversation_init() {
+        let parsed = parse_chatgpt_web_conversation_init_response(
+            &json!({
+                "default_model_slug": "auto",
+                "blocked_features": [],
+                "limits_progress": [
+                    {
+                        "feature_name": "image_gen",
+                        "remaining": 24,
+                        "reset_after": "2026-05-07T12:32:52.826482+00:00"
+                    }
+                ]
+            }),
+            1_778_067_246,
+        )
+        .expect("chatgpt web quota should parse");
+
+        assert_eq!(parsed.get("default_model_slug"), Some(&json!("auto")));
+        assert_eq!(parsed.get("image_quota_remaining"), Some(&json!(24.0)));
+        assert_eq!(
+            parsed.get("image_quota_reset_at"),
+            Some(&json!(1_778_157_172u64))
+        );
+    }
+
+    #[test]
+    fn parses_chatgpt_web_blocked_image_feature_as_zero_remaining() {
+        let parsed = parse_chatgpt_web_conversation_init_response(
+            &json!({
+                "blocked_features": ["image_generation"],
+                "limits_progress": []
+            }),
+            1_778_067_246,
+        )
+        .expect("blocked image feature should produce metadata");
+
+        assert_eq!(parsed.get("image_quota_blocked"), Some(&json!(true)));
+        assert_eq!(parsed.get("image_quota_remaining"), Some(&json!(0.0)));
     }
 }

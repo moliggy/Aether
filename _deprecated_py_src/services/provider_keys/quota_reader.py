@@ -6,6 +6,7 @@ import math
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from src.core.provider_types import ProviderType, normalize_provider_type
@@ -26,6 +27,13 @@ def _normalize_plan(value: Any) -> str | None:
         return None
     normalized = value.strip().lower()
     return normalized or None
+
+
+def _clean_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
 
 
 def _is_truthy_flag(value: Any) -> bool:
@@ -350,6 +358,161 @@ class KiroQuotaReader(PoolQuotaReader):
         return None
 
 
+class ChatGPTWebQuotaReader(PoolQuotaReader):
+    namespace = "chatgpt_web"
+
+    def _limits_progress(self) -> list[dict[str, Any]]:
+        limits_progress = self._data.get("limits_progress")
+        if not isinstance(limits_progress, list):
+            return []
+        return [item for item in limits_progress if isinstance(item, dict)]
+
+    def _image_feature(self) -> dict[str, Any] | None:
+        for item in self._limits_progress():
+            feature_name = _clean_text(
+                item.get("feature_name")
+                or item.get("featureName")
+                or item.get("feature")
+                or item.get("name")
+            )
+            if not feature_name:
+                continue
+            if feature_name.lower() in {"image_gen", "image_generation", "image_edit", "img_gen"}:
+                return item
+        return None
+
+    def _reset_at(self) -> float | None:
+        for raw in (
+            self._data.get("image_quota_reset_at"),
+            (self._image_feature() or {}).get("reset_at"),
+            (self._image_feature() or {}).get("resetAt"),
+            (self._image_feature() or {}).get("next_reset_at"),
+            (self._image_feature() or {}).get("nextResetAt"),
+            (self._image_feature() or {}).get("reset_after"),
+            (self._image_feature() or {}).get("resetAfter"),
+        ):
+            if isinstance(raw, str):
+                text = raw.strip()
+                if not text:
+                    continue
+                try:
+                    return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    parsed = _to_float(text)
+            else:
+                parsed = _to_float(raw)
+            if parsed is None or parsed <= 0:
+                continue
+            if parsed > 1_000_000_000_000:
+                return parsed / 1000.0
+            if parsed > 1_000_000_000:
+                return parsed
+            return time.time() + parsed
+        return None
+
+    def _image_remaining(self) -> float | None:
+        remaining = _to_float(self._data.get("image_quota_remaining"))
+        if remaining is not None:
+            return remaining
+        feature = self._image_feature()
+        if not isinstance(feature, dict):
+            return None
+        for field in ("remaining", "remaining_value", "remainingValue"):
+            parsed = _to_float(feature.get(field))
+            if parsed is not None:
+                return parsed
+        return None
+
+    def _image_limit(self) -> float | None:
+        limit = _to_float(self._data.get("image_quota_total"))
+        if limit is not None:
+            return limit
+        feature = self._image_feature()
+        if not isinstance(feature, dict):
+            return None
+        for field in ("max_value", "maxValue", "cap", "total", "limit", "quota"):
+            parsed = _to_float(feature.get(field))
+            if parsed is not None:
+                return parsed
+        return None
+
+    def _image_used(self) -> float | None:
+        used = _to_float(self._data.get("image_quota_used"))
+        if used is not None:
+            return used
+        feature = self._image_feature()
+        if isinstance(feature, dict):
+            for field in ("used", "used_value", "usedValue", "consumed"):
+                parsed = _to_float(feature.get(field))
+                if parsed is not None:
+                    return parsed
+        limit = self._image_limit()
+        remaining = self._image_remaining()
+        if limit is not None and remaining is not None:
+            return max(0.0, limit - remaining)
+        return None
+
+    def is_exhausted(self, model_name: str | None = None) -> QuotaExhaustedResult:
+        _ = model_name
+        if _is_truthy_flag(self._data.get("image_quota_blocked")):
+            return QuotaExhaustedResult(True, "ChatGPT Web 生图额度已耗尽")
+        remaining = self._image_remaining()
+        if remaining is not None and remaining <= 0.0:
+            return QuotaExhaustedResult(True, "ChatGPT Web 生图额度已耗尽")
+        limit = self._image_limit()
+        used = self._image_used()
+        if limit is not None and used is not None and limit > 0 and used >= limit:
+            return QuotaExhaustedResult(True, "ChatGPT Web 生图额度已耗尽")
+        return QuotaExhaustedResult(False)
+
+    def usage_ratio(self) -> float | None:
+        limit = self._image_limit()
+        used = self._image_used()
+        if used is None or limit is None or limit <= 0:
+            return None
+        return max(0.0, min(used / limit, 1.0))
+
+    def plan_type(self) -> str | None:
+        return _normalize_plan(self._data.get("plan_type"))
+
+    def reset_seconds(self) -> float | None:
+        reset_at = self._reset_at()
+        if reset_at is None:
+            return None
+        return max(0.0, reset_at - time.time())
+
+    def account_block(self) -> AccountBlockResult:
+        return AccountBlockResult(blocked=False)
+
+    def display_summary(self) -> str | None:
+        if _is_truthy_flag(self._data.get("image_quota_blocked")):
+            return "生图额度已耗尽"
+
+        remaining = self._image_remaining()
+        limit = self._image_limit()
+        used = self._image_used()
+        reset_text = _format_reset_after(self.reset_seconds())
+
+        if remaining is not None and limit is not None and limit > 0:
+            percent = max(0.0, min((remaining / limit) * 100.0, 100.0))
+            part = f"生图剩余 {_format_percent(percent)}"
+            if used is not None:
+                part = f"{part} ({_format_quota_value(used)}/{_format_quota_value(limit)})"
+            if reset_text and (used is None or _has_quota_consumption(used)):
+                part = f"{part} ({reset_text})"
+            return part
+
+        if remaining is not None:
+            part = f"生图剩余 {_format_quota_value(remaining)}"
+            if reset_text and remaining <= 0:
+                part = f"{part} ({reset_text})"
+            return part
+
+        if reset_text:
+            return f"生图限额 ({reset_text})"
+        return None
+
+
 class AntigravityQuotaReader(PoolQuotaReader):
     namespace = "antigravity"
 
@@ -543,6 +706,7 @@ class GeminiCliQuotaReader(PoolQuotaReader):
 
 _READER_CLASSES: dict[str, type[PoolQuotaReader]] = {
     ProviderType.CODEX: CodexQuotaReader,
+    ProviderType.CHATGPT_WEB: ChatGPTWebQuotaReader,
     ProviderType.GEMINI_CLI: GeminiCliQuotaReader,
     ProviderType.KIRO: KiroQuotaReader,
     ProviderType.ANTIGRAVITY: AntigravityQuotaReader,
@@ -570,6 +734,7 @@ def get_quota_reader(provider_type: str | None, upstream_metadata: Any) -> PoolQ
 __all__ = [
     "AccountBlockResult",
     "AntigravityQuotaReader",
+    "ChatGPTWebQuotaReader",
     "CodexQuotaReader",
     "GeminiCliQuotaReader",
     "KiroQuotaReader",

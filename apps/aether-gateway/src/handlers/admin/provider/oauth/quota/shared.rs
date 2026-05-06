@@ -130,7 +130,7 @@ pub(crate) async fn persist_provider_quota_refresh_state(
             metadata_update,
         ));
         quota_snapshot_provider_type = metadata_update.as_object().and_then(|object| {
-            ["codex", "kiro", "antigravity", "gemini_cli"]
+            ["codex", "kiro", "antigravity", "gemini_cli", "chatgpt_web"]
                 .into_iter()
                 .find(|provider_type| object.contains_key(*provider_type))
         });

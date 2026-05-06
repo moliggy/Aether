@@ -23,6 +23,7 @@ from src.services.provider.pool.config import parse_pool_config
 from src.services.provider_keys.key_side_effects import run_delete_key_side_effects
 from src.services.provider_keys.quota_refresh import (
     refresh_antigravity_key_quota,
+    refresh_chatgpt_web_key_quota,
     refresh_codex_key_quota,
     refresh_kiro_key_quota,
 )
@@ -34,6 +35,7 @@ CODEX_WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 
 _QUOTA_REFRESH_HANDLERS: dict[str, QuotaRefreshHandler] = {
     ProviderType.CODEX: refresh_codex_key_quota,
+    ProviderType.CHATGPT_WEB: refresh_chatgpt_web_key_quota,
     ProviderType.ANTIGRAVITY: refresh_antigravity_key_quota,
     ProviderType.KIRO: refresh_kiro_key_quota,
 }
@@ -64,6 +66,12 @@ def _select_refresh_endpoint(provider: Provider, provider_type: str) -> Provider
                     return ep
         raise InvalidRequestException("找不到有效的 gemini:chat/gemini:cli 端点")
 
+    if provider_type == ProviderType.CHATGPT_WEB:
+        for ep in provider.endpoints:
+            if _normalize_api_format(ep.api_format) == "openai:image" and ep.is_active:
+                return ep
+        raise InvalidRequestException("找不到有效的 openai:image 端点")
+
     # Kiro 不需要端点检查，直接使用 auth_config
     return None
 
@@ -73,7 +81,9 @@ def _resolve_quota_refresh_handler(provider_type: str) -> QuotaRefreshHandler:
     handler = _QUOTA_REFRESH_HANDLERS.get(provider_type)
     if handler is not None:
         return handler
-    raise InvalidRequestException("仅支持 Codex / Antigravity / Kiro 类型的 Provider 刷新限额")
+    raise InvalidRequestException(
+        "仅支持 Codex / ChatGPT Web / Antigravity / Kiro 类型的 Provider 刷新限额"
+    )
 
 
 async def refresh_provider_quota_for_provider(
@@ -89,7 +99,9 @@ async def refresh_provider_quota_for_provider(
 
     provider_type = normalize_provider_type(getattr(provider, "provider_type", ""))
     if provider_type not in QUOTA_REFRESH_PROVIDER_TYPES:
-        raise InvalidRequestException("仅支持 Codex / Antigravity / Kiro 类型的 Provider 刷新限额")
+        raise InvalidRequestException(
+            "仅支持 Codex / ChatGPT Web / Antigravity / Kiro 类型的 Provider 刷新限额"
+        )
     pool_cfg = parse_pool_config(getattr(provider, "config", None))
     auto_remove_abnormal_keys = bool(pool_cfg and pool_cfg.auto_remove_banned_keys)
 
