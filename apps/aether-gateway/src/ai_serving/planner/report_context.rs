@@ -75,6 +75,11 @@ pub(crate) fn build_local_execution_report_context(
             value,
         );
     }
+    if let Some(incoming_tls) =
+        crate::ai_serving::tls_fingerprint_from_headers(parts.original_headers)
+    {
+        merge_incoming_tls_fingerprint(&mut extra_fields, incoming_tls);
+    }
 
     build_ai_execution_report_context(AiExecutionReportContextParts {
         auth_context: parts.auth_context,
@@ -127,6 +132,15 @@ pub(crate) fn insert_provider_stream_event_api_format(
     provider_type: &str,
 ) {
     insert_ai_provider_stream_event_api_format(extra_fields, provider_type);
+}
+
+fn merge_incoming_tls_fingerprint(extra_fields: &mut Map<String, Value>, incoming_tls: Value) {
+    let entry = extra_fields
+        .entry("tls_fingerprint".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Value::Object(object) = entry {
+        object.insert("incoming".to_string(), incoming_tls);
+    }
 }
 
 #[cfg(test)]
@@ -239,6 +253,71 @@ mod tests {
             json!({
                 "client_family": "codex",
                 "session_key": "account=account-1;session=session-1"
+            })
+        );
+    }
+
+    #[test]
+    fn local_execution_report_context_records_forwarded_tls_fingerprint() {
+        let auth_context = ExecutionRuntimeAuthContext {
+            user_id: "user-1".to_string(),
+            api_key_id: "api-key-1".to_string(),
+            username: None,
+            api_key_name: None,
+            balance_remaining: None,
+            access_allowed: true,
+            api_key_is_standalone: false,
+        };
+        let mut original_headers = http::HeaderMap::new();
+        original_headers.insert("x-aether-tls-ja3", "ja3-value".parse().unwrap());
+        original_headers.insert("x-aether-tls-ja4", "ja4-value".parse().unwrap());
+        original_headers.insert("x-aether-tls-protocol", "TLSv1.3".parse().unwrap());
+        let provider_request_headers = BTreeMap::new();
+
+        let report_context =
+            build_local_execution_report_context(LocalExecutionReportContextParts {
+                auth_context: &auth_context,
+                request_id: "trace-1",
+                candidate_id: "candidate-1",
+                attempt_identity: ExecutionAttemptIdentity::new(0, 0),
+                model: "gpt-5",
+                provider_name: "OpenAI",
+                provider_id: "provider-1",
+                endpoint_id: "endpoint-1",
+                key_id: "key-1",
+                key_name: None,
+                model_id: None,
+                global_model_id: None,
+                global_model_name: None,
+                provider_api_format: "openai:chat",
+                client_api_format: "openai:chat",
+                mapped_model: None,
+                candidate_group_id: None,
+                ranking: None,
+                upstream_url: None,
+                header_rules: None,
+                body_rules: None,
+                provider_request_method: None,
+                provider_request_headers: Some(&provider_request_headers),
+                original_headers: &original_headers,
+                request_origin: None,
+                original_request_body_json: Some(&json!({"model": "gpt-5"})),
+                original_request_body_base64: None,
+                client_session_affinity: None,
+                client_requested_stream: false,
+                upstream_is_stream: false,
+                has_envelope: false,
+                needs_conversion: false,
+                extra_fields: Map::new(),
+            });
+
+        assert_eq!(
+            report_context["tls_fingerprint"]["incoming"],
+            json!({
+                "source": "forwarded_header",
+                "ja3": "ja3-value",
+                "ja4": "ja4-value",
+                "protocol": "TLSv1.3"
             })
         );
     }

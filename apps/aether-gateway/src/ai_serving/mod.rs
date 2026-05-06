@@ -121,6 +121,10 @@ pub(crate) fn is_json_request(headers: &http::HeaderMap) -> bool {
     crate::headers::is_json_request(headers)
 }
 
+pub(crate) fn tls_fingerprint_from_headers(headers: &http::HeaderMap) -> Option<serde_json::Value> {
+    crate::headers::tls_fingerprint_from_headers(headers)
+}
+
 pub(crate) fn build_execution_runtime_auth_context(
     auth_context: &crate::control::GatewayControlAuthContext,
 ) -> ExecutionRuntimeAuthContext {

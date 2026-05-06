@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, net::SocketAddr};
 
 use crate::constants::*;
+use serde_json::{Map, Value};
 use uuid::Uuid;
 
 pub(crate) fn extract_or_generate_trace_id(headers: &http::HeaderMap) -> String {
@@ -51,6 +52,44 @@ pub(crate) fn request_origin_from_parts(parts: &http::request::Parts) -> Request
         .get::<RequestOrigin>()
         .cloned()
         .unwrap_or_else(|| request_origin_from_headers(&parts.headers))
+}
+
+pub(crate) fn tls_fingerprint_from_headers(headers: &http::HeaderMap) -> Option<Value> {
+    let mut object = Map::new();
+
+    copy_tls_header(headers, &mut object, "x-aether-tls-ja3", "ja3");
+    copy_tls_header(headers, &mut object, "x-aether-tls-ja3-hash", "ja3_hash");
+    copy_tls_header(headers, &mut object, "x-aether-tls-ja4", "ja4");
+    copy_tls_header(headers, &mut object, "x-aether-tls-protocol", "protocol");
+    copy_tls_header(headers, &mut object, "x-aether-tls-version", "tls_version");
+    copy_tls_header(headers, &mut object, "x-aether-tls-cipher", "cipher");
+    copy_tls_header(headers, &mut object, "x-aether-tls-sni", "sni");
+    copy_tls_header(headers, &mut object, "x-aether-tls-alpn", "alpn");
+
+    if object.is_empty() {
+        return None;
+    }
+
+    let source = header_value_str(headers, "x-aether-tls-source")
+        .unwrap_or_else(|| "forwarded_header".to_string());
+    object.insert("source".to_string(), Value::String(source));
+
+    Some(Value::Object(object))
+}
+
+fn copy_tls_header(
+    headers: &http::HeaderMap,
+    object: &mut Map<String, Value>,
+    header_name: &str,
+    field_name: &str,
+) {
+    let Some(value) = header_value_str(headers, header_name) else {
+        return;
+    };
+    object.insert(
+        field_name.to_string(),
+        Value::String(truncate_chars(&value, 512)),
+    );
 }
 
 fn client_ip_from_headers(headers: &http::HeaderMap) -> Option<String> {
@@ -133,9 +172,11 @@ pub(crate) fn header_equals(
 #[cfg(test)]
 mod tests {
     use super::{
-        request_origin_from_headers, request_origin_from_headers_and_remote_addr, RequestOrigin,
+        request_origin_from_headers, request_origin_from_headers_and_remote_addr,
+        tls_fingerprint_from_headers, RequestOrigin,
     };
     use http::{HeaderMap, HeaderValue};
+    use serde_json::json;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     #[test]
@@ -182,6 +223,42 @@ mod tests {
                 .client_ip
                 .as_deref(),
             Some("192.0.2.10")
+        );
+    }
+
+    #[test]
+    fn tls_fingerprint_from_headers_collects_forwarded_tls_fields() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-aether-tls-ja3", HeaderValue::from_static("ja3-value"));
+        headers.insert(
+            "x-aether-tls-ja3-hash",
+            HeaderValue::from_static("ja3-hash"),
+        );
+        headers.insert("x-aether-tls-ja4", HeaderValue::from_static("ja4-value"));
+        headers.insert("x-aether-tls-protocol", HeaderValue::from_static("TLSv1.3"));
+        headers.insert(
+            "x-aether-tls-cipher",
+            HeaderValue::from_static("TLS_AES_128_GCM_SHA256"),
+        );
+        headers.insert(
+            "x-aether-tls-sni",
+            HeaderValue::from_static("api.example.com"),
+        );
+        headers.insert("x-aether-tls-alpn", HeaderValue::from_static("h2"));
+        headers.insert("x-aether-tls-source", HeaderValue::from_static("nginx"));
+
+        assert_eq!(
+            tls_fingerprint_from_headers(&headers),
+            Some(json!({
+                "source": "nginx",
+                "ja3": "ja3-value",
+                "ja3_hash": "ja3-hash",
+                "ja4": "ja4-value",
+                "protocol": "TLSv1.3",
+                "cipher": "TLS_AES_128_GCM_SHA256",
+                "sni": "api.example.com",
+                "alpn": "h2"
+            }))
         );
     }
 }

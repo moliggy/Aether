@@ -87,6 +87,7 @@ fn copy_allowed_metadata_fields(source: &Map<String, Value>, target: &mut Map<St
     copy_non_null_value(source, target, "dimensions");
     copy_non_null_value(source, target, "billing_rule_snapshot");
     copy_non_null_value(source, target, "scheduling_audit");
+    copy_non_null_value(source, target, "tls_fingerprint");
     copy_number(source, target, "rate_multiplier");
     copy_bool(source, target, "is_free_tier");
     copy_number(source, target, "input_price_per_1m");
@@ -119,6 +120,7 @@ fn move_allowed_metadata_fields(mut source: Map<String, Value>, target: &mut Map
     remove_non_null_value(&mut source, target, "dimensions");
     remove_non_null_value(&mut source, target, "billing_rule_snapshot");
     remove_non_null_value(&mut source, target, "scheduling_audit");
+    remove_non_null_value(&mut source, target, "tls_fingerprint");
     remove_number(&mut source, target, "rate_multiplier");
     remove_bool(&mut source, target, "is_free_tier");
     remove_number(&mut source, target, "input_price_per_1m");
@@ -473,6 +475,46 @@ mod tests {
                 "max_bytes": MAX_USAGE_REQUEST_METADATA_BYTES,
                 "value_kind": "object",
             }))
+        );
+    }
+
+    #[test]
+    fn sanitizes_request_metadata_preserves_tls_fingerprint() {
+        let metadata = sanitize_usage_request_metadata(Some(json!({
+            "tls_fingerprint": {
+                "incoming": {
+                    "source": "forwarded_header",
+                    "ja3": "incoming-ja3",
+                    "ja4": "incoming-ja4"
+                },
+                "outgoing": {
+                    "source": "aether_transport_config",
+                    "backend": "reqwest_rustls",
+                    "observed": false
+                }
+            },
+            "untrusted_tls_fingerprint": {
+                "ja3": "spoofed"
+            }
+        })))
+        .expect("metadata should remain");
+
+        assert_eq!(
+            metadata,
+            json!({
+                "tls_fingerprint": {
+                    "incoming": {
+                        "source": "forwarded_header",
+                        "ja3": "incoming-ja3",
+                        "ja4": "incoming-ja4"
+                    },
+                    "outgoing": {
+                        "source": "aether_transport_config",
+                        "backend": "reqwest_rustls",
+                        "observed": false
+                    }
+                }
+            })
         );
     }
 

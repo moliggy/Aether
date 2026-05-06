@@ -1,9 +1,11 @@
 use aether_ai_serving::{
     run_ai_candidate_preselection, AiCandidatePreselectionOutcome, AiCandidatePreselectionPort,
 };
+use aether_data_contracts::repository::candidate_selection::StoredMinimalCandidateSelectionRow;
 use aether_scheduler_core::{
     enumerate_minimal_candidate_selection_with_model_directives, normalize_api_format,
-    resolve_requested_global_model_name_with_model_directives, ClientSessionAffinity,
+    resolve_requested_global_model_name_with_model_directives,
+    row_supports_requested_model_with_model_directives, ClientSessionAffinity,
     EnumerateMinimalCandidateSelectionInput, SchedulerMinimalCandidateSelectionCandidate,
 };
 use async_trait::async_trait;
@@ -14,7 +16,8 @@ use crate::ai_serving::{GatewayAuthApiKeySnapshot, PlannerAppState};
 use crate::clock::current_unix_secs;
 use crate::data::candidate_selection::{
     read_requested_model_rows_fast_path_page, requested_model_candidate_names,
-    REQUESTED_MODEL_CANDIDATE_PAGE_SIZE, REQUESTED_MODEL_MAX_SCANNED_ROWS,
+    MinimalCandidateSelectionRowSource, REQUESTED_MODEL_CANDIDATE_PAGE_SIZE,
+    REQUESTED_MODEL_MAX_SCANNED_ROWS,
 };
 use crate::scheduler::candidate::SchedulerSkippedCandidate;
 use crate::GatewayError;
@@ -203,6 +206,7 @@ pub(crate) struct LocalCandidatePreselectionPageCursor<'a> {
     requested_name_offsets: BTreeMap<String, u32>,
     scanned_rows_by_format: BTreeMap<String, u32>,
     resolved_global_model_names: BTreeMap<String, String>,
+    fallback_scanned_api_formats: BTreeSet<String>,
     seen_candidate_keys: BTreeSet<String>,
 }
 
@@ -255,6 +259,7 @@ impl<'a> LocalCandidatePreselectionPageCursor<'a> {
             requested_name_offsets: BTreeMap::new(),
             scanned_rows_by_format: BTreeMap::new(),
             resolved_global_model_names: BTreeMap::new(),
+            fallback_scanned_api_formats: BTreeSet::new(),
             seen_candidate_keys: BTreeSet::new(),
         }
     }
@@ -319,7 +324,13 @@ impl<'a> LocalCandidatePreselectionPageCursor<'a> {
                 .entry(normalized_api_format.clone())
                 .or_insert(0);
             let Some(requested_name) = requested_names.get(requested_name_index) else {
-                return Ok(None);
+                return self
+                    .next_fallback_page_for_api_format(
+                        candidate_api_format,
+                        &normalized_api_format,
+                        enable_model_directives,
+                    )
+                    .await;
             };
             if requested_name.trim().is_empty() {
                 self.requested_name_indexes
@@ -364,119 +375,199 @@ impl<'a> LocalCandidatePreselectionPageCursor<'a> {
             }
             if page.scanned_rows == 0 {
                 if requested_name_index + 1 >= requested_names.len() {
-                    return Ok(None);
+                    return self
+                        .next_fallback_page_for_api_format(
+                            candidate_api_format,
+                            &normalized_api_format,
+                            enable_model_directives,
+                        )
+                        .await;
                 }
                 continue;
             }
 
-            let mut rows = page
-                .rows
-                .into_iter()
-                .filter(|row| {
-                    self.seen_candidate_keys.insert(format!(
-                        "{}:{}:{}:{}",
-                        row.endpoint_id, row.key_id, row.model_id, row.endpoint_api_format
-                    ))
-                })
-                .collect::<Vec<_>>();
-            if rows.is_empty() {
-                continue;
-            }
-            let resolved_global_model_name =
-                if let Some(value) = self.resolved_global_model_names.get(&normalized_api_format) {
-                    value.clone()
-                } else {
-                    let Some(value) = resolve_requested_global_model_name_with_model_directives(
-                        &rows,
-                        &self.requested_model,
-                        &normalized_api_format,
-                        enable_model_directives,
-                    ) else {
-                        continue;
-                    };
-                    self.resolved_global_model_names
-                        .insert(normalized_api_format.clone(), value.clone());
-                    value
-                };
-            rows.retain(|row| row.global_model_name == resolved_global_model_name);
-            if rows.is_empty() {
-                continue;
-            }
-
-            let auth_constraints = matches_client_api_format(
-                self.use_api_format_alias_match,
-                candidate_api_format,
-                &self.client_api_format,
-            )
-            .then_some(&self.auth_snapshot)
-            .map(crate::data::candidate_selection::auth_snapshot_constraints);
-            let enumerated_candidates =
-                enumerate_minimal_candidate_selection_with_model_directives(
-                    EnumerateMinimalCandidateSelectionInput {
-                        rows,
-                        normalized_api_format: &normalized_api_format,
-                        requested_model_name: &self.requested_model,
-                        resolved_global_model_name: resolved_global_model_name.as_str(),
-                        require_streaming: self.require_streaming,
-                        required_capabilities: self.required_capabilities.as_ref(),
-                        auth_constraints: auth_constraints.as_ref(),
-                    },
-                    enable_model_directives,
-                )
-                .map_err(|err| GatewayError::Internal(err.to_string()))?;
-            let mut candidates = Vec::new();
-            for candidate in enumerated_candidates {
-                if !self.candidate_allowed_for_page(
-                    &candidate,
+            if let Some(outcome) = self
+                .build_page_outcome_from_rows(
                     candidate_api_format,
+                    &normalized_api_format,
                     enable_model_directives,
-                ) {
-                    continue;
-                }
-                if !self
-                    .seen_candidate_keys
-                    .insert(local_candidate_preselection_key(&candidate, self.key_mode))
-                {
-                    continue;
-                }
-                candidates.push(candidate);
-            }
-
-            let matches_client_format = matches_client_api_format(
-                self.use_api_format_alias_match,
-                candidate_api_format,
-                &self.client_api_format,
-            );
-            let auth_snapshot = matches_client_format.then_some(&self.auth_snapshot);
-            let (candidates, skipped_candidates) = self
-                .state
-                .list_selectable_enumerated_candidates_with_skip_reasons(
-                    candidate_api_format,
-                    &resolved_global_model_name,
-                    candidates,
-                    self.required_capabilities.as_ref(),
-                    auth_snapshot,
-                    self.client_session_affinity.as_ref(),
-                    current_unix_secs(),
+                    page.rows,
                 )
-                .await?;
-            let skipped_candidates = skipped_candidates
-                .into_iter()
-                .map(skipped_local_execution_candidate_from_scheduler_skip)
-                .filter(|skipped_candidate| {
-                    self.skipped_candidate_allowed_for_page(
-                        skipped_candidate,
-                        candidate_api_format,
-                        enable_model_directives,
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            return Ok(Some(AiCandidatePreselectionOutcome {
-                candidates,
-                skipped_candidates,
-            }));
+                .await?
+            {
+                return Ok(Some(outcome));
+            }
         }
+    }
+
+    async fn next_fallback_page_for_api_format(
+        &mut self,
+        candidate_api_format: &str,
+        normalized_api_format: &str,
+        enable_model_directives: bool,
+    ) -> Result<
+        Option<
+            AiCandidatePreselectionOutcome<
+                SchedulerMinimalCandidateSelectionCandidate,
+                SkippedLocalExecutionCandidate,
+            >,
+        >,
+        GatewayError,
+    > {
+        if !self
+            .fallback_scanned_api_formats
+            .insert(normalized_api_format.to_string())
+        {
+            return Ok(None);
+        }
+
+        let rows = self
+            .state
+            .app()
+            .data
+            .read_minimal_candidate_selection_rows_for_api_format(normalized_api_format)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))?
+            .into_iter()
+            .filter(|row| {
+                row_supports_requested_model_with_model_directives(
+                    row,
+                    &self.requested_model,
+                    normalized_api_format,
+                    enable_model_directives,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        self.build_page_outcome_from_rows(
+            candidate_api_format,
+            normalized_api_format,
+            enable_model_directives,
+            rows,
+        )
+        .await
+    }
+
+    async fn build_page_outcome_from_rows(
+        &mut self,
+        candidate_api_format: &str,
+        normalized_api_format: &str,
+        enable_model_directives: bool,
+        rows: Vec<StoredMinimalCandidateSelectionRow>,
+    ) -> Result<
+        Option<
+            AiCandidatePreselectionOutcome<
+                SchedulerMinimalCandidateSelectionCandidate,
+                SkippedLocalExecutionCandidate,
+            >,
+        >,
+        GatewayError,
+    > {
+        let mut rows = rows
+            .into_iter()
+            .filter(|row| {
+                self.seen_candidate_keys.insert(format!(
+                    "{}:{}:{}:{}",
+                    row.endpoint_id, row.key_id, row.model_id, row.endpoint_api_format
+                ))
+            })
+            .collect::<Vec<_>>();
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        let resolved_global_model_name =
+            if let Some(value) = self.resolved_global_model_names.get(normalized_api_format) {
+                value.clone()
+            } else {
+                let Some(value) = resolve_requested_global_model_name_with_model_directives(
+                    &rows,
+                    &self.requested_model,
+                    normalized_api_format,
+                    enable_model_directives,
+                ) else {
+                    return Ok(None);
+                };
+                self.resolved_global_model_names
+                    .insert(normalized_api_format.to_string(), value.clone());
+                value
+            };
+        rows.retain(|row| row.global_model_name == resolved_global_model_name);
+        if rows.is_empty() {
+            return Ok(None);
+        }
+
+        let auth_constraints = matches_client_api_format(
+            self.use_api_format_alias_match,
+            candidate_api_format,
+            &self.client_api_format,
+        )
+        .then_some(&self.auth_snapshot)
+        .map(crate::data::candidate_selection::auth_snapshot_constraints);
+        let enumerated_candidates = enumerate_minimal_candidate_selection_with_model_directives(
+            EnumerateMinimalCandidateSelectionInput {
+                rows,
+                normalized_api_format,
+                requested_model_name: &self.requested_model,
+                resolved_global_model_name: resolved_global_model_name.as_str(),
+                require_streaming: self.require_streaming,
+                required_capabilities: self.required_capabilities.as_ref(),
+                auth_constraints: auth_constraints.as_ref(),
+            },
+            enable_model_directives,
+        )
+        .map_err(|err| GatewayError::Internal(err.to_string()))?;
+        let mut candidates = Vec::new();
+        for candidate in enumerated_candidates {
+            if !self.candidate_allowed_for_page(
+                &candidate,
+                candidate_api_format,
+                enable_model_directives,
+            ) {
+                continue;
+            }
+            if !self
+                .seen_candidate_keys
+                .insert(local_candidate_preselection_key(&candidate, self.key_mode))
+            {
+                continue;
+            }
+            candidates.push(candidate);
+        }
+
+        let matches_client_format = matches_client_api_format(
+            self.use_api_format_alias_match,
+            candidate_api_format,
+            &self.client_api_format,
+        );
+        let auth_snapshot = matches_client_format.then_some(&self.auth_snapshot);
+        let (candidates, skipped_candidates) = self
+            .state
+            .list_selectable_enumerated_candidates_with_skip_reasons(
+                candidate_api_format,
+                &resolved_global_model_name,
+                candidates,
+                self.required_capabilities.as_ref(),
+                auth_snapshot,
+                self.client_session_affinity.as_ref(),
+                current_unix_secs(),
+            )
+            .await?;
+        let skipped_candidates = skipped_candidates
+            .into_iter()
+            .map(skipped_local_execution_candidate_from_scheduler_skip)
+            .filter(|skipped_candidate| {
+                self.skipped_candidate_allowed_for_page(
+                    skipped_candidate,
+                    candidate_api_format,
+                    enable_model_directives,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        Ok(Some(AiCandidatePreselectionOutcome {
+            candidates,
+            skipped_candidates,
+        }))
     }
 
     fn candidate_allowed_for_page(
@@ -602,4 +693,121 @@ pub(crate) fn auth_snapshot_allows_cross_format_candidate(
     }
 
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::GatewayDataState;
+    use crate::AppState;
+    use aether_data::repository::candidate_selection::InMemoryMinimalCandidateSelectionReadRepository;
+    use aether_data_contracts::repository::candidate_selection::MinimalCandidateSelectionReadRepository;
+    use std::sync::Arc;
+
+    fn unrestricted_auth_snapshot() -> GatewayAuthApiKeySnapshot {
+        GatewayAuthApiKeySnapshot {
+            user_id: "user-1".to_string(),
+            username: "alice".to_string(),
+            email: None,
+            user_role: "user".to_string(),
+            user_auth_source: "local".to_string(),
+            user_is_active: true,
+            user_is_deleted: false,
+            user_rate_limit: None,
+            user_allowed_providers: None,
+            user_allowed_api_formats: None,
+            user_allowed_models: None,
+            api_key_id: "api-key-1".to_string(),
+            api_key_name: Some("default".to_string()),
+            api_key_is_active: true,
+            api_key_is_locked: false,
+            api_key_is_standalone: false,
+            api_key_rate_limit: None,
+            api_key_concurrent_limit: None,
+            api_key_expires_at_unix_secs: None,
+            api_key_allowed_providers: None,
+            api_key_allowed_api_formats: None,
+            api_key_allowed_models: None,
+            currently_usable: true,
+        }
+    }
+
+    fn openai_responses_mapping_row() -> StoredMinimalCandidateSelectionRow {
+        StoredMinimalCandidateSelectionRow {
+            provider_id: "provider-openai-responses-mapped-1".to_string(),
+            provider_name: "openai".to_string(),
+            provider_type: "custom".to_string(),
+            provider_priority: 10,
+            provider_is_active: true,
+            endpoint_id: "endpoint-openai-responses-mapped-1".to_string(),
+            endpoint_api_format: "openai:responses".to_string(),
+            endpoint_api_family: Some("openai".to_string()),
+            endpoint_kind: Some("chat".to_string()),
+            endpoint_is_active: true,
+            key_id: "key-openai-responses-mapped-1".to_string(),
+            key_name: "prod".to_string(),
+            key_auth_type: "bearer".to_string(),
+            key_is_active: true,
+            key_api_formats: Some(vec!["openai:responses".to_string()]),
+            key_allowed_models: None,
+            key_capabilities: None,
+            key_internal_priority: 5,
+            key_global_priority_by_format: Some(serde_json::json!({"openai:responses": 1})),
+            model_id: "model-openai-responses-mapped-1".to_string(),
+            global_model_id: "global-model-openai-responses-mapped-1".to_string(),
+            global_model_name: "gpt-5".to_string(),
+            global_model_mappings: Some(vec!["gpt-5(?:\\.\\d+)?".to_string()]),
+            global_model_supports_streaming: Some(true),
+            model_provider_model_name: "gpt-5-upstream".to_string(),
+            model_provider_model_mappings: None,
+            model_supports_streaming: Some(true),
+            model_is_active: true,
+            model_is_available: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn paged_preselection_falls_back_to_format_scan_for_directive_mapping_match() {
+        let repository: Arc<dyn MinimalCandidateSelectionReadRepository> =
+            Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed([
+                openai_responses_mapping_row(),
+            ]));
+        let data_state =
+            GatewayDataState::with_minimal_candidate_selection_reader_for_tests(repository)
+                .with_system_config_values_for_tests([(
+                    crate::system_features::ENABLE_MODEL_DIRECTIVES_CONFIG_KEY.to_string(),
+                    serde_json::json!(true),
+                )]);
+        let app = AppState::new()
+            .expect("gateway state should build")
+            .with_data_state_for_tests(data_state);
+        let auth_snapshot = unrestricted_auth_snapshot();
+        let mut cursor = LocalCandidatePreselectionPageCursor::new(
+            PlannerAppState::new(&app),
+            "claude:messages",
+            "gpt-5.5-xhigh",
+            false,
+            None,
+            &auth_snapshot,
+            None,
+            true,
+            LocalCandidatePreselectionKeyMode::ProviderEndpointKeyModelAndApiFormat,
+        )
+        .await;
+
+        let page = cursor
+            .next_page()
+            .await
+            .expect("preselection should succeed")
+            .expect("mapping fallback should find a provider");
+
+        assert_eq!(page.skipped_candidates.len(), 0);
+        assert_eq!(page.candidates.len(), 1);
+        assert_eq!(page.candidates[0].endpoint_api_format, "openai:responses");
+        assert_eq!(page.candidates[0].global_model_name, "gpt-5");
+        assert_eq!(
+            page.candidates[0].selected_provider_model_name,
+            "gpt-5-upstream"
+        );
+    }
 }
