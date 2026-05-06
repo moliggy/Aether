@@ -589,15 +589,20 @@ fn usage_matches_performance_percentiles_query(
         && item.status == "completed"
 }
 
+fn usage_reserved_provider_label(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "unknown" | "unknow" | "pending"
+    )
+}
+
 fn usage_provider_performance_identity(item: &StoredRequestUsageAudit) -> Option<(String, String)> {
     let provider_id = item.provider_id.as_deref()?.trim();
-    let provider_id_status = provider_id.to_ascii_lowercase();
-    if provider_id.is_empty() || matches!(provider_id_status.as_str(), "unknown" | "pending") {
+    if provider_id.is_empty() || usage_reserved_provider_label(provider_id) {
         return None;
     }
     let provider_name = item.provider_name.trim();
-    let provider_name_status = provider_name.to_ascii_lowercase();
-    if matches!(provider_name_status.as_str(), "unknown" | "pending") {
+    if usage_reserved_provider_label(provider_name) {
         return None;
     }
     let display_name = if provider_name.is_empty() {
@@ -960,10 +965,10 @@ fn usage_output_tps_duration_ms(item: &StoredRequestUsageAudit) -> Option<u64> {
 
 fn usage_provider_display_name(item: &StoredRequestUsageAudit) -> Option<String> {
     let provider_name = item.provider_name.trim();
-    if provider_name.is_empty() || matches!(provider_name, "unknown" | "pending") {
+    if provider_name.is_empty() || usage_reserved_provider_label(provider_name) {
         None
     } else {
-        Some(item.provider_name.clone())
+        Some(provider_name.to_string())
     }
 }
 
@@ -1154,12 +1159,31 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                 continue;
             }
 
+            let provider_display_name =
+                if matches!(query.group_by, UsageAuditAggregationGroupBy::Provider) {
+                    match usage_provider_display_name(item) {
+                        Some(value) => Some(value),
+                        None => continue,
+                    }
+                } else {
+                    None
+                };
+
             let group_key = match query.group_by {
                 UsageAuditAggregationGroupBy::Model => item.model.clone(),
-                UsageAuditAggregationGroupBy::Provider => item
-                    .provider_id
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string()),
+                UsageAuditAggregationGroupBy::Provider => {
+                    let display_name = provider_display_name
+                        .as_deref()
+                        .expect("provider display name is set for provider aggregation");
+                    item.provider_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|provider_id| {
+                            !provider_id.is_empty() && !usage_reserved_provider_label(provider_id)
+                        })
+                        .unwrap_or(display_name)
+                        .to_string()
+                }
                 UsageAuditAggregationGroupBy::ApiFormat => item
                     .api_format
                     .clone()
@@ -1174,8 +1198,7 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                 && (bucket.display_name.is_none()
                     || bucket.display_name.as_deref() == Some("Unknown"))
             {
-                bucket.display_name =
-                    usage_provider_display_name(item).or(Some("Unknown".to_string()));
+                bucket.display_name = provider_display_name;
             }
             bucket.request_count = bucket.request_count.saturating_add(1);
             bucket.total_tokens = bucket.total_tokens.saturating_add(item.total_tokens);
@@ -2909,7 +2932,8 @@ mod tests {
         UsageWriteRepository,
     };
     use aether_data_contracts::repository::usage::{
-        usage_body_ref, UsageBodyField, UsageProviderPerformanceQuery, UsageTimeSeriesGranularity,
+        usage_body_ref, UsageAuditAggregationGroupBy, UsageAuditAggregationQuery, UsageBodyField,
+        UsageProviderPerformanceQuery, UsageTimeSeriesGranularity,
     };
     use serde_json::json;
 
@@ -3042,6 +3066,37 @@ mod tests {
 
         assert_eq!(usage.request_id, "req-2");
         assert_eq!(usage.total_tokens, 150);
+    }
+
+    #[tokio::test]
+    async fn provider_aggregation_skips_unknown_provider_labels() {
+        let mut unknown = sample_usage("req-unknown-provider", 100);
+        unknown.provider_id = None;
+        unknown.provider_name = "unknown".to_string();
+
+        let mut typo_unknown = sample_usage("req-unknow-provider", 200);
+        typo_unknown.provider_id = Some("unknow".to_string());
+        typo_unknown.provider_name = "unknow".to_string();
+
+        let repository = InMemoryUsageReadRepository::seed(vec![
+            sample_usage("req-valid-provider", 300),
+            unknown,
+            typo_unknown,
+        ]);
+
+        let rows = repository
+            .aggregate_usage_audits(&UsageAuditAggregationQuery {
+                created_from_unix_secs: 0,
+                created_until_unix_secs: 1_000,
+                group_by: UsageAuditAggregationGroupBy::Provider,
+                limit: 10,
+            })
+            .await
+            .expect("aggregation should succeed");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].group_key, "provider-1");
+        assert_eq!(rows[0].display_name.as_deref(), Some("OpenAI"));
     }
 
     #[tokio::test]

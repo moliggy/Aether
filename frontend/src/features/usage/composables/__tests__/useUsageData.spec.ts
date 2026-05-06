@@ -163,4 +163,60 @@ describe('useUsageData', () => {
     expect(availableModels.value).toEqual(['gpt-5'])
     expect(availableProviders.value).toEqual(['OpenAI'])
   })
+
+  it('filters placeholder providers from admin provider stats', async () => {
+    const isAdminPage = ref(true)
+    const { loadStats, providerStats, availableProviders } = useUsageData({ isAdminPage })
+    const dateRange = { preset: 'last7days', tz_offset_minutes: 0 }
+
+    getUsageStatsMock.mockResolvedValueOnce({
+      total_requests: 4,
+      total_tokens: 400,
+      total_cost: 1,
+      avg_response_time: 0,
+    })
+    getUsageByProviderMock.mockResolvedValueOnce([
+      {
+        provider: 'OpenAI',
+        request_count: 3,
+        total_tokens: 300,
+        total_cost: 1.23,
+        actual_cost: 1.5,
+        avg_response_time_ms: 1250,
+        success_rate: 100,
+      },
+      {
+        provider: 'Unknown',
+        request_count: 1,
+        total_tokens: 100,
+        total_cost: 0,
+        actual_cost: 0,
+        avg_response_time_ms: 0,
+        success_rate: 100,
+      },
+      {
+        provider: 'unknow',
+        request_count: 1,
+        total_tokens: 100,
+        total_cost: 0,
+        actual_cost: 0,
+        avg_response_time_ms: 0,
+        success_rate: 100,
+      },
+      {
+        provider: 'pending',
+        request_count: 1,
+        total_tokens: 100,
+        total_cost: 0,
+        actual_cost: 0,
+        avg_response_time_ms: 0,
+        success_rate: 100,
+      },
+    ])
+
+    await loadStats(dateRange)
+
+    expect(providerStats.value.map(item => item.provider)).toEqual(['OpenAI'])
+    expect(availableProviders.value).toEqual(['OpenAI'])
+  })
 })

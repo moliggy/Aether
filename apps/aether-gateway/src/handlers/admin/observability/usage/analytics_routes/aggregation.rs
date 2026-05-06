@@ -60,9 +60,15 @@ fn admin_usage_aggregation_by_provider_json(
             } else {
                 round_to(success_count as f64 / row.request_count as f64 * 100.0, 2)
             };
+            let provider_name = row
+                .display_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(row.group_key.as_str());
             json!({
                 "provider_id": row.group_key,
-                "provider": row.display_name.clone().unwrap_or_else(|| "Unknown".to_string()),
+                "provider": provider_name,
                 "request_count": row.request_count,
                 "total_tokens": row.total_tokens,
                 "effective_input_tokens": row.effective_input_tokens,

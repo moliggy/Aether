@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildProviderPerformanceChartData,
+  formatDurationMs,
   formatProviderPerformanceMetric,
 } from '../performanceAnalysisHelpers'
 import type { ProviderPerformanceItem, ProviderPerformanceTimelineItem } from '@/api/admin'
@@ -11,6 +12,14 @@ describe('performanceAnalysisHelpers', () => {
     expect(formatProviderPerformanceMetric(undefined, '/s')).toBe('-')
     expect(formatProviderPerformanceMetric(Number.NaN)).toBe('-')
     expect(formatProviderPerformanceMetric(18.456, '/s')).toBe('18.46/s')
+  })
+
+  it('formats millisecond metrics as seconds above one second', () => {
+    expect(formatDurationMs(999, 0)).toBe('999ms')
+    expect(formatDurationMs(1000, 0)).toBe('1.00s')
+    expect(formatDurationMs(80148, 0)).toBe('80.15s')
+    expect(formatProviderPerformanceMetric(80148, 'ms', 0)).toBe('80.15s')
+    expect(formatProviderPerformanceMetric(99.456, 'ms')).toBe('99.46ms')
   })
 
   it('builds stable provider trend datasets with null gaps', () => {

@@ -1363,12 +1363,11 @@ fn usage_audit_aggregation_sql_fragments(
             success_count_expr: "NULL::BIGINT",
         },
         UsageAuditAggregationGroupBy::Provider => UsageAuditAggregationSqlFragments {
-            filtered_extra_where: "",
+            filtered_extra_where: " AND BTRIM(COALESCE(\"usage\".provider_name, '')) <> '' AND lower(BTRIM(COALESCE(\"usage\".provider_name, ''))) NOT IN ('unknown', 'unknow', 'pending')",
             group_key_expr: "provider_group_key",
             display_name_expr: "provider_display_name",
             secondary_name_expr: "NULL::varchar",
-            aggregate_display_name_expr:
-                "COALESCE(MAX(NULLIF(display_name, 'Unknown')), 'Unknown')",
+            aggregate_display_name_expr: "MAX(display_name)",
             aggregate_secondary_name_expr: "NULL::varchar",
             avg_response_time_expr: "AVG(response_time_ms::DOUBLE PRECISION)",
             success_count_expr: "COALESCE(SUM(success_flag), 0)::BIGINT",
@@ -6474,12 +6473,17 @@ WITH filtered_usage AS (
   SELECT
     "usage".model AS model,
     "usage".user_id AS user_id,
-    COALESCE("usage".provider_id, 'unknown') AS provider_group_key,
+    CASE
+      WHEN BTRIM(COALESCE("usage".provider_id, '')) = ''
+        OR lower(BTRIM(COALESCE("usage".provider_id, ''))) IN ('unknown', 'unknow', 'pending')
+      THEN BTRIM("usage".provider_name)
+      ELSE BTRIM("usage".provider_id)
+    END AS provider_group_key,
     CASE
       WHEN BTRIM(COALESCE("usage".provider_name, '')) = ''
-        OR "usage".provider_name IN ('unknown', 'pending')
-      THEN 'Unknown'
-      ELSE "usage".provider_name
+        OR lower(BTRIM(COALESCE("usage".provider_name, ''))) IN ('unknown', 'unknow', 'pending')
+      THEN NULL
+      ELSE BTRIM("usage".provider_name)
     END AS provider_display_name,
     COALESCE("usage".api_format, 'unknown') AS api_format_group_key,
     GREATEST(COALESCE("usage".input_tokens, 0), 0) AS input_tokens,

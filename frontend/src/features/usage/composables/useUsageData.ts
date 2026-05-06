@@ -32,6 +32,11 @@ export interface FilterParams {
   status?: string
 }
 
+function isUsageProviderVisible(provider: string | undefined | null): provider is string {
+  const normalized = provider?.trim().toLowerCase()
+  return !!normalized && !['unknown', 'unknow', 'pending'].includes(normalized)
+}
+
 export function useUsageData(options: UseUsageDataOptions) {
   const { isAdminPage } = options
 
@@ -157,7 +162,8 @@ export function useUsageData(options: UseUsageDataOptions) {
             return true
           }
 
-          providerStats.value = providerData.map(item => ({
+          const visibleProviderData = providerData.filter(item => isUsageProviderVisible(item.provider))
+          providerStats.value = visibleProviderData.map(item => ({
             provider: item.provider,
             requests: item.request_count,
             totalTokens: item.total_tokens || 0,
@@ -175,7 +181,7 @@ export function useUsageData(options: UseUsageDataOptions) {
               : '-'
           }))
 
-          availableProviders.value = providerData.map(item => item.provider).filter(Boolean).sort()
+          availableProviders.value = visibleProviderData.map(item => item.provider).sort()
         } catch (error) {
           if (requestId !== loadStatsRequestId) {
             return true
@@ -245,22 +251,24 @@ export function useUsageData(options: UseUsageDataOptions) {
         actual_cost: item.actual_total_cost_usd
       }))
 
-      providerStats.value = (userData.summary_by_provider || []).map((item) => ({
-        provider: item.provider,
-        requests: item.requests || 0,
-        totalTokens: item.total_tokens || 0,
-        effectiveInputTokens: item.effective_input_tokens || 0,
-        totalInputContext: item.total_input_context || 0,
-        outputTokens: item.output_tokens || 0,
-        cacheReadTokens: item.cache_read_tokens || 0,
-        cacheCreationTokens: item.cache_creation_tokens || 0,
-        cacheHitRate: item.cache_hit_rate || 0,
-        totalCost: item.total_cost_usd || 0,
-        successRate: item.success_rate || 0,
-        avgResponseTime: (item.avg_response_time_ms ?? 0) > 0
-          ? `${((item.avg_response_time_ms ?? 0) / 1000).toFixed(2)}s`
-          : '-'
-      }))
+      providerStats.value = (userData.summary_by_provider || [])
+        .filter((item) => isUsageProviderVisible(item.provider))
+        .map((item) => ({
+          provider: item.provider,
+          requests: item.requests || 0,
+          totalTokens: item.total_tokens || 0,
+          effectiveInputTokens: item.effective_input_tokens || 0,
+          totalInputContext: item.total_input_context || 0,
+          outputTokens: item.output_tokens || 0,
+          cacheReadTokens: item.cache_read_tokens || 0,
+          cacheCreationTokens: item.cache_creation_tokens || 0,
+          cacheHitRate: item.cache_hit_rate || 0,
+          totalCost: item.total_cost_usd || 0,
+          successRate: item.success_rate || 0,
+          avgResponseTime: (item.avg_response_time_ms ?? 0) > 0
+            ? `${((item.avg_response_time_ms ?? 0) / 1000).toFixed(2)}s`
+            : '-'
+        }))
 
       // 用户页面：记录直接从 userData 获取（数量较少）
       // 使用 mergeRecordStatus 保护已有的活跃状态，避免轮询更新被覆盖
@@ -273,7 +281,7 @@ export function useUsageData(options: UseUsageDataOptions) {
       const providers = new Set<string>()
       currentRecords.value.forEach(record => {
         if (record.model) models.add(record.model)
-        if (record.provider) providers.add(record.provider)
+        if (isUsageProviderVisible(record.provider)) providers.add(record.provider)
       })
       availableModels.value = Array.from(models).sort()
       availableProviders.value = Array.from(providers).sort()
@@ -427,9 +435,9 @@ export function useUsageData(options: UseUsageDataOptions) {
       const mergedStatus = statusProgressed ? record.status : existing.status
       const protectStatus = mergedStatus !== record.status
 
-      // 确定是否需要保护 provider（避免 pending/unknown 覆盖已有的正确值）
-      const isPendingProvider = !record.provider || record.provider === 'pending' || record.provider === 'unknown'
-      const hasValidExistingProvider = existing.provider && existing.provider !== 'pending' && existing.provider !== 'unknown'
+      // 确定是否需要保护 provider（避免 pending/unknown/unknow 覆盖已有的正确值）
+      const isPendingProvider = !isUsageProviderVisible(record.provider)
+      const hasValidExistingProvider = isUsageProviderVisible(existing.provider)
       const protectProvider = isPendingProvider && hasValidExistingProvider
 
       // 如果需要保护状态，说明本地数据比后端更新，应该保留本地的所有实时更新字段

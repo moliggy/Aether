@@ -415,6 +415,16 @@ fn usage_sql_aggregate_usage_audits_supports_daily_model_and_provider_aggregates
 }
 
 #[test]
+fn usage_sql_provider_aggregation_excludes_unknown_provider_labels() {
+    let source = include_str!("mod.rs");
+    assert!(source.contains(
+        r#"lower(BTRIM(COALESCE(\"usage\".provider_name, ''))) NOT IN ('unknown', 'unknow', 'pending')"#
+    ));
+    assert!(source.contains("MAX(display_name)"));
+    assert!(!source.contains("COALESCE(MAX(NULLIF(display_name, 'Unknown')), 'Unknown')"));
+}
+
+#[test]
 fn usage_sql_summarize_total_tokens_by_api_key_ids_supports_daily_aggregates() {
     let source = include_str!("mod.rs");
     assert!(source.contains("FROM stats_daily_api_key"));

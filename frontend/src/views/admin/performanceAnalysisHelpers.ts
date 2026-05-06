@@ -25,7 +25,24 @@ export function formatProviderPerformanceMetric(
   if (value == null || Number.isNaN(value)) {
     return '-'
   }
+  if (suffix === 'ms') {
+    return formatDurationMs(value, decimals)
+  }
   return `${value.toFixed(decimals)}${suffix}`
+}
+
+export function formatDurationMs(
+  value: number | null | undefined,
+  msDecimals = 0,
+  secondsDecimals = 2
+): string {
+  if (value == null || Number.isNaN(value)) {
+    return '-'
+  }
+  if (Math.abs(value) >= 1000) {
+    return `${(value / 1000).toFixed(secondsDecimals)}s`
+  }
+  return `${value.toFixed(msDecimals)}ms`
 }
 
 export function buildProviderPerformanceChartData(

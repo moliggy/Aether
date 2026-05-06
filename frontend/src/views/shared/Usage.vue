@@ -495,10 +495,12 @@ async function pollActiveRequests() {
           record.target_model = update.target_model
         }
         // 管理员接口返回额外字段
-        // 只有当返回的 provider 不是 pending/unknown 时才更新，避免覆盖已有的正确值
-        if ('provider' in update && typeof update.provider === 'string' &&
-            update.provider !== 'pending' && update.provider !== 'unknown') {
-          record.provider = update.provider
+        // 只有当返回的 provider 不是 pending/unknown/unknow 时才更新，避免覆盖已有的正确值
+        if ('provider' in update && typeof update.provider === 'string') {
+          const updateProviderLabel = update.provider.trim().toLowerCase()
+          if (updateProviderLabel && !['pending', 'unknown', 'unknow'].includes(updateProviderLabel)) {
+            record.provider = update.provider
+          }
         }
         if ('api_key_name' in update) {
           record.api_key_name = typeof update.api_key_name === 'string' ? update.api_key_name : undefined

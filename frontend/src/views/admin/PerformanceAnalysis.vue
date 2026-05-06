@@ -342,70 +342,88 @@
             </section>
           </div>
 
-          <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <section class="rounded-xl border border-border/70 bg-card/60 p-4">
+          <div class="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-2">
+            <section class="flex h-full flex-col rounded-xl border border-border/70 bg-card/60 p-4">
               <div class="flex items-center justify-between gap-3">
                 <h3 class="text-sm font-semibold">
                   最近错误
                 </h3>
-                <span class="text-xs text-muted-foreground">
-                  {{ formatMetricNumber(resilienceStatus?.error_statistics.total_errors) }} / 24h
-                </span>
+                <div class="flex items-center gap-2">
+                  <Button
+                    v-if="hasMoreRecentErrors"
+                    variant="ghost"
+                    size="sm"
+                    class="h-7 gap-1 px-2 text-xs"
+                    :title="recentErrorsExpanded ? '收起最近错误' : '展开最近错误'"
+                    @click="recentErrorsExpanded = !recentErrorsExpanded"
+                  >
+                    <component
+                      :is="recentErrorsExpanded ? ChevronUp : ChevronDown"
+                      class="h-3.5 w-3.5"
+                    />
+                    {{ recentErrorsExpanded ? '收起' : `展开 ${recentErrors.length}` }}
+                  </Button>
+                  <span class="text-xs text-muted-foreground">
+                    {{ formatMetricNumber(resilienceStatus?.error_statistics.total_errors) }} / 24h
+                  </span>
+                </div>
               </div>
 
               <div
                 v-if="!recentErrors.length"
-                class="mt-4 rounded-lg border border-dashed border-border/70 px-3 py-4 text-sm text-muted-foreground"
+                class="mt-4 flex-1 rounded-lg border border-dashed border-border/70 px-3 py-4 text-sm text-muted-foreground"
               >
                 当前没有最近错误。
               </div>
 
               <div
                 v-else
-                class="mt-4 space-y-3"
+                class="mt-4 min-h-0 flex-1"
               >
-                <article
-                  v-for="item in recentErrors"
-                  :key="item.error_id"
-                  class="rounded-lg border border-border/60 bg-background/50 px-3 py-3"
-                >
-                  <div class="flex items-start justify-between gap-4">
-                    <div>
-                      <div class="text-sm font-medium">
-                        {{ item.error_type }}
-                      </div>
-                      <div class="mt-1 text-xs text-muted-foreground">
-                        {{ item.operation }}
-                      </div>
-                    </div>
-                    <span class="shrink-0 text-xs text-muted-foreground">
-                      {{ formatDate(item.timestamp) }}
-                    </span>
-                  </div>
-
-                  <div class="mt-2 flex flex-wrap gap-2">
-                    <Badge variant="outline">
-                      HTTP {{ item.context.status_code ?? '-' }}
-                    </Badge>
-                    <Badge variant="outline">
-                      {{ item.context.provider_name || item.context.provider_id || '未知上游' }}
-                    </Badge>
-                    <Badge variant="outline">
-                      {{ item.context.api_format || item.context.model || '未知格式' }}
-                    </Badge>
-                  </div>
-
-                  <p
-                    v-if="item.context.error_message"
-                    class="mt-2 break-words text-xs text-muted-foreground"
+                <div :class="recentErrorsListClass">
+                  <article
+                    v-for="item in visibleRecentErrors"
+                    :key="item.error_id"
+                    class="rounded-lg border border-border/60 bg-background/50 px-3 py-3"
                   >
-                    {{ item.context.error_message }}
-                  </p>
-                </article>
+                    <div class="flex items-start justify-between gap-4">
+                      <div>
+                        <div class="text-sm font-medium">
+                          {{ item.error_type }}
+                        </div>
+                        <div class="mt-1 text-xs text-muted-foreground">
+                          {{ item.operation }}
+                        </div>
+                      </div>
+                      <span class="shrink-0 text-xs text-muted-foreground">
+                        {{ formatDate(item.timestamp) }}
+                      </span>
+                    </div>
+
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      <Badge variant="outline">
+                        HTTP {{ item.context.status_code ?? '-' }}
+                      </Badge>
+                      <Badge variant="outline">
+                        {{ item.context.provider_name || item.context.provider_id || '未知上游' }}
+                      </Badge>
+                      <Badge variant="outline">
+                        {{ item.context.api_format || item.context.model || '未知格式' }}
+                      </Badge>
+                    </div>
+
+                    <p
+                      v-if="item.context.error_message"
+                      class="mt-2 line-clamp-2 break-words text-xs text-muted-foreground"
+                    >
+                      {{ item.context.error_message }}
+                    </p>
+                  </article>
+                </div>
               </div>
             </section>
 
-            <section class="rounded-xl border border-border/70 bg-card/60 p-4">
+            <section class="flex h-full flex-col rounded-xl border border-border/70 bg-card/60 p-4">
               <div class="flex items-center justify-between gap-3">
                 <h3 class="text-sm font-semibold">
                   熔断历史与建议
@@ -487,25 +505,6 @@
         </div>
       </div>
     </Card>
-
-    <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <Card class="p-4">
-        <PercentileChart
-          title="响应延迟百分位"
-          :series="percentiles"
-          mode="response"
-          :loading="percentileLoading"
-        />
-      </Card>
-      <Card class="p-4">
-        <PercentileChart
-          title="首字节延迟百分位"
-          :series="percentiles"
-          mode="ttfb"
-          :loading="percentileLoading"
-        />
-      </Card>
-    </div>
 
     <Card class="space-y-4 p-4">
       <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -780,6 +779,25 @@
 
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Card class="p-4">
+        <PercentileChart
+          title="响应延迟百分位"
+          :series="percentiles"
+          mode="response"
+          :loading="percentileLoading"
+        />
+      </Card>
+      <Card class="p-4">
+        <PercentileChart
+          title="首字节延迟百分位"
+          :series="percentiles"
+          mode="ttfb"
+          :loading="percentileLoading"
+        />
+      </Card>
+    </div>
+
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <Card class="p-4">
         <ErrorDistributionChart
           title="错误分布"
           :distribution="errorDistribution"
@@ -815,6 +833,8 @@ import {
   AlertTriangle,
   Cable,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   FilterX,
   GitBranch,
   Gauge,
@@ -857,16 +877,18 @@ import { formatDate, formatNumber } from '@/utils/format'
 import { log } from '@/utils/logger'
 import {
   buildProviderPerformanceChartData,
+  formatDurationMs,
   formatProviderPerformanceMetric,
 } from './performanceAnalysisHelpers'
 
 const LIVE_REFRESH_INTERVAL_MS = 10_000
+const RECENT_ERRORS_COLLAPSED_LIMIT = 3
 const DEFAULT_PROVIDER_PERFORMANCE_SLOW_THRESHOLD_MS = 10_000
 
 type ProviderPerformanceBooleanFilter = 'all' | 'true' | 'false'
 type ProviderPerformanceParams = NonNullable<Parameters<typeof adminApi.getProviderPerformance>[0]>
 
-const timeRange = ref<DateRangeParams>(getDateRangeFromPeriod('last30days'))
+const timeRange = ref<DateRangeParams>(getDateRangeFromPeriod('last7days'))
 const { error: showError } = useToast()
 
 const percentiles = ref<PercentileItem[]>([])
@@ -895,6 +917,7 @@ const liveRefreshing = ref(false)
 const liveReady = ref(false)
 const liveLoadError = ref<string | null>(null)
 const liveLastUpdatedAt = ref<string | null>(null)
+const recentErrorsExpanded = ref(false)
 
 let percentilesRequestId = 0
 let errorsRequestId = 0
@@ -1203,6 +1226,16 @@ const errorTrendChartData = computed(() => ({
 }))
 
 const recentErrors = computed(() => resilienceStatus.value?.recent_errors ?? [])
+const hasMoreRecentErrors = computed(() => recentErrors.value.length > RECENT_ERRORS_COLLAPSED_LIMIT)
+const visibleRecentErrors = computed(() => (
+  recentErrorsExpanded.value
+    ? recentErrors.value
+    : recentErrors.value.slice(0, RECENT_ERRORS_COLLAPSED_LIMIT)
+))
+const recentErrorsListClass = computed(() => [
+  'space-y-3',
+  recentErrorsExpanded.value ? 'max-h-[360px] overflow-y-auto pr-1' : '',
+])
 const resilienceRecommendations = computed(() => resilienceStatus.value?.recommendations ?? [])
 
 const healthStatusVariant = computed<'success' | 'warning' | 'destructive' | 'outline'>(() => {
@@ -1396,7 +1429,7 @@ const providerLatencyChartOptions = computed(() => ({
   scales: {
     y: {
       ticks: {
-        callback: (value: string | number) => `${value}ms`,
+        callback: (value: string | number) => formatDurationMs(Number(value), 0),
       },
     },
   },
