@@ -319,6 +319,17 @@ macro_rules! impl_materialized_usage_read_repository {
                 <$crate::repository::usage::InMemoryUsageReadRepository as $crate::repository::usage::UsageReadRepository>::summarize_usage_by_provider_api_key_ids(&repository, provider_api_key_ids).await
             }
 
+            async fn summarize_usage_by_provider_api_key_windows(
+                &self,
+                requests: &[$crate::repository::usage::ProviderApiKeyWindowUsageRequest],
+            ) -> Result<
+                Vec<$crate::repository::usage::StoredProviderApiKeyWindowUsageSummary>,
+                $crate::DataLayerError,
+            > {
+                let repository = self.materialize_read_model().await?;
+                <$crate::repository::usage::InMemoryUsageReadRepository as $crate::repository::usage::UsageReadRepository>::summarize_usage_by_provider_api_key_windows(&repository, requests).await
+            }
+
             async fn summarize_provider_usage_since(
                 &self,
                 provider_id: &str,
@@ -352,9 +363,10 @@ mod sqlite;
 
 #[allow(unused_imports)]
 pub(crate) use aether_data_contracts::repository::usage::{
-    PendingUsageCleanupSummary, StoredProviderApiKeyUsageSummary, StoredProviderUsageSummary,
-    StoredProviderUsageWindow, StoredRequestUsageAudit, StoredUsageAuditAggregation,
-    StoredUsageAuditSummary, StoredUsageBreakdownSummaryRow, StoredUsageCacheAffinityHitSummary,
+    PendingUsageCleanupSummary, ProviderApiKeyWindowUsageRequest, StoredProviderApiKeyUsageSummary,
+    StoredProviderApiKeyWindowUsageSummary, StoredProviderUsageSummary, StoredProviderUsageWindow,
+    StoredRequestUsageAudit, StoredUsageAuditAggregation, StoredUsageAuditSummary,
+    StoredUsageBreakdownSummaryRow, StoredUsageCacheAffinityHitSummary,
     StoredUsageCacheAffinityIntervalRow, StoredUsageCacheHitSummary, StoredUsageCostSavingsSummary,
     StoredUsageDailySummary, StoredUsageDashboardDailyBreakdownRow,
     StoredUsageDashboardProviderCount, StoredUsageDashboardSummary,

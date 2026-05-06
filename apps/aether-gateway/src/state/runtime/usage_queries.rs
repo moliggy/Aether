@@ -345,6 +345,16 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
+    pub(crate) async fn summarize_usage_by_provider_api_key_windows(
+        &self,
+        requests: &[usage::ProviderApiKeyWindowUsageRequest],
+    ) -> Result<Vec<usage::StoredProviderApiKeyWindowUsageSummary>, GatewayError> {
+        self.data
+            .summarize_usage_by_provider_api_key_windows(requests)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
     pub(crate) async fn list_users_by_ids(
         &self,
         user_ids: &[String],

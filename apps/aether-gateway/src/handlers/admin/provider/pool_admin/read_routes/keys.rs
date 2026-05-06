@@ -253,6 +253,26 @@ pub(super) async fn build_admin_pool_list_keys_response(
         }
         _ => AdminProviderPoolRuntimeState::default(),
     };
+    let codex_window_usage_requests =
+        pool_payloads::build_admin_pool_codex_window_usage_requests(&provider.provider_type, &keys);
+    let codex_window_usage_by_key: pool_payloads::AdminPoolCodexWindowUsageByKey =
+        if codex_window_usage_requests.is_empty() {
+            pool_payloads::AdminPoolCodexWindowUsageByKey::new()
+        } else {
+            state
+                .app()
+                .summarize_usage_by_provider_api_key_windows(&codex_window_usage_requests)
+                .await?
+                .into_iter()
+                .map(|usage| {
+                    (
+                        (usage.provider_api_key_id.clone(), usage.window_code.clone()),
+                        usage,
+                    )
+                })
+                .collect()
+        };
+
     let items = keys
         .into_iter()
         .map(|key| {
@@ -263,6 +283,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
                 &key,
                 &runtime,
                 pool_config.clone(),
+                &codex_window_usage_by_key,
             )
         })
         .collect::<Vec<_>>();

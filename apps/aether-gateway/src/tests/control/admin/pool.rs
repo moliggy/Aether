@@ -2,7 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY};
 use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data::repository::usage::InMemoryUsageReadRepository;
 use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
+use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
 use axum::body::{to_bytes, Body, Bytes};
 use axum::routing::{any, get, post};
 use axum::{extract::Request, Router};
@@ -20,6 +22,54 @@ use crate::constants::{
 };
 use crate::control::resolve_public_request_context;
 use crate::data::GatewayDataState;
+
+fn sample_pool_usage_row(
+    request_id: &str,
+    provider_api_key_id: &str,
+    created_at_unix_secs: i64,
+    total_tokens: i32,
+    total_cost_usd: f64,
+) -> StoredRequestUsageAudit {
+    StoredRequestUsageAudit::new(
+        format!("usage-{request_id}"),
+        request_id.to_string(),
+        Some("user-codex".to_string()),
+        Some("api-key-codex".to_string()),
+        Some("codex-user".to_string()),
+        Some("codex-api-key".to_string()),
+        "codex".to_string(),
+        "gpt-5-codex".to_string(),
+        None,
+        Some("provider-codex".to_string()),
+        Some("endpoint-codex".to_string()),
+        Some(provider_api_key_id.to_string()),
+        Some("responses".to_string()),
+        Some("openai:responses".to_string()),
+        Some("openai".to_string()),
+        Some("responses".to_string()),
+        Some("openai:responses".to_string()),
+        Some("openai".to_string()),
+        Some("responses".to_string()),
+        false,
+        false,
+        total_tokens,
+        0,
+        total_tokens,
+        total_cost_usd,
+        total_cost_usd,
+        Some(200),
+        None,
+        None,
+        Some(240),
+        Some(80),
+        "completed".to_string(),
+        "settled".to_string(),
+        created_at_unix_secs,
+        created_at_unix_secs + 1,
+        Some(created_at_unix_secs + 2),
+    )
+    .expect("usage row should build")
+}
 
 fn trusted_admin_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
@@ -791,6 +841,233 @@ async fn gateway_sorts_admin_pool_keys_by_imported_and_last_used_time() {
         .map(|item| item["key_name"].as_str().unwrap_or_default())
         .collect::<Vec<_>>();
     assert_eq!(last_used_names, vec!["active", "old", "fresh"]);
+}
+
+#[tokio::test]
+async fn gateway_pool_list_adds_codex_cycle_usage_to_quota_windows() {
+    const RESET_AT: u64 = 1_711_000_000;
+
+    let mut provider = sample_provider("provider-codex", "codex", 10).with_transport_fields(
+        true,
+        false,
+        true,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(json!({
+            "pool_advanced": {
+                "enabled": true
+            }
+        })),
+    );
+    provider.provider_type = "codex".to_string();
+
+    let mut usage_key = sample_key(
+        "key-codex-cycle",
+        "provider-codex",
+        "openai:responses",
+        "oauth-placeholder",
+    );
+    usage_key.name = "codex cycle usage".to_string();
+    usage_key.auth_type = "oauth".to_string();
+    usage_key.request_count = Some(4);
+    usage_key.total_tokens = 999;
+    usage_key.total_cost_usd = 9.99;
+    usage_key.status_snapshot = Some(json!({
+        "quota": {
+            "version": 2,
+            "provider_type": "codex",
+            "code": "ok",
+            "label": serde_json::Value::Null,
+            "reason": serde_json::Value::Null,
+            "freshness": "fresh",
+            "source": "response_headers",
+            "observed_at": RESET_AT,
+            "exhausted": false,
+            "usage_ratio": 0.0,
+            "updated_at": RESET_AT,
+            "reset_seconds": serde_json::Value::Null,
+            "plan_type": "plus",
+            "windows": [
+                {
+                    "code": "weekly",
+                    "label": "周",
+                    "scope": "account",
+                    "unit": "percent",
+                    "used_ratio": 0.0,
+                    "remaining_ratio": 1.0,
+                    "reset_at": RESET_AT,
+                    "reset_seconds": 604_800,
+                    "window_minutes": 10_080
+                },
+                {
+                    "code": "5h",
+                    "label": "5H",
+                    "scope": "account",
+                    "unit": "percent",
+                    "used_ratio": 0.0,
+                    "remaining_ratio": 1.0,
+                    "reset_at": RESET_AT,
+                    "reset_seconds": 18_000,
+                    "window_minutes": 300
+                }
+            ]
+        }
+    }));
+
+    let mut zero_key = sample_key(
+        "key-codex-zero",
+        "provider-codex",
+        "openai:responses",
+        "oauth-placeholder",
+    );
+    zero_key.name = "codex zero usage".to_string();
+    zero_key.auth_type = "oauth".to_string();
+    zero_key.status_snapshot = usage_key.status_snapshot.clone();
+
+    let mut invalid_key = sample_key(
+        "key-codex-invalid",
+        "provider-codex",
+        "openai:responses",
+        "oauth-placeholder",
+    );
+    invalid_key.name = "codex invalid window".to_string();
+    invalid_key.auth_type = "oauth".to_string();
+    invalid_key.status_snapshot = Some(json!({
+        "quota": {
+            "version": 2,
+            "provider_type": "codex",
+            "code": "ok",
+            "windows": [
+                {
+                    "code": "weekly",
+                    "label": "周",
+                    "reset_at": serde_json::Value::Null,
+                    "window_minutes": 10_080
+                },
+                {
+                    "code": "5h",
+                    "label": "5H",
+                    "reset_at": RESET_AT,
+                    "window_minutes": serde_json::Value::Null
+                }
+            ]
+        }
+    }));
+
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        Vec::new(),
+        vec![usage_key, zero_key, invalid_key],
+    ));
+    let usage_repository = Arc::new(InMemoryUsageReadRepository::seed(vec![
+        sample_pool_usage_row(
+            "req-5h-a",
+            "key-codex-cycle",
+            RESET_AT as i64 - 60,
+            100,
+            0.10,
+        ),
+        sample_pool_usage_row(
+            "req-5h-b",
+            "key-codex-cycle",
+            RESET_AT as i64 - 17_999,
+            125,
+            0.20,
+        ),
+        sample_pool_usage_row(
+            "req-weekly-only",
+            "key-codex-cycle",
+            RESET_AT as i64 - 18_001,
+            150,
+            0.30,
+        ),
+        sample_pool_usage_row(
+            "req-before-weekly",
+            "key-codex-cycle",
+            RESET_AT as i64 - 604_801,
+            200,
+            0.40,
+        ),
+    ]));
+    let state = AppState::new()
+        .expect("gateway should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_provider_catalog_and_usage_reader_for_tests(
+                provider_catalog_repository,
+                usage_repository,
+            ),
+        );
+
+    let response = local_admin_pool_response(
+        &state,
+        http::Method::GET,
+        "/api/admin/pool/provider-codex/keys?page=1&page_size=50&status=all",
+        None,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = serde_json::from_slice(
+        &to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read"),
+    )
+    .expect("json body should parse");
+    let keys = payload["keys"].as_array().expect("keys should be array");
+    fn key_by_id<'a>(keys: &'a [serde_json::Value], key_id: &str) -> &'a serde_json::Value {
+        keys.iter()
+            .find(|key| key["key_id"] == json!(key_id))
+            .expect("key payload should exist")
+    }
+
+    fn window_by_code<'a>(key_payload: &'a serde_json::Value, code: &str) -> &'a serde_json::Value {
+        key_payload["status_snapshot"]["quota"]["windows"]
+            .as_array()
+            .expect("quota windows should be array")
+            .iter()
+            .find(|window| window["code"] == json!(code))
+            .expect("quota window should exist")
+    }
+
+    let usage_key_payload = key_by_id(keys, "key-codex-cycle");
+    let five_hour_window = window_by_code(usage_key_payload, "5h");
+    let weekly_window = window_by_code(usage_key_payload, "weekly");
+    assert_eq!(five_hour_window["usage"]["request_count"], json!(2));
+    assert_eq!(five_hour_window["usage"]["total_tokens"], json!(225));
+    assert_eq!(
+        five_hour_window["usage"]["total_cost_usd"],
+        json!("0.30000000")
+    );
+    assert_eq!(weekly_window["usage"]["request_count"], json!(3));
+    assert_eq!(weekly_window["usage"]["total_tokens"], json!(375));
+    assert_eq!(
+        weekly_window["usage"]["total_cost_usd"],
+        json!("0.60000000")
+    );
+    assert_eq!(usage_key_payload["request_count"], json!(4));
+    assert_eq!(usage_key_payload["total_tokens"], json!(999));
+    assert_eq!(usage_key_payload["total_cost_usd"], json!("9.99000000"));
+
+    let zero_key_payload = key_by_id(keys, "key-codex-zero");
+    assert_eq!(
+        window_by_code(zero_key_payload, "5h")["usage"]["request_count"],
+        json!(0)
+    );
+    assert_eq!(
+        window_by_code(zero_key_payload, "weekly")["usage"]["total_tokens"],
+        json!(0)
+    );
+
+    let invalid_key_payload = key_by_id(keys, "key-codex-invalid");
+    assert!(window_by_code(invalid_key_payload, "5h")
+        .get("usage")
+        .is_none());
+    assert!(window_by_code(invalid_key_payload, "weekly")
+        .get("usage")
+        .is_none());
 }
 
 #[tokio::test]

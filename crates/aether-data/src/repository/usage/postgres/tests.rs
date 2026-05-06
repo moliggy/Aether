@@ -235,6 +235,21 @@ fn usage_sql_summarizes_usage_by_provider_api_key_ids_in_database() {
 }
 
 #[test]
+fn usage_sql_summarizes_provider_key_window_usage_from_billing_facts() {
+    assert!(super::SUMMARIZE_PROVIDER_API_KEY_WINDOW_USAGE_SQL.contains("UNNEST"));
+    assert!(super::SUMMARIZE_PROVIDER_API_KEY_WINDOW_USAGE_SQL
+        .contains("LEFT JOIN usage_billing_facts AS \"usage\""));
+    assert!(
+        super::SUMMARIZE_PROVIDER_API_KEY_WINDOW_USAGE_SQL.contains("created_at >= to_timestamp")
+    );
+    assert!(
+        super::SUMMARIZE_PROVIDER_API_KEY_WINDOW_USAGE_SQL.contains("created_at < to_timestamp")
+    );
+    assert!(super::SUMMARIZE_PROVIDER_API_KEY_WINDOW_USAGE_SQL
+        .contains("COUNT(\"usage\".id)::BIGINT AS request_count"));
+}
+
+#[test]
 fn usage_sql_serializes_request_id_upserts_before_reading_previous_usage() {
     assert!(super::LOCK_USAGE_REQUEST_ID_SQL.contains("pg_advisory_xact_lock"));
     assert!(super::LOCK_USAGE_REQUEST_ID_SQL.contains("hashtext($1)::BIGINT"));
@@ -455,6 +470,8 @@ fn usage_sql_raw_aggregates_use_canonical_billing_facts() {
         .contains("FROM usage_billing_facts AS \"usage\""));
     assert!(super::SUMMARIZE_USAGE_TOTALS_BY_USER_IDS_SQL
         .contains("FROM usage_billing_facts AS \"usage\""));
+    assert!(super::SUMMARIZE_PROVIDER_API_KEY_WINDOW_USAGE_SQL
+        .contains("usage_billing_facts AS \"usage\""));
 }
 
 #[test]

@@ -38,7 +38,8 @@ use super::{
     api_key_usage_contribution, incoming_usage_can_recover_terminal_failure,
     model_usage_contribution, provider_api_key_usage_contribution,
     strip_deprecated_usage_display_fields, ApiKeyUsageDelta, ModelUsageDelta,
-    PendingUsageCleanupSummary, ProviderApiKeyUsageDelta, StoredProviderApiKeyUsageSummary,
+    PendingUsageCleanupSummary, ProviderApiKeyUsageDelta, ProviderApiKeyWindowUsageRequest,
+    StoredProviderApiKeyUsageSummary, StoredProviderApiKeyWindowUsageSummary,
     StoredProviderUsageSummary, StoredRequestUsageAudit, StoredUsageDailySummary,
     UpsertUsageRecord, UsageAuditListQuery, UsageDailyHeatmapQuery, UsageReadRepository,
     UsageWriteRepository,
@@ -1313,6 +1314,9 @@ const SUMMARIZE_USAGE_TOTALS_BY_USER_IDS_SQL: &str =
 
 const SUMMARIZE_USAGE_BY_PROVIDER_API_KEY_IDS_SQL: &str =
     include_str!("queries/summarize_usage_by_provider_api_key_ids_sql.sql");
+
+const SUMMARIZE_PROVIDER_API_KEY_WINDOW_USAGE_SQL: &str =
+    include_str!("queries/summarize_provider_api_key_window_usage_sql.sql");
 
 const APPLY_API_KEY_USAGE_DELTA_SQL: &str =
     include_str!("queries/apply_api_key_usage_delta_sql.sql");
@@ -7225,6 +7229,98 @@ ORDER BY "usage".user_id ASC
         Ok(summaries)
     }
 
+    pub async fn summarize_usage_by_provider_api_key_windows(
+        &self,
+        requests: &[ProviderApiKeyWindowUsageRequest],
+    ) -> Result<Vec<StoredProviderApiKeyWindowUsageSummary>, DataLayerError> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut provider_api_key_ids = Vec::with_capacity(requests.len());
+        let mut window_codes = Vec::with_capacity(requests.len());
+        let mut start_unix_secs = Vec::with_capacity(requests.len());
+        let mut end_unix_secs = Vec::with_capacity(requests.len());
+
+        for request in requests {
+            let provider_api_key_id = request.provider_api_key_id.trim();
+            if provider_api_key_id.is_empty() {
+                return Err(DataLayerError::InvalidInput(
+                    "provider api key window usage provider_api_key_id cannot be empty".to_string(),
+                ));
+            }
+            let window_code = request.window_code.trim();
+            if window_code.is_empty() {
+                return Err(DataLayerError::InvalidInput(
+                    "provider api key window usage window_code cannot be empty".to_string(),
+                ));
+            }
+            if request.start_unix_secs >= request.end_unix_secs {
+                return Err(DataLayerError::InvalidInput(
+                    "provider api key window usage range must be non-empty".to_string(),
+                ));
+            }
+
+            provider_api_key_ids.push(provider_api_key_id.to_string());
+            window_codes.push(window_code.to_string());
+            start_unix_secs.push(i64::try_from(request.start_unix_secs).map_err(|_| {
+                DataLayerError::InvalidInput(
+                    "provider api key window usage start_unix_secs is out of range".to_string(),
+                )
+            })?);
+            end_unix_secs.push(i64::try_from(request.end_unix_secs).map_err(|_| {
+                DataLayerError::InvalidInput(
+                    "provider api key window usage end_unix_secs is out of range".to_string(),
+                )
+            })?);
+        }
+
+        let mut rows = sqlx::query(SUMMARIZE_PROVIDER_API_KEY_WINDOW_USAGE_SQL)
+            .bind(&provider_api_key_ids)
+            .bind(&window_codes)
+            .bind(&start_unix_secs)
+            .bind(&end_unix_secs)
+            .fetch(&self.pool);
+
+        let mut summaries = Vec::new();
+        while let Some(row) = rows.try_next().await.map_postgres_err()? {
+            let total_cost_usd = row.try_get::<f64, _>("total_cost_usd").map_postgres_err()?;
+            if !total_cost_usd.is_finite() {
+                return Err(DataLayerError::UnexpectedValue(
+                    "usage.total_cost_usd window aggregate is not finite".to_string(),
+                ));
+            }
+
+            summaries.push(StoredProviderApiKeyWindowUsageSummary {
+                provider_api_key_id: row
+                    .try_get::<String, _>("provider_api_key_id")
+                    .map_postgres_err()?,
+                window_code: row.try_get::<String, _>("window_code").map_postgres_err()?,
+                request_count: row
+                    .try_get::<i64, _>("request_count")
+                    .map_postgres_err()?
+                    .try_into()
+                    .map_err(|_| {
+                        DataLayerError::UnexpectedValue(
+                            "usage.request_count window aggregate is negative".to_string(),
+                        )
+                    })?,
+                total_tokens: row
+                    .try_get::<i64, _>("total_tokens")
+                    .map_postgres_err()?
+                    .try_into()
+                    .map_err(|_| {
+                        DataLayerError::UnexpectedValue(
+                            "usage.total_tokens window aggregate is negative".to_string(),
+                        )
+                    })?,
+                total_cost_usd,
+            });
+        }
+
+        Ok(summaries)
+    }
+
     pub async fn upsert(
         &self,
         usage: UpsertUsageRecord,
@@ -8042,6 +8138,13 @@ impl UsageReadRepository for SqlxUsageReadRepository {
     ) -> Result<std::collections::BTreeMap<String, StoredProviderApiKeyUsageSummary>, DataLayerError>
     {
         Self::summarize_usage_by_provider_api_key_ids(self, provider_api_key_ids).await
+    }
+
+    async fn summarize_usage_by_provider_api_key_windows(
+        &self,
+        requests: &[ProviderApiKeyWindowUsageRequest],
+    ) -> Result<Vec<StoredProviderApiKeyWindowUsageSummary>, DataLayerError> {
+        Self::summarize_usage_by_provider_api_key_windows(self, requests).await
     }
 
     async fn summarize_provider_usage_since(

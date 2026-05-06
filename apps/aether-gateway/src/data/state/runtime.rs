@@ -30,8 +30,9 @@ use super::{
     WalletLookupKey, WalletMutationOutcome,
 };
 use aether_data_contracts::repository::usage::{
-    PendingUsageCleanupSummary, StoredUsageDailySummary, UsageAuditListQuery, UsageCleanupSummary,
-    UsageCleanupWindow, UsageDailyHeatmapQuery,
+    PendingUsageCleanupSummary, ProviderApiKeyWindowUsageRequest,
+    StoredProviderApiKeyWindowUsageSummary, StoredUsageDailySummary, UsageAuditListQuery,
+    UsageCleanupSummary, UsageCleanupWindow, UsageDailyHeatmapQuery,
 };
 use aether_video_tasks_core::read_data_backed_video_task_response;
 
@@ -1363,6 +1364,20 @@ impl GatewayDataState {
                     .await
             }
             None => Ok(std::collections::BTreeMap::new()),
+        }
+    }
+
+    pub(crate) async fn summarize_usage_by_provider_api_key_windows(
+        &self,
+        requests: &[ProviderApiKeyWindowUsageRequest],
+    ) -> Result<Vec<StoredProviderApiKeyWindowUsageSummary>, DataLayerError> {
+        match &self.usage_reader {
+            Some(repository) => {
+                repository
+                    .summarize_usage_by_provider_api_key_windows(requests)
+                    .await
+            }
+            None => Ok(Vec::new()),
         }
     }
 
