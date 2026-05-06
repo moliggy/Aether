@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Map, Value};
 
 use super::super::auth::build_openai_passthrough_headers;
+use super::fingerprint::header_fingerprint_from_fingerprint;
 
 const DEFAULT_ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_ACCEPT: &str = "application/json";
@@ -92,8 +93,8 @@ pub fn build_claude_code_passthrough_headers(
         out.remove("x-stainless-helper-method");
     }
 
-    // Override from fingerprint: all mapped fields are applied uniformly.
-    if let Some(fp) = fingerprint.and_then(Value::as_object) {
+    // Override from the formal transport profile header fingerprint.
+    if let Some(fp) = fingerprint.and_then(header_fingerprint_from_fingerprint) {
         for &(fp_key, header_key) in FINGERPRINT_HEADER_MAP {
             if let Some(value) = fp
                 .get(fp_key)
@@ -225,7 +226,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn claude_code_headers_merge_required_betas_and_stream_helper() {
+    fn claude_code_headers_use_transport_profile_header_fingerprint_and_merge_required_betas() {
         let mut headers = http::HeaderMap::new();
         headers.insert(
             "anthropic-beta",
@@ -242,10 +243,15 @@ mod tests {
             &BTreeMap::new(),
             true,
             Some(&json!({
-                "user_agent":"Claude-Code/9.9",
-                "stainless_package_version":"1.0.5",
-                "stainless_runtime_version":"v22.12.0",
-                "stainless_timeout":"900"
+                "transport_profile": {
+                    "profile_id": "claude_code_nodejs",
+                    "header_fingerprint": {
+                        "user_agent":"Claude-Code/9.9",
+                        "stainless_package_version":"1.0.5",
+                        "stainless_runtime_version":"v22.12.0",
+                        "stainless_timeout":"900"
+                    }
+                }
             })),
         );
 

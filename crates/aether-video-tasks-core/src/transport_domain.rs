@@ -30,7 +30,7 @@ impl LocalVideoTaskTransport {
             content_type: plan.content_type.clone(),
             model_name: plan.model_name.clone(),
             proxy: plan.proxy.clone(),
-            tls_profile: None,
+            transport_profile: plan.transport_profile.clone(),
             timeouts: plan.timeouts.clone(),
         })
     }
@@ -49,7 +49,7 @@ impl LocalVideoTaskTransport {
             content_type: input.content_type,
             model_name: input.model_name,
             proxy: input.proxy,
-            tls_profile: input.tls_profile,
+            transport_profile: input.transport_profile,
             timeouts: input.timeouts,
         }
     }

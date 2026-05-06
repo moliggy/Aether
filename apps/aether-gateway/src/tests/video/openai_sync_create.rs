@@ -194,7 +194,7 @@ async fn gateway_executes_openai_video_create_via_local_decision_gate_with_local
             None,
             None,
             None,
-            Some(json!({"tls_profile":"chrome_136"})),
+            Some(json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build")
     }
@@ -726,7 +726,7 @@ async fn gateway_executes_openai_video_remix_via_data_backed_local_follow_up_wit
                             "content_type": "application/json",
                             "model_name": "sora-2-upstream",
                             "proxy": null,
-                            "tls_profile": null,
+                            "transport_profile": null,
                             "timeouts": null
                         }
                     }

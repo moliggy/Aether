@@ -108,7 +108,7 @@ fn sample_gemini_video_task(
                         "content_type": "application/json",
                         "model_name": "veo-3-upstream",
                         "proxy": null,
-                        "tls_profile": null,
+                        "transport_profile": null,
                         "timeouts": null
                     }
                 }

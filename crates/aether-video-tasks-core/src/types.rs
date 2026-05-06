@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use aether_contracts::{ExecutionPlan, ExecutionTimeouts, ProxySnapshot};
+use aether_contracts::{ExecutionPlan, ExecutionTimeouts, ProxySnapshot, ResolvedTransportProfile};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -100,7 +100,7 @@ pub struct LocalVideoTaskTransport {
     pub content_type: Option<String>,
     pub model_name: Option<String>,
     pub proxy: Option<ProxySnapshot>,
-    pub tls_profile: Option<String>,
+    pub transport_profile: Option<ResolvedTransportProfile>,
     pub timeouts: Option<ExecutionTimeouts>,
 }
 
@@ -116,7 +116,7 @@ pub struct LocalVideoTaskTransportBridgeInput {
     pub content_type: Option<String>,
     pub model_name: Option<String>,
     pub proxy: Option<ProxySnapshot>,
-    pub tls_profile: Option<String>,
+    pub transport_profile: Option<ResolvedTransportProfile>,
     pub timeouts: Option<ExecutionTimeouts>,
 }
 

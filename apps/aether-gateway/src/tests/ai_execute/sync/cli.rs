@@ -191,7 +191,7 @@ async fn gateway_executes_openai_responses_sync_via_local_decision_gate_with_loc
             None,
             None,
             Some(serde_json::json!({"enabled": true, "node_id":"proxy-node-openai-cli-local"})),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build")
     }
@@ -1418,7 +1418,7 @@ async fn gateway_returns_openai_responses_error_for_local_sync_failure() {
             None,
             None,
             Some(serde_json::json!({"enabled": true, "node_id":"proxy-node-openai-cli-local"})),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build")
     }

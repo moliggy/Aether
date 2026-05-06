@@ -697,7 +697,7 @@ async fn data_state_reads_decrypted_provider_transport_snapshot() {
             Some(serde_json::json!(["gpt-4.1", "gpt-4.1-mini"])),
             Some(1_800_000_000),
             Some(serde_json::json!({"node_id":"proxy-node-1"})),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build");
     let repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(

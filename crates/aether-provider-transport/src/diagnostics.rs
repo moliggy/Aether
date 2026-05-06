@@ -9,7 +9,7 @@ use crate::conversion::{
     request_pair_allowed_for_transport,
 };
 use crate::network::{
-    resolve_transport_profile, resolve_transport_tls_profile, transport_proxy_is_locally_supported,
+    resolve_transport_profile, resolve_transport_profile_id, transport_proxy_is_locally_supported,
 };
 use crate::policy::{
     local_gemini_transport_unsupported_reason_with_network,
@@ -68,17 +68,9 @@ pub fn build_transport_diagnostics(
     client_api_format: &str,
     provider_api_format: &str,
 ) -> Value {
-    let resolved_tls_profile = resolve_transport_tls_profile(transport);
+    let resolved_transport_profile_id = resolve_transport_profile_id(transport);
     let resolved_transport_profile = resolve_transport_profile(transport)
         .and_then(|profile| serde_json::to_value(profile).ok())
-        .unwrap_or(Value::Null);
-    let configured_tls_profile = transport
-        .key
-        .fingerprint
-        .as_ref()
-        .and_then(Value::as_object)
-        .and_then(|value| value.get("tls_profile"))
-        .cloned()
         .unwrap_or(Value::Null);
     let configured_key_transport_profile = transport
         .key
@@ -132,10 +124,9 @@ pub fn build_transport_diagnostics(
             "oauth_request_auth_resolution_supported": oauth_resolution_supported,
         },
         "fingerprint": transport.key.fingerprint,
-        "configured_tls_profile": configured_tls_profile,
         "configured_key_transport_profile": configured_key_transport_profile,
         "configured_provider_transport_profile": configured_provider_transport_profile,
-        "resolved_tls_profile": resolved_tls_profile,
+        "resolved_transport_profile_id": resolved_transport_profile_id,
         "resolved_transport_profile": resolved_transport_profile,
         "request_pair": {
             "client_api_format": client_api_format,
@@ -332,8 +323,12 @@ mod tests {
                 expires_at_unix_secs: None,
                 proxy: None,
                 fingerprint: Some(json!({
-                    "tls_profile": "chrome_136",
-                    "user_agent": "Mozilla/5.0"
+                    "transport_profile": {
+                        "profile_id": "chrome_136",
+                        "header_fingerprint": {
+                            "user_agent": "Mozilla/5.0"
+                        }
+                    }
                 })),
                 decrypted_api_key: "sk-test".to_string(),
                 decrypted_auth_config: None,
@@ -402,8 +397,11 @@ mod tests {
             build_transport_diagnostics(&sample_transport(), "claude:messages", "openai:responses");
 
         assert_eq!(diagnostics["provider_type"], "codex");
-        assert_eq!(diagnostics["fingerprint"]["tls_profile"], "chrome_136");
-        assert_eq!(diagnostics["resolved_tls_profile"], "chrome_136");
+        assert_eq!(
+            diagnostics["fingerprint"]["transport_profile"]["profile_id"],
+            "chrome_136"
+        );
+        assert_eq!(diagnostics["resolved_transport_profile_id"], "chrome_136");
         assert_eq!(
             diagnostics["request_pair"]["conversion_enabled"],
             Value::Bool(true)

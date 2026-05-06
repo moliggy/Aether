@@ -1,5 +1,8 @@
 use super::super::snapshot::GatewayProviderTransportSnapshot;
-use super::super::{resolve_transport_profile, transport_proxy_is_locally_supported};
+use super::super::{
+    resolve_transport_profile, transport_profile_is_configured,
+    transport_proxy_is_locally_supported,
+};
 use super::{
     body_rules_are_locally_supported, header_rules_are_locally_supported,
     supports_local_kiro_request_auth_resolution, supports_local_kiro_request_shape, PROVIDER_TYPE,
@@ -48,8 +51,9 @@ pub fn local_kiro_request_transport_unsupported_reason_with_network(
     if !transport_proxy_is_locally_supported(transport) {
         return Some("transport_proxy_unsupported");
     }
-    if transport.key.fingerprint.is_some() && resolve_transport_profile(transport).is_none() {
-        return Some("transport_tls_profile_unsupported");
+    if transport_profile_is_configured(transport) && resolve_transport_profile(transport).is_none()
+    {
+        return Some("transport_profile_unsupported");
     }
 
     None

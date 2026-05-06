@@ -232,7 +232,7 @@ async fn gateway_executes_gemini_video_cancel_via_data_backed_local_follow_up_wi
                             "content_type": "application/json",
                             "model_name": "veo-3-upstream",
                             "proxy": null,
-                            "tls_profile": null,
+                            "transport_profile": null,
                             "timeouts": null
                         }
                     }

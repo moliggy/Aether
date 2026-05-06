@@ -245,7 +245,7 @@ async fn gateway_executes_kiro_claude_cli_stream_via_local_provider_catalog_cand
             Some(
                 serde_json::json!({"enabled": true, "node_id":"proxy-node-kiro-cli-local-stream"}),
             ),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build")
     }
@@ -734,7 +734,7 @@ async fn gateway_executes_claude_cli_stream_via_local_decision_gate_without_wait
             None,
             None,
             Some(serde_json::json!({"enabled": true, "node_id":"proxy-node-claude-cli-local"})),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build")
     }
@@ -1196,8 +1196,12 @@ async fn gateway_executes_claude_code_cli_stream_via_local_decision_gate_with_lo
                 serde_json::json!({"enabled": true, "node_id":"proxy-node-claude-code-cli-local"}),
             ),
             Some(serde_json::json!({
-                "tls_profile":"claude_code_nodejs",
-                "user_agent":"Claude-Code/9.9"
+                "transport_profile": {
+                    "profile_id": "claude_code_nodejs",
+                    "header_fingerprint": {
+                        "user_agent":"Claude-Code/9.9"
+                    }
+                }
             })),
         )
         .expect("key transport should build")
@@ -1709,7 +1713,7 @@ async fn gateway_executes_claude_chat_stream_via_local_decision_gate_with_local_
             None,
             None,
             Some(serde_json::json!({"enabled": true, "node_id":"proxy-node-claude-chat-stream"})),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build")
     }

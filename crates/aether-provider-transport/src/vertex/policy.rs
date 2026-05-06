@@ -1,7 +1,8 @@
 use super::super::snapshot::GatewayProviderTransportSnapshot;
 use super::super::{
     body_rules_are_locally_supported, header_rules_are_locally_supported,
-    resolve_transport_profile, resolve_transport_tls_profile, transport_proxy_is_locally_supported,
+    resolve_transport_profile, transport_profile_is_configured,
+    transport_proxy_is_locally_supported,
 };
 use super::auth::resolve_local_vertex_api_key_query_auth;
 
@@ -46,8 +47,9 @@ pub fn local_vertex_api_key_gemini_transport_unsupported_reason_with_network(
     if !transport_proxy_is_locally_supported(transport) {
         return Some("transport_proxy_unsupported");
     }
-    if transport.key.fingerprint.is_some() && resolve_transport_profile(transport).is_none() {
-        return Some("transport_tls_profile_unsupported");
+    if transport_profile_is_configured(transport) && resolve_transport_profile(transport).is_none()
+    {
+        return Some("transport_profile_unsupported");
     }
 
     None
@@ -122,9 +124,6 @@ fn supports_local_vertex_api_key_same_format_transport(
         .custom_path
         .as_deref()
         .is_some_and(|value: &str| !value.trim().is_empty());
-    let has_tls_profile = resolve_transport_tls_profile(transport)
-        .as_deref()
-        .is_some_and(|value: &str| !value.trim().is_empty());
     if has_custom_path && !allow_network_passthrough {
         return false;
     }
@@ -133,13 +132,15 @@ fn supports_local_vertex_api_key_same_format_transport(
         if !transport_proxy_is_locally_supported(transport) {
             return false;
         }
-        if transport.key.fingerprint.is_some() && resolve_transport_profile(transport).is_none() {
+        if transport_profile_is_configured(transport)
+            && resolve_transport_profile(transport).is_none()
+        {
             return false;
         }
     } else if transport.provider.proxy.is_some()
         || transport.endpoint.proxy.is_some()
         || transport.key.proxy.is_some()
-        || has_tls_profile
+        || transport_profile_is_configured(transport)
     {
         return false;
     }
@@ -254,7 +255,7 @@ mod tests {
         transport.endpoint.custom_path =
             Some("/v1/publishers/google/models/gemini-2.5-pro:generateContent".to_string());
         transport.key.proxy = Some(json!({"url":"http://proxy.example:8080"}));
-        transport.key.fingerprint = Some(json!({"tls_profile":"chrome_136"}));
+        transport.key.fingerprint = Some(json!({"transport_profile":"chrome_136"}));
         assert!(!supports_local_vertex_api_key_gemini_transport(&transport));
         assert!(supports_local_vertex_api_key_gemini_transport_with_network(
             &transport

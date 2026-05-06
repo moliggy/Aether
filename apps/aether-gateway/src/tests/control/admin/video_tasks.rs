@@ -581,7 +581,7 @@ async fn gateway_cancels_admin_video_task_locally_with_trusted_admin_principal()
                     "content_type": "application/json",
                     "model_name": "sora-2-upstream",
                     "proxy": null,
-                    "tls_profile": null,
+                    "transport_profile": null,
                     "timeouts": null
                 }
             }

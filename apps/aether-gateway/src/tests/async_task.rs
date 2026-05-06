@@ -552,7 +552,7 @@ async fn gateway_cancels_openai_video_task_via_internal_async_task_endpoint() {
                     "content_type": "application/json",
                     "model_name": "sora-2-upstream",
                     "proxy": null,
-                    "tls_profile": null,
+                    "transport_profile": null,
                     "timeouts": null
                 }
             }
@@ -714,7 +714,7 @@ async fn gateway_cancels_openai_video_task_via_internal_async_task_endpoint_with
                     "content_type": "application/json",
                     "model_name": "sora-2-upstream",
                     "proxy": null,
-                    "tls_profile": null,
+                    "transport_profile": null,
                     "timeouts": null
                 }
             }

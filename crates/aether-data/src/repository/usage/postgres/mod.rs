@@ -6477,13 +6477,14 @@ ORDER BY request_count DESC, group_key ASC
         query: &UsageAuditAggregationQuery,
     ) -> Result<Vec<StoredUsageAuditAggregation>, DataLayerError> {
         let fragments = usage_audit_aggregation_sql_fragments(query.group_by);
-        let provider_extra_where = if matches!(query.group_by, UsageAuditAggregationGroupBy::Provider)
-            || query.exclude_reserved_provider_labels
-        {
-            USAGE_RESERVED_PROVIDER_LABELS_FILTER_SQL
-        } else {
-            ""
-        };
+        let provider_extra_where =
+            if matches!(query.group_by, UsageAuditAggregationGroupBy::Provider)
+                || query.exclude_reserved_provider_labels
+            {
+                USAGE_RESERVED_PROVIDER_LABELS_FILTER_SQL
+            } else {
+                ""
+            };
         let sql = format!(
             r#"
 WITH filtered_usage AS (

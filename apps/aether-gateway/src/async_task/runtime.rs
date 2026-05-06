@@ -635,7 +635,7 @@ mod tests {
                 content_type: Some("application/json".to_string()),
                 model_name: Some("sora-2".to_string()),
                 proxy: None,
-                tls_profile: None,
+                transport_profile: None,
                 timeouts: None,
             },
         });

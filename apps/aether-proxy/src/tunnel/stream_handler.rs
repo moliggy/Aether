@@ -1702,6 +1702,7 @@ mod tests {
             backend: "reqwest_rustls".to_string(),
             http_mode: "auto".to_string(),
             pool_scope: "key".to_string(),
+            header_fingerprint: None,
             extra: None,
         });
         let mut second = first.clone();

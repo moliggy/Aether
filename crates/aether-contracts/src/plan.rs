@@ -74,6 +74,8 @@ pub struct ResolvedTransportProfile {
     pub backend: String,
     pub http_mode: String,
     pub pool_scope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_fingerprint: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
 }
@@ -85,18 +87,7 @@ impl Default for ResolvedTransportProfile {
             backend: TRANSPORT_BACKEND_REQWEST_RUSTLS.to_string(),
             http_mode: TRANSPORT_HTTP_MODE_AUTO.to_string(),
             pool_scope: TRANSPORT_POOL_SCOPE_KEY.to_string(),
-            extra: None,
-        }
-    }
-}
-
-impl ResolvedTransportProfile {
-    pub fn from_legacy_tls_profile(profile_id: impl Into<String>) -> Self {
-        Self {
-            profile_id: profile_id.into(),
-            backend: TRANSPORT_BACKEND_REQWEST_RUSTLS.to_string(),
-            http_mode: TRANSPORT_HTTP_MODE_AUTO.to_string(),
-            pool_scope: TRANSPORT_POOL_SCOPE_KEY.to_string(),
+            header_fingerprint: None,
             extra: None,
         }
     }

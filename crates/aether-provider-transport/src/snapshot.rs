@@ -318,7 +318,7 @@ mod tests {
             Some(serde_json::json!(["gpt-4.1", "gpt-4.1-mini"])),
             Some(1_800_000_000),
             Some(serde_json::json!({"node_id":"proxy-node-1"})),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport fields should build")
     }
@@ -397,7 +397,7 @@ mod tests {
                     global_priority_by_format: Some(serde_json::json!({"openai:chat": 1})),
                     expires_at_unix_secs: Some(1_800_000_000),
                     proxy: Some(serde_json::json!({"node_id":"proxy-node-1"})),
-                    fingerprint: Some(serde_json::json!({"tls_profile":"chrome_136"})),
+                    fingerprint: Some(serde_json::json!({"transport_profile":"chrome_136"})),
                     decrypted_api_key: "sk-live-openai".to_string(),
                     decrypted_auth_config: Some(
                         "{\"refresh_token\":\"rt-1\",\"project\":\"demo\"}".to_string(),

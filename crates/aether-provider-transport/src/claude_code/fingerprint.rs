@@ -1,3 +1,6 @@
+use aether_contracts::{
+    TRANSPORT_BACKEND_REQWEST_RUSTLS, TRANSPORT_HTTP_MODE_AUTO, TRANSPORT_POOL_SCOPE_KEY,
+};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -53,6 +56,7 @@ const STAINLESS_PACKAGE_VERSIONS: &[&str] = &["0.68.0", "0.69.0", "0.70.0", "0.7
 const NODE_VERSIONS: &[&str] = &["v20.18.1", "v22.12.0", "v22.14.0", "v24.13.0"];
 const ELECTRON_VERSIONS: &[&str] = &["35.5.1", "36.7.1", "37.3.0", "38.7.0", "39.2.3"];
 const STAINLESS_TIMEOUTS: &[&str] = &["600", "900"];
+const CLAUDE_CODE_TRANSPORT_PROFILE_ID: &str = "claude_code_nodejs";
 
 /// Deterministic hash-based index picker, compatible with Python implementation.
 /// Each `slot` produces a different selection from the same seed.
@@ -122,9 +126,12 @@ fn resolve_platform_token(os: &str, arch: &str) -> &'static str {
     }
 }
 
-/// Generate a complete fingerprint JSON from a seed (deterministic).
-/// Compatible with the Python `generate_fingerprint(seed=...)` output.
+/// Generate a complete Claude Code transport fingerprint from a seed.
 pub fn generate_fingerprint(seed: &str) -> Value {
+    wrap_header_fingerprint(generate_header_fingerprint(seed))
+}
+
+fn generate_header_fingerprint(seed: &str) -> Value {
     let picker = SeededPicker::new(seed);
 
     let impersonate =
@@ -163,6 +170,26 @@ pub fn generate_fingerprint(seed: &str) -> Value {
     })
 }
 
+fn wrap_header_fingerprint(header_fingerprint: Value) -> Value {
+    serde_json::json!({
+        "transport_profile": {
+            "profile_id": CLAUDE_CODE_TRANSPORT_PROFILE_ID,
+            "backend": TRANSPORT_BACKEND_REQWEST_RUSTLS,
+            "http_mode": TRANSPORT_HTTP_MODE_AUTO,
+            "pool_scope": TRANSPORT_POOL_SCOPE_KEY,
+            "header_fingerprint": header_fingerprint,
+        }
+    })
+}
+
+pub fn header_fingerprint_from_fingerprint(fingerprint: &Value) -> Option<&Map<String, Value>> {
+    fingerprint
+        .get("transport_profile")
+        .and_then(Value::as_object)
+        .and_then(|profile| profile.get("header_fingerprint"))
+        .and_then(Value::as_object)
+}
+
 /// Generate a random (non-deterministic) fingerprint.
 pub fn generate_random_fingerprint() -> Value {
     let random_seed = Uuid::new_v4().to_string();
@@ -172,20 +199,16 @@ pub fn generate_random_fingerprint() -> Value {
 /// Sanitize an existing fingerprint JSON, filling missing fields with
 /// deterministic fallbacks derived from `key_id`.
 pub fn sanitize_fingerprint(raw: &Value, key_id: &str) -> Value {
-    let generated = generate_fingerprint(key_id);
+    let generated = generate_header_fingerprint(key_id);
     let gen_map = generated.as_object().unwrap();
-
-    let raw_map = match raw.as_object() {
-        Some(m) => m,
-        None => return generated,
-    };
+    let raw_map = header_fingerprint_from_fingerprint(raw);
 
     let mut out = Map::new();
 
     // Start with generated values, then overlay non-empty raw values
     for (key, gen_value) in gen_map {
         let value = raw_map
-            .get(key)
+            .and_then(|raw_map| raw_map.get(key))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|v| !v.is_empty())
@@ -244,7 +267,7 @@ pub fn sanitize_fingerprint(raw: &Value, key_id: &str) -> Value {
         );
     }
 
-    Value::Object(out)
+    wrap_header_fingerprint(Value::Object(out))
 }
 
 #[cfg(test)]
@@ -283,7 +306,7 @@ mod tests {
             "platform_info",
             "user_agent",
         ];
-        let map = fp.as_object().unwrap();
+        let map = header_fingerprint_from_fingerprint(&fp).unwrap();
         for key in expected_keys {
             assert!(map.contains_key(key), "missing field: {key}");
             let value = map[key].as_str().unwrap();
@@ -294,13 +317,18 @@ mod tests {
     #[test]
     fn sanitize_preserves_user_overrides() {
         let raw = serde_json::json!({
-            "stainless_os": "MacOS",
-            "stainless_arch": "arm64",
-            "stainless_timeout": "900",
-            "user_agent": "Custom-Agent/1.0",
+            "transport_profile": {
+                "profile_id": "claude_code_nodejs",
+                "header_fingerprint": {
+                    "stainless_os": "MacOS",
+                    "stainless_arch": "arm64",
+                    "stainless_timeout": "900",
+                    "user_agent": "Custom-Agent/1.0"
+                }
+            }
         });
         let sanitized = sanitize_fingerprint(&raw, "test-key");
-        let map = sanitized.as_object().unwrap();
+        let map = header_fingerprint_from_fingerprint(&sanitized).unwrap();
         assert_eq!(map["stainless_os"].as_str(), Some("MacOS"));
         assert_eq!(map["stainless_arch"].as_str(), Some("arm64"));
         assert_eq!(map["stainless_timeout"].as_str(), Some("900"));
@@ -314,9 +342,9 @@ mod tests {
     fn sanitize_fills_missing_fields_from_seed() {
         let raw = serde_json::json!({});
         let sanitized = sanitize_fingerprint(&raw, "test-key");
-        let generated = generate_fingerprint("test-key");
+        let generated = generate_header_fingerprint("test-key");
         // All fields should match generated since raw is empty
-        let s = sanitized.as_object().unwrap();
+        let s = header_fingerprint_from_fingerprint(&sanitized).unwrap();
         let g = generated.as_object().unwrap();
         for key in g.keys() {
             assert!(s.contains_key(key), "sanitized missing key: {key}");
@@ -330,10 +358,17 @@ mod tests {
     #[test]
     fn sanitize_normalizes_unknown_impersonate_profile() {
         let raw = serde_json::json!({
-            "impersonate": "firefox99",
+            "transport_profile": {
+                "profile_id": "claude_code_nodejs",
+                "header_fingerprint": {
+                    "impersonate": "firefox99"
+                }
+            }
         });
         let sanitized = sanitize_fingerprint(&raw, "test-key");
-        let profile = sanitized["impersonate"].as_str().unwrap();
+        let profile = header_fingerprint_from_fingerprint(&sanitized).unwrap()["impersonate"]
+            .as_str()
+            .unwrap();
         assert!(
             CHROME_IMPERSONATE_PROFILES
                 .iter()

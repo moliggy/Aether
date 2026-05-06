@@ -214,11 +214,15 @@ async fn gateway_executes_claude_code_cli_sync_via_local_decision_gate_with_loca
                 serde_json::json!({"enabled": true, "node_id":"proxy-node-claude-code-cli-local"}),
             ),
             Some(serde_json::json!({
-                "tls_profile":"claude_code_nodejs",
-                "user_agent":"Claude-Code/9.9",
-                "stainless_package_version":"1.0.5",
-                "stainless_runtime_version":"v22.12.0",
-                "stainless_timeout":"900"
+                "transport_profile": {
+                    "profile_id": "claude_code_nodejs",
+                    "header_fingerprint": {
+                        "user_agent":"Claude-Code/9.9",
+                        "stainless_package_version":"1.0.5",
+                        "stainless_runtime_version":"v22.12.0",
+                        "stainless_timeout":"900"
+                    }
+                }
             })),
         )
         .expect("key transport should build")

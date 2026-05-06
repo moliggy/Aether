@@ -214,13 +214,6 @@ impl<'a> AdminAppState<'a> {
         )
     }
 
-    pub(crate) fn resolve_transport_tls_profile(
-        &self,
-        transport: &AdminGatewayProviderTransportSnapshot,
-    ) -> Option<String> {
-        crate::provider_transport::resolve_transport_tls_profile(transport)
-    }
-
     pub(crate) fn resolve_transport_profile(
         &self,
         transport: &AdminGatewayProviderTransportSnapshot,

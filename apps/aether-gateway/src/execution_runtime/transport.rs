@@ -19,7 +19,6 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::redirect::Policy;
-use reqwest::tls::Version;
 use serde::Serialize;
 use serde_json::json;
 use serde_json::Value;
@@ -36,8 +35,6 @@ use crate::{AppState, GatewayError};
 const HUB_RELAY_CONTENT_TYPE: &str = "application/vnd.aether.tunnel-envelope";
 const HUB_RELAY_ERROR_HEADER: &str = "x-aether-tunnel-error";
 const TUNNEL_RELAY_PATH_PREFIX: &str = "/api/internal/tunnel/relay";
-const CLAUDE_CODE_TLS_PROFILE: &str = "claude_code_nodejs";
-
 pub(crate) fn format_upstream_request_error(err: &reqwest::Error) -> String {
     let mut kinds = Vec::new();
     if err.is_connect() {
@@ -892,10 +889,7 @@ fn build_client(
             ..HttpClientConfig::default()
         },
     );
-    builder = apply_tls_profile(
-        builder,
-        transport_profile.map(|profile| profile.profile_id.as_str()),
-    );
+    builder = apply_transport_profile(builder, transport_profile);
     if transport_controls.accept_invalid_certs {
         builder = builder.danger_accept_invalid_certs(true);
     }
@@ -938,39 +932,24 @@ fn transport_profile_http1_only(transport_profile: Option<&ResolvedTransportProf
         .unwrap_or(false)
 }
 
-fn apply_tls_profile(
+fn apply_transport_profile(
     builder: reqwest::ClientBuilder,
-    profile_id: Option<&str>,
+    transport_profile: Option<&ResolvedTransportProfile>,
 ) -> reqwest::ClientBuilder {
-    let profile = normalize_tls_profile(profile_id);
-    if profile.is_none() {
+    let Some(profile) = transport_profile else {
+        return builder;
+    };
+    let profile_id = profile.profile_id.trim();
+    if profile_id.is_empty() {
         return builder;
     }
 
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let tls_config = build_best_effort_tls_config();
-    let builder = builder
-        .use_preconfigured_tls(tls_config)
-        .min_tls_version(Version::TLS_1_2)
-        .max_tls_version(Version::TLS_1_3);
-
-    if profile.as_deref() == Some(CLAUDE_CODE_TLS_PROFILE) {
-        return builder;
-    }
-
-    builder
+    builder.use_preconfigured_tls(build_best_effort_transport_tls_config())
 }
 
-fn normalize_tls_profile(tls_profile: Option<&str>) -> Option<String> {
-    let profile = tls_profile
-        .map(str::trim)
-        .filter(|profile| !profile.is_empty())?
-        .to_ascii_lowercase();
-    Some(profile)
-}
-
-fn build_best_effort_tls_config() -> rustls::ClientConfig {
+fn build_best_effort_transport_tls_config() -> rustls::ClientConfig {
     let root_store =
         rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     let mut config = rustls::ClientConfig::builder_with_protocol_versions(&[
@@ -1199,6 +1178,7 @@ mod tests {
     use aether_contracts::{
         ExecutionPlan, ExecutionTimeouts, ProxySnapshot, RequestBody, ResolvedTransportProfile,
         EXECUTION_REQUEST_FOLLOW_REDIRECTS_HEADER, EXECUTION_REQUEST_HTTP1_ONLY_HEADER,
+        TRANSPORT_BACKEND_REQWEST_RUSTLS,
     };
     use aether_data::repository::proxy_nodes::{
         InMemoryProxyNodeRepository, ProxyNodeReadRepository, StoredProxyNode,
@@ -2135,9 +2115,14 @@ mod tests {
                 provider_api_format: "provider_ops:verify".into(),
                 model_name: Some("verify-auth".into()),
                 proxy: Some(tunnel_proxy_snapshot(format!("http://{addr}"))),
-                transport_profile: Some(ResolvedTransportProfile::from_legacy_tls_profile(
-                    "relay-profile",
-                )),
+                transport_profile: Some(ResolvedTransportProfile {
+                    profile_id: "relay-profile".into(),
+                    backend: TRANSPORT_BACKEND_REQWEST_RUSTLS.into(),
+                    http_mode: "auto".into(),
+                    pool_scope: "key".into(),
+                    header_fingerprint: None,
+                    extra: None,
+                }),
                 timeouts: Some(ExecutionTimeouts {
                     connect_ms: Some(5_000),
                     total_ms: Some(5_000),
@@ -2157,7 +2142,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn direct_sync_execution_runtime_allows_tls_profile_best_effort() {
+    async fn direct_sync_execution_runtime_allows_transport_profile_best_effort() {
         let listener = crate::test_support::bind_loopback_listener()
             .await
             .expect("listener should bind");
@@ -2167,7 +2152,7 @@ mod tests {
             post(|| async {
                 (
                     axum::http::StatusCode::OK,
-                    Json(json!({"tls_profile": true})),
+                    Json(json!({"transport_profile": true})),
                 )
             }),
         );
@@ -2205,14 +2190,14 @@ mod tests {
                 }),
             })
             .await
-            .expect("sync execution with tls profile should succeed");
+            .expect("sync execution with transport profile should succeed");
 
         server.abort();
 
         assert_eq!(result.status_code, 200);
         assert_eq!(
             result.body.and_then(|body| body.json_body),
-            Some(json!({"tls_profile": true}))
+            Some(json!({"transport_profile": true}))
         );
     }
 
@@ -2223,6 +2208,7 @@ mod tests {
             backend: "utls".into(),
             http_mode: "auto".into(),
             pool_scope: "key".into(),
+            header_fingerprint: None,
             extra: None,
         };
 

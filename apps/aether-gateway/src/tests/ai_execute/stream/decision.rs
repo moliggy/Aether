@@ -1089,7 +1089,7 @@ async fn gateway_executes_openai_chat_stream_with_custom_path_via_local_decision
             None,
             None,
             Some(serde_json::json!({"enabled": true, "node_id":"proxy-node-openai-custom-stream"})),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build")
     }

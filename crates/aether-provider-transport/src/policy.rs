@@ -7,7 +7,7 @@ use super::snapshot::GatewayProviderTransportSnapshot;
 use super::{
     body_rules_are_locally_supported, header_rules_are_locally_supported,
     resolve_transport_profile, supports_local_oauth_request_auth_resolution,
-    transport_proxy_is_locally_supported,
+    transport_profile_is_configured, transport_proxy_is_locally_supported,
 };
 
 pub fn supports_local_openai_chat_transport(transport: &GatewayProviderTransportSnapshot) -> bool {
@@ -76,8 +76,9 @@ pub fn local_openai_chat_transport_unsupported_reason(
     if !transport_proxy_is_locally_supported(transport) {
         return Some("transport_proxy_unsupported");
     }
-    if transport.key.fingerprint.is_some() && resolve_transport_profile(transport).is_none() {
-        return Some("transport_tls_profile_unsupported");
+    if transport_profile_is_configured(transport) && resolve_transport_profile(transport).is_none()
+    {
+        return Some("transport_profile_unsupported");
     }
     if !provider_type_supports_local_openai_chat_transport(&transport.provider.provider_type) {
         return Some("transport_provider_type_unsupported");
@@ -175,21 +176,17 @@ fn local_same_format_transport_unsupported_reason(
         if !transport_proxy_is_locally_supported(transport) {
             return Some("transport_proxy_unsupported");
         }
-        if transport.key.fingerprint.is_some() && resolve_transport_profile(transport).is_none() {
-            return Some("transport_tls_profile_unsupported");
+        if transport_profile_is_configured(transport)
+            && resolve_transport_profile(transport).is_none()
+        {
+            return Some("transport_profile_unsupported");
         }
     } else if transport.provider.proxy.is_some()
         || transport.endpoint.proxy.is_some()
         || transport.key.proxy.is_some()
-        || transport
-            .key
-            .fingerprint
-            .as_ref()
-            .and_then(|value| value.get("tls_profile"))
-            .and_then(|value| value.as_str())
-            .is_some_and(|value| !value.trim().is_empty())
+        || transport_profile_is_configured(transport)
     {
-        return Some("transport_proxy_or_tls_unsupported");
+        return Some("transport_proxy_or_profile_unsupported");
     }
 
     if !provider_type_supported(&transport.provider.provider_type) {

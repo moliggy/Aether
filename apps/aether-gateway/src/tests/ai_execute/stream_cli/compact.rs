@@ -195,7 +195,7 @@ async fn gateway_executes_openai_responses_compact_stream_via_local_decision_gat
             None,
             None,
             Some(serde_json::json!({"enabled": true, "node_id":"proxy-node-openai-compact-local"})),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build")
     }

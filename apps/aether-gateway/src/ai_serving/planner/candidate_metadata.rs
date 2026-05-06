@@ -191,8 +191,12 @@ mod tests {
                 expires_at_unix_secs: None,
                 proxy: None,
                 fingerprint: Some(json!({
-                    "tls_profile": "chrome_136",
-                    "user_agent": "Mozilla/5.0"
+                    "transport_profile": {
+                        "profile_id": "chrome_136",
+                        "header_fingerprint": {
+                            "user_agent": "Mozilla/5.0"
+                        }
+                    }
                 })),
                 decrypted_api_key: "sk-test".to_string(),
                 decrypted_auth_config: None,
@@ -271,11 +275,11 @@ mod tests {
 
         assert_eq!(metadata["transport_diagnostics"]["provider_type"], "codex");
         assert_eq!(
-            metadata["transport_diagnostics"]["fingerprint"]["tls_profile"],
+            metadata["transport_diagnostics"]["fingerprint"]["transport_profile"]["profile_id"],
             "chrome_136"
         );
         assert_eq!(
-            metadata["transport_diagnostics"]["resolved_tls_profile"],
+            metadata["transport_diagnostics"]["resolved_transport_profile_id"],
             "chrome_136"
         );
         assert_eq!(

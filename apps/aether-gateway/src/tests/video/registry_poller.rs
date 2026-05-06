@@ -96,7 +96,7 @@ fn sample_due_openai_task(upstream_base_url: &str) -> UpsertVideoTask {
                         "content_type": "application/json",
                         "model_name": "sora-2-upstream",
                         "proxy": null,
-                        "tls_profile": null,
+                        "transport_profile": null,
                         "timeouts": null
                     }
                 }

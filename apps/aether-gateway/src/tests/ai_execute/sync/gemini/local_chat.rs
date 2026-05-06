@@ -199,7 +199,7 @@ async fn gateway_executes_gemini_chat_sync_via_local_decision_gate_with_local_sy
             None,
             None,
             Some(serde_json::json!({"enabled": true, "node_id":"proxy-node-gemini-chat-local"})),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build")
     }
@@ -620,7 +620,7 @@ async fn gateway_returns_gemini_chat_error_for_local_sync_failure_impl() {
             None,
             None,
             Some(serde_json::json!({"enabled": true, "node_id":"proxy-node-gemini-chat-local"})),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build")
     }

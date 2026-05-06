@@ -264,7 +264,7 @@ async fn gateway_executes_kiro_claude_cli_sync_via_local_provider_catalog_candid
             None,
             None,
             Some(serde_json::json!({"enabled": true, "node_id":"proxy-node-kiro-cli-local-sync"})),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build")
     }

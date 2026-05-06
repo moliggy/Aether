@@ -589,6 +589,7 @@ mod tests {
             backend: TRANSPORT_BACKEND_REQWEST_RUSTLS.to_string(),
             http_mode: "auto".to_string(),
             pool_scope: "key".to_string(),
+            header_fingerprint: None,
             extra: None,
         };
         let pool_key = upstream_client_pool_key(

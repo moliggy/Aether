@@ -169,7 +169,7 @@ async fn gateway_executes_gemini_cli_stream_via_local_decision_gate_with_local_s
             None,
             None,
             Some(serde_json::json!({"enabled": true, "node_id":"proxy-node-gemini-cli-local"})),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build")
     }
@@ -617,7 +617,7 @@ async fn gateway_executes_gemini_cli_stream_via_local_decision_gate_after_oauth_
             Some(
                 serde_json::json!({"enabled": true, "node_id":"proxy-node-gemini-cli-oauth-local"}),
             ),
-            Some(serde_json::json!({"tls_profile":"chrome_136"})),
+            Some(serde_json::json!({"transport_profile":"chrome_136"})),
         )
         .expect("key transport should build")
     }

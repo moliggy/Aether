@@ -198,7 +198,7 @@ async fn gateway_executes_gemini_files_download_via_local_decision_gate_with_loc
     key.proxy = Some(
         serde_json::json!({"enabled": true, "node_id":"proxy-node-gemini-files-download-local"}),
     );
-    key.fingerprint = Some(serde_json::json!({"tls_profile":"chrome_136"}));
+    key.fingerprint = Some(serde_json::json!({"transport_profile":"chrome_136"}));
     let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
         vec![provider],
         vec![endpoint],

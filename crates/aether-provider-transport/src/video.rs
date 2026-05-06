@@ -11,7 +11,7 @@ use super::auth::{
     build_passthrough_headers_with_auth, resolve_local_gemini_auth,
     resolve_local_openai_bearer_auth,
 };
-use super::network::resolve_transport_execution_timeouts;
+use super::network::{resolve_transport_execution_timeouts, resolve_transport_profile};
 use super::policy::{
     local_gemini_transport_unsupported_reason_with_network,
     local_standard_transport_unsupported_reason_with_network, supports_local_gemini_transport,
@@ -81,7 +81,7 @@ pub fn resolve_local_video_task_transport(
             content_type: Some("application/json".to_string()),
             model_name,
             proxy: None,
-            tls_profile: None,
+            transport_profile: resolve_transport_profile(transport),
             timeouts: resolve_transport_execution_timeouts(transport),
         },
     ))
