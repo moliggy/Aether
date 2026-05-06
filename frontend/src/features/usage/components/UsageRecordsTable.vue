@@ -272,16 +272,28 @@
             <!-- 耗时 -->
             <span
               v-if="getDisplayStatus(record) === 'pending' || getDisplayStatus(record) === 'streaming'"
-              class="text-primary tabular-nums"
-            ><ElapsedTimeText
-              :created-at="record.created_at"
-              :status="getDisplayStatus(record)"
-              :response-time-ms="record.response_time_ms ?? null"
-            /></span>
+              class="tabular-nums whitespace-nowrap"
+            >
+              <span>{{ formatRecordDurationSeconds(record.first_byte_time_ms) }}</span>
+              <span class="text-muted-foreground"> / </span>
+              <ElapsedTimeText
+                class="text-primary"
+                :created-at="record.created_at"
+                :status="getDisplayStatus(record)"
+                :response-time-ms="record.response_time_ms ?? null"
+              />
+            </span>
             <span
               v-else-if="record.response_time_ms != null || record.first_byte_time_ms != null"
-              class="tabular-nums"
-            >{{ record.first_byte_time_ms != null ? (record.first_byte_time_ms / 1000).toFixed(1) + '/' : '' }}{{ record.response_time_ms != null ? (record.response_time_ms / 1000).toFixed(1) : '-' }}{{ record.response_time_ms != null ? 's' : '' }}</span>
+              class="flex flex-col items-end tabular-nums leading-3 shrink-0"
+              :title="getRecordPerformanceTitle(record)"
+            >
+              <span class="whitespace-nowrap">{{ formatRecordLatencyPair(record) }}</span>
+              <span
+                v-if="getRecordDisplayOutputRate(record) != null"
+                class="text-muted-foreground tabular-nums whitespace-nowrap"
+              >{{ formatOutputRate(getRecordDisplayOutputRate(record)) }}</span>
+            </span>
             <span
               v-else
               class="tabular-nums"
@@ -310,12 +322,12 @@
       <colgroup v-else>
         <col class="w-[9%]">
         <col class="w-[17%]">
-        <col class="w-[26%]">
+        <col class="w-[24%]">
         <col class="w-[15%]">
         <col class="w-[7%]">
         <col class="w-[11%]">
         <col class="w-[7%]">
-        <col class="w-[8%]">
+        <col class="w-[10%]">
       </colgroup>
       <TableHeader>
         <TableRow class="border-b border-border/60 hover:bg-transparent">
@@ -429,8 +441,8 @@
           </TableHead>
           <TableHead class="h-12 font-semibold w-[9%] text-right">
             <div class="flex flex-col items-end text-xs gap-0.5">
-              <span>首字</span>
-              <span class="text-muted-foreground font-normal">总耗时</span>
+              <span class="whitespace-nowrap">首字/总耗时</span>
+              <span class="text-muted-foreground font-normal">输出速度</span>
             </div>
           </TableHead>
         </TableRow>
@@ -716,58 +728,33 @@
             </div>
           </TableCell>
           <TableCell class="text-right py-4 w-[9%]">
-            <!-- pending 状态：只显示增长的总时间 -->
+            <!-- pending/streaming 状态：首字与动态总耗时保留在同一行 -->
             <div
-              v-if="getDisplayStatus(record) === 'pending'"
+              v-if="getDisplayStatus(record) === 'pending' || getDisplayStatus(record) === 'streaming'"
               class="flex flex-col items-end text-xs gap-0.5"
             >
-              <span class="text-muted-foreground">-</span>
-              <span class="text-primary tabular-nums"><ElapsedTimeText
-                :created-at="record.created_at"
-                :status="getDisplayStatus(record)"
-                :response-time-ms="record.response_time_ms ?? null"
-              /></span>
-            </div>
-            <!-- streaming 状态：首字固定 + 总时间增长 -->
-            <div
-              v-else-if="getDisplayStatus(record) === 'streaming'"
-              class="flex flex-col items-end text-xs gap-0.5"
-            >
-              <span
-                v-if="record.first_byte_time_ms != null"
-                class="tabular-nums"
-              >{{ (record.first_byte_time_ms / 1000).toFixed(2) }}s</span>
-              <span
-                v-else
-                class="text-muted-foreground"
-              >-</span>
-              <span class="text-primary tabular-nums"><ElapsedTimeText
-                :created-at="record.created_at"
-                :status="getDisplayStatus(record)"
-                :response-time-ms="record.response_time_ms ?? null"
-              /></span>
+              <span class="tabular-nums whitespace-nowrap">
+                <span>{{ formatRecordDurationSeconds(record.first_byte_time_ms) }}</span>
+                <span class="text-muted-foreground"> / </span>
+                <ElapsedTimeText
+                  class="text-primary"
+                  :created-at="record.created_at"
+                  :status="getDisplayStatus(record)"
+                  :response-time-ms="record.response_time_ms ?? null"
+                />
+              </span>
             </div>
             <!-- 已完成状态：首字 + 总耗时 -->
             <div
               v-else-if="record.response_time_ms != null || record.first_byte_time_ms != null"
               class="flex flex-col items-end text-xs gap-0.5"
+              :title="getRecordPerformanceTitle(record)"
             >
+              <span class="tabular-nums whitespace-nowrap">{{ formatRecordLatencyPair(record) }}</span>
               <span
-                v-if="record.first_byte_time_ms != null"
-                class="tabular-nums"
-              >{{ (record.first_byte_time_ms / 1000).toFixed(2) }}s</span>
-              <span
-                v-else
-                class="text-muted-foreground"
-              >-</span>
-              <span
-                v-if="record.response_time_ms != null"
-                class="text-muted-foreground tabular-nums"
-              >{{ (record.response_time_ms / 1000).toFixed(2) }}s</span>
-              <span
-                v-else
-                class="text-muted-foreground"
-              >-</span>
+                v-if="getRecordDisplayOutputRate(record) != null"
+                class="text-muted-foreground tabular-nums whitespace-nowrap"
+              >{{ formatOutputRate(getRecordDisplayOutputRate(record)) }}</span>
             </div>
             <span
               v-else
@@ -820,6 +807,12 @@ import {
 import { RefreshCcw, Search } from 'lucide-vue-next'
 import { formatTokens, formatCurrency } from '@/utils/format'
 import { getCacheCreationTokens, getCacheReadTokens, getEffectiveInputTokens } from '../token-normalization'
+import {
+  formatOutputRate,
+  formatOutputRateValue,
+  getDisplayOutputRate,
+  getGenerationTimeMs,
+} from '../performance'
 import {
   formatUsageStreamLabel,
   isUsageRecordFailed,
@@ -1038,6 +1031,43 @@ function hasPositiveTokens(value: number | null | undefined): boolean {
 
 function formatOptionalTokens(value: number | null | undefined): string {
   return hasPositiveTokens(value) ? formatTokens(value) : '-'
+}
+
+function formatRecordLatencyPair(record: UsageRecord): string {
+  const firstByte = formatRecordDurationSeconds(record.first_byte_time_ms)
+  const total = formatRecordDurationSeconds(record.response_time_ms)
+  return `${firstByte} / ${total}`
+}
+
+function formatRecordDurationSeconds(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return '-'
+  return `${(ms / 1000).toFixed(2)}s`
+}
+
+function getRecordDisplayOutputRate(record: UsageRecord): number | null {
+  return getDisplayOutputRate({
+    output_tokens: record.output_tokens,
+    response_time_ms: record.response_time_ms,
+    first_byte_time_ms: record.first_byte_time_ms,
+    is_stream: record.is_stream,
+    upstream_is_stream: record.upstream_is_stream,
+  })
+}
+
+function getRecordPerformanceTitle(record: UsageRecord): string {
+  const outputRate = getRecordDisplayOutputRate(record)
+  return [
+    `首字: ${formatRecordDurationSeconds(record.first_byte_time_ms)}`,
+    `总耗时: ${formatRecordDurationSeconds(record.response_time_ms)}`,
+    `生成耗时: ${formatRecordDurationSeconds(getGenerationTimeMs(record))}`,
+    `输出速度: ${formatOutputRateTokensPerSecond(outputRate)}`,
+  ].join('\n')
+}
+
+function formatOutputRateTokensPerSecond(outputRate: number | null | undefined): string {
+  const value = formatOutputRateValue(outputRate)
+  if (value === '-') return value
+  return `${value} tokens/s`
 }
 
 // useDebounceFn 自动处理清理，无需 onUnmounted
