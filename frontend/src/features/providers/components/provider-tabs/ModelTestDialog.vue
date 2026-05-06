@@ -148,7 +148,7 @@
             {{ requestBodyError }}
           </div>
           <div class="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
-            会强制使用当前测试模型；这里编辑的是测试基础请求体，实际发送时会按端点格式转换并应用规则。
+            请求体中的 model 会按当前编辑内容发送；未填写时使用当前测试模型，实际发送时会按端点格式转换并应用规则。
           </div>
         </div>
       </div>

@@ -247,7 +247,9 @@ fn provider_query_extract_request_headers(payload: &Value) -> HeaderMap {
 fn provider_query_build_test_request_body(payload: &Value, model: &str) -> Value {
     if let Some(mut body) = provider_query_extract_request_body(payload) {
         if let Some(object) = body.as_object_mut() {
-            object.insert("model".to_string(), Value::String(model.to_string()));
+            object
+                .entry("model".to_string())
+                .or_insert_with(|| Value::String(model.to_string()));
         }
         return body;
     }
@@ -263,6 +265,15 @@ fn provider_query_build_test_request_body(payload: &Value, model: &str) -> Value
         "temperature": 0.7,
         "stream": true,
     })
+}
+
+fn provider_query_request_body_model<'a>(request_body: &'a Value, fallback: &'a str) -> &'a str {
+    request_body
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback)
 }
 
 fn provider_query_select_kiro_endpoint<'a>(
@@ -781,9 +792,11 @@ async fn provider_query_execute_kiro_test_candidate(
     };
 
     let request_body = provider_query_build_test_request_body(payload, &candidate.effective_model);
+    let request_model =
+        provider_query_request_body_model(&request_body, &candidate.effective_model);
     let provider_request_body = match build_kiro_provider_request_body(
         &request_body,
-        &candidate.effective_model,
+        request_model,
         &kiro_auth.auth_config,
         transport.endpoint.body_rules.as_ref(),
     ) {
@@ -797,7 +810,7 @@ async fn provider_query_execute_kiro_test_candidate(
                 latency_ms: None,
                 request_url: String::new(),
                 request_headers: BTreeMap::new(),
-                request_body,
+                request_body: request_body.clone(),
                 response_headers: BTreeMap::new(),
                 response_body: None,
             });
@@ -845,7 +858,7 @@ async fn provider_query_execute_kiro_test_candidate(
         stream: true,
         client_api_format: candidate.endpoint.api_format.clone(),
         provider_api_format: candidate.endpoint.api_format.clone(),
-        model_name: Some(candidate.effective_model.clone()),
+        model_name: Some(request_model.to_string()),
         proxy: state
             .resolve_transport_proxy_snapshot_with_tunnel_affinity(&transport)
             .await,
@@ -862,7 +875,7 @@ async fn provider_query_execute_kiro_test_candidate(
             trace_id,
             requested_model,
             candidate.endpoint.api_format.as_str(),
-            candidate.effective_model.as_str(),
+            request_model,
             &request_body,
             &result,
         )
@@ -942,6 +955,8 @@ async fn provider_query_execute_standard_test_candidate(
     if let Some(object) = request_body.as_object_mut() {
         object.insert("stream".to_string(), Value::Bool(false));
     }
+    let request_model =
+        provider_query_request_body_model(&request_body, &candidate.effective_model);
 
     let provider_api_format = candidate.endpoint.api_format.as_str();
     let normalized_provider_api_format =
@@ -951,7 +966,7 @@ async fn provider_query_execute_standard_test_candidate(
             let Some(mut provider_request_body) =
                 crate::ai_serving::build_local_openai_chat_request_body(
                     &request_body,
-                    &candidate.effective_model,
+                    request_model,
                     false,
                 )
             else {
@@ -976,7 +991,7 @@ async fn provider_query_execute_standard_test_candidate(
             let Some(mut provider_request_body) =
                 crate::ai_serving::build_cross_format_openai_chat_request_body(
                     &request_body,
-                    &candidate.effective_model,
+                    request_model,
                     normalized_provider_api_format.as_str(),
                     false,
                 )
@@ -1002,7 +1017,7 @@ async fn provider_query_execute_standard_test_candidate(
             let Some(mut provider_request_body) =
                 crate::ai_serving::build_cross_format_openai_chat_request_body(
                     &request_body,
-                    &candidate.effective_model,
+                    request_model,
                     normalized_provider_api_format.as_str(),
                     false,
                 )
@@ -1096,7 +1111,7 @@ async fn provider_query_execute_standard_test_candidate(
         &transport,
         crate::provider_transport::TransportRequestUrlParams {
             provider_api_format,
-            mapped_model: Some(candidate.effective_model.as_str()),
+            mapped_model: Some(request_model),
             upstream_is_stream: false,
             request_query: parts.uri.query(),
             kiro_api_region: None,
@@ -1210,7 +1225,7 @@ async fn provider_query_execute_standard_test_candidate(
         stream: false,
         client_api_format: "openai:chat".to_string(),
         provider_api_format: candidate.endpoint.api_format.clone(),
-        model_name: Some(candidate.effective_model.clone()),
+        model_name: Some(request_model.to_string()),
         proxy: state
             .resolve_transport_proxy_snapshot_with_tunnel_affinity(&transport)
             .await,
@@ -1934,4 +1949,57 @@ pub(crate) fn build_admin_provider_query_test_model_failover_response(
         "message": ADMIN_PROVIDER_QUERY_LOCAL_TEST_MODEL_FAILOVER_MESSAGE,
     }))
     .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn provider_query_test_request_body_preserves_custom_model() {
+        let payload = json!({
+            "request_body": {
+                "model": "custom-upstream-model",
+                "messages": []
+            }
+        });
+
+        let body = provider_query_build_test_request_body(&payload, "fallback-model");
+
+        assert_eq!(body["model"], json!("custom-upstream-model"));
+    }
+
+    #[test]
+    fn provider_query_test_request_body_defaults_missing_model() {
+        let payload = json!({
+            "request_body": {
+                "messages": []
+            }
+        });
+
+        let body = provider_query_build_test_request_body(&payload, "fallback-model");
+
+        assert_eq!(body["model"], json!("fallback-model"));
+    }
+
+    #[test]
+    fn provider_query_request_body_model_uses_non_empty_string_only() {
+        let custom = json!({ "model": " custom-model " });
+        let blank = json!({ "model": " " });
+        let non_string = json!({ "model": 123 });
+
+        assert_eq!(
+            provider_query_request_body_model(&custom, "fallback-model"),
+            "custom-model"
+        );
+        assert_eq!(
+            provider_query_request_body_model(&blank, "fallback-model"),
+            "fallback-model"
+        );
+        assert_eq!(
+            provider_query_request_body_model(&non_string, "fallback-model"),
+            "fallback-model"
+        );
+    }
 }

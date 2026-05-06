@@ -1422,7 +1422,6 @@ const RESPONSE_HEADER_RULES_CAMEL_CONFIG_KEY = 'responseHeaderRules'
 
 // 系统保留的 body 字段名（不允许用户设置）
 const RESERVED_BODY_FIELDS = new Set([
-  'model',
   'stream',
 ])
 
