@@ -30,9 +30,10 @@ use super::{
     api_key_usage_contribution, provider_api_key_usage_contribution,
     strip_deprecated_usage_display_fields, usage_can_recover_terminal_failure,
     ApiKeyUsageContribution, ApiKeyUsageDelta, ProviderApiKeyUsageContribution,
-    ProviderApiKeyUsageDelta, StoredProviderApiKeyUsageSummary, StoredProviderUsageSummary,
-    StoredProviderUsageWindow, StoredRequestUsageAudit, StoredUsageDailySummary, UpsertUsageRecord,
-    UsageAuditListQuery, UsageDailyHeatmapQuery, UsageReadRepository, UsageWriteRepository,
+    ProviderApiKeyUsageDelta, ProviderApiKeyWindowUsageRequest, StoredProviderApiKeyUsageSummary,
+    StoredProviderApiKeyWindowUsageSummary, StoredProviderUsageSummary, StoredProviderUsageWindow,
+    StoredRequestUsageAudit, StoredUsageDailySummary, UpsertUsageRecord, UsageAuditListQuery,
+    UsageDailyHeatmapQuery, UsageReadRepository, UsageWriteRepository,
 };
 use crate::repository::auth::InMemoryAuthApiKeySnapshotRepository;
 use crate::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
@@ -2327,6 +2328,59 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
         Ok(summaries)
     }
 
+    async fn summarize_usage_by_provider_api_key_windows(
+        &self,
+        requests: &[ProviderApiKeyWindowUsageRequest],
+    ) -> Result<Vec<StoredProviderApiKeyWindowUsageSummary>, DataLayerError> {
+        let usage = self.by_request_id.read().expect("usage repository lock");
+        let mut summaries = Vec::with_capacity(requests.len());
+
+        for request in requests {
+            let provider_api_key_id = request.provider_api_key_id.trim();
+            if provider_api_key_id.is_empty() {
+                return Err(DataLayerError::InvalidInput(
+                    "provider api key window usage provider_api_key_id cannot be empty".to_string(),
+                ));
+            }
+            let window_code = request.window_code.trim();
+            if window_code.is_empty() {
+                return Err(DataLayerError::InvalidInput(
+                    "provider api key window usage window_code cannot be empty".to_string(),
+                ));
+            }
+            if request.start_unix_secs >= request.end_unix_secs {
+                return Err(DataLayerError::InvalidInput(
+                    "provider api key window usage range must be non-empty".to_string(),
+                ));
+            }
+
+            let mut summary = StoredProviderApiKeyWindowUsageSummary {
+                provider_api_key_id: provider_api_key_id.to_string(),
+                window_code: window_code.to_string(),
+                ..StoredProviderApiKeyWindowUsageSummary::default()
+            };
+
+            for item in usage.values() {
+                if item.provider_api_key_id.as_deref() != Some(provider_api_key_id) {
+                    continue;
+                }
+                if item.created_at_unix_ms < request.start_unix_secs
+                    || item.created_at_unix_ms >= request.end_unix_secs
+                {
+                    continue;
+                }
+
+                summary.request_count = summary.request_count.saturating_add(1);
+                summary.total_tokens = summary.total_tokens.saturating_add(item.total_tokens);
+                summary.total_cost_usd += item.total_cost_usd;
+            }
+
+            summaries.push(summary);
+        }
+
+        Ok(summaries)
+    }
+
     async fn summarize_provider_usage_since(
         &self,
         provider_id: &str,
@@ -2934,8 +2988,9 @@ mod tests {
         UsageWriteRepository,
     };
     use aether_data_contracts::repository::usage::{
-        usage_body_ref, UsageAuditAggregationGroupBy, UsageAuditAggregationQuery, UsageBodyField,
-        UsageProviderPerformanceQuery, UsageTimeSeriesGranularity,
+        usage_body_ref, ProviderApiKeyWindowUsageRequest, UsageAuditAggregationGroupBy,
+        UsageAuditAggregationQuery, UsageBodyField, UsageProviderPerformanceQuery,
+        UsageTimeSeriesGranularity,
     };
     use serde_json::json;
 
@@ -4531,6 +4586,44 @@ mod tests {
         assert_eq!(item.total_tokens, 300);
         assert_eq!(item.total_cost_usd, 0.24);
         assert_eq!(item.last_used_at_unix_secs, Some(1_711_000_250));
+    }
+
+    #[tokio::test]
+    async fn summarizes_provider_api_key_window_usage_with_zero_rows() {
+        let repository = InMemoryUsageReadRepository::seed(vec![
+            sample_usage("req-1", 1_711_000_000),
+            sample_usage("req-2", 1_711_000_250),
+        ]);
+
+        let usage = repository
+            .summarize_usage_by_provider_api_key_windows(&[
+                ProviderApiKeyWindowUsageRequest {
+                    provider_api_key_id: "provider-key-1".to_string(),
+                    window_code: "5h".to_string(),
+                    start_unix_secs: 1_711_000_000,
+                    end_unix_secs: 1_711_000_300,
+                },
+                ProviderApiKeyWindowUsageRequest {
+                    provider_api_key_id: "provider-key-empty".to_string(),
+                    window_code: "weekly".to_string(),
+                    start_unix_secs: 1_711_000_000,
+                    end_unix_secs: 1_711_000_300,
+                },
+            ])
+            .await
+            .expect("window summary should succeed");
+
+        assert_eq!(usage.len(), 2);
+        assert_eq!(usage[0].provider_api_key_id, "provider-key-1");
+        assert_eq!(usage[0].window_code, "5h");
+        assert_eq!(usage[0].request_count, 2);
+        assert_eq!(usage[0].total_tokens, 300);
+        assert_eq!(usage[0].total_cost_usd, 0.24);
+        assert_eq!(usage[1].provider_api_key_id, "provider-key-empty");
+        assert_eq!(usage[1].window_code, "weekly");
+        assert_eq!(usage[1].request_count, 0);
+        assert_eq!(usage[1].total_tokens, 0);
+        assert_eq!(usage[1].total_cost_usd, 0.0);
     }
 
     #[tokio::test]

@@ -39,6 +39,7 @@ describe('poolManagementState', () => {
         pageSize: 20,
         sortBy: 'last_used_at',
         sortOrder: 'asc',
+        statsMode: 'account_total',
       },
       storage,
     )
@@ -52,6 +53,7 @@ describe('poolManagementState', () => {
         pageSize: '100',
         sortBy: 'imported_at',
         sortOrder: 'desc',
+        statsMode: 'current_cycle',
       },
       storage,
     )
@@ -64,6 +66,7 @@ describe('poolManagementState', () => {
       pageSize: 100,
       sortBy: 'imported_at',
       sortOrder: 'desc',
+      statsMode: 'current_cycle',
     })
   })
 
@@ -77,6 +80,7 @@ describe('poolManagementState', () => {
         pageSize: 50,
         sortBy: 'last_used_at',
         sortOrder: 'asc',
+        statsMode: 'account_total',
       },
       storage,
     )
@@ -91,6 +95,7 @@ describe('poolManagementState', () => {
       pageSize: 50,
       sortBy: 'last_used_at',
       sortOrder: 'asc',
+      statsMode: 'account_total',
     })
   })
 
@@ -104,6 +109,7 @@ describe('poolManagementState', () => {
         pageSize: 50,
         sortBy: null,
         sortOrder: 'desc',
+        statsMode: 'current_cycle',
       }),
     ).toEqual({
       providerId: 'provider-d',
@@ -113,6 +119,7 @@ describe('poolManagementState', () => {
       pageSize: undefined,
       sortBy: undefined,
       sortOrder: undefined,
+      statsMode: undefined,
     })
   })
 
@@ -126,11 +133,34 @@ describe('poolManagementState', () => {
         pageSize: 50,
         sortBy: 'last_used_at',
         sortOrder: 'asc',
+        statsMode: 'account_total',
       }),
     ).toMatchObject({
       sortBy: 'last_used_at',
       sortOrder: 'asc',
+      statsMode: 'account_total',
     })
+  })
+
+  it('restores stats mode from storage and lets query override it', () => {
+    writePoolManagementViewState(
+      {
+        providerId: 'provider-f',
+        search: '',
+        status: 'all',
+        page: 1,
+        pageSize: 50,
+        sortBy: null,
+        sortOrder: 'desc',
+        statsMode: 'account_total',
+      },
+      storage,
+    )
+
+    expect(readPoolManagementViewState({}, storage).statsMode).toBe('account_total')
+    expect(
+      readPoolManagementViewState({ statsMode: 'current_cycle' }, storage).statsMode,
+    ).toBe('current_cycle')
   })
 
   it('clamps a restored page to the last available page after load', () => {
