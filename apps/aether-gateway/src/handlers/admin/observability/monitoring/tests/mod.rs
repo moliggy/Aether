@@ -340,6 +340,146 @@ async fn admin_monitoring_cache_affinities_and_delete_use_runtime_scheduler_affi
 }
 
 #[tokio::test]
+async fn admin_monitoring_cache_affinities_parse_session_scoped_scheduler_affinity_cache() {
+    let user_repository = Arc::new(
+        InMemoryUserReadRepository::seed_auth_users(vec![sample_monitoring_auth_user("user-1")])
+            .with_export_users(vec![sample_monitoring_export_user("user-1")]),
+    );
+    let auth_repository = Arc::new(
+        InMemoryAuthApiKeySnapshotRepository::default().with_export_records(vec![
+            sample_monitoring_export_api_key("user-1", "user-key-1"),
+        ]),
+    );
+    let provider_catalog = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![sample_provider()],
+        vec![sample_monitoring_catalog_endpoint()],
+        vec![sample_monitoring_catalog_key()],
+    ));
+    let state = AppState::new()
+        .expect("state should build")
+        .with_data_state_for_tests(
+            crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(provider_catalog)
+                .with_user_reader(user_repository)
+                .with_auth_api_key_reader(auth_repository),
+        );
+    let client_session = aether_scheduler_core::ClientSessionAffinity::new(
+        Some("Codex".to_string()),
+        Some("account=acct-1;session=session-1".to_string()),
+    );
+    let other_client_session = aether_scheduler_core::ClientSessionAffinity::new(
+        Some("Codex".to_string()),
+        Some("account=acct-1;session=session-2".to_string()),
+    );
+    let affinity_cache_key =
+        aether_scheduler_core::build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
+            "user-key-1",
+            "openai:responses",
+            "gpt-5.5",
+            Some(&client_session),
+        )
+        .expect("session scheduler affinity cache key should build");
+    let other_affinity_cache_key =
+        aether_scheduler_core::build_scheduler_affinity_cache_key_for_api_key_id_with_client_session(
+            "user-key-1",
+            "openai:responses",
+            "gpt-5.5",
+            Some(&other_client_session),
+        )
+        .expect("other session scheduler affinity cache key should build");
+    assert!(affinity_cache_key
+        .starts_with("scheduler_affinity:v2:user-key-1:openai:responses:gpt-5.5:codex:"));
+    let session_hash = affinity_cache_key
+        .rsplit(':')
+        .next()
+        .expect("session hash should exist")
+        .to_string();
+    state.scheduler_affinity_cache.insert(
+        affinity_cache_key.clone(),
+        crate::cache::SchedulerAffinityTarget {
+            provider_id: "provider-1".to_string(),
+            endpoint_id: "endpoint-1".to_string(),
+            key_id: "provider-key-1".to_string(),
+        },
+        crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL,
+        128,
+    );
+    state.scheduler_affinity_cache.insert(
+        other_affinity_cache_key.clone(),
+        crate::cache::SchedulerAffinityTarget {
+            provider_id: "provider-1".to_string(),
+            endpoint_id: "endpoint-1".to_string(),
+            key_id: "provider-key-1".to_string(),
+        },
+        crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL,
+        128,
+    );
+
+    let list_response = local_monitoring_response(
+        &state,
+        &request_context(
+            http::Method::GET,
+            "/api/admin/monitoring/cache/affinities?keyword=alice&limit=20&offset=0",
+        ),
+    )
+    .await
+    .expect("handler should not error")
+    .expect("route should be handled locally");
+    assert_eq!(list_response.status(), http::StatusCode::OK);
+    let list_body = to_bytes(list_response.into_body(), usize::MAX)
+        .await
+        .expect("body should read");
+    let list_payload: serde_json::Value =
+        serde_json::from_slice(&list_body).expect("json body should parse");
+    let items = list_payload["data"]["items"]
+        .as_array()
+        .expect("items should be an array");
+    let item = items
+        .iter()
+        .find(|item| item["session_hash"] == json!(session_hash))
+        .expect("session-scoped item should be listed");
+    assert_eq!(list_payload["data"]["meta"]["total"], json!(2));
+    assert_eq!(item["affinity_key"], json!("user-key-1"));
+    assert_eq!(item["username"], json!("alice"));
+    assert_eq!(item["api_format"], json!("openai:responses"));
+    assert_eq!(item["model_name"], json!("gpt-5.5"));
+    assert_eq!(item["client_family"], json!("codex"));
+    assert_eq!(item["provider_name"], json!("OpenAI"));
+    assert_eq!(item["key_name"], json!("prod-key"));
+    assert_eq!(item["request_count"], json!(0));
+    assert_eq!(item["request_count_known"], json!(false));
+
+    let delete_response = local_monitoring_response(
+        &state,
+        &request_context(
+            http::Method::DELETE,
+            &format!(
+                "/api/admin/monitoring/cache/affinity/user-key-1/endpoint-1/gpt-5.5/openai:responses?client_family=codex&session_hash={session_hash}"
+            ),
+        ),
+    )
+    .await
+    .expect("handler should not error")
+    .expect("route should be handled locally");
+    assert_eq!(delete_response.status(), http::StatusCode::OK);
+    assert_eq!(
+        state.read_scheduler_affinity_target(
+            &affinity_cache_key,
+            crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL,
+        ),
+        None
+    );
+    assert!(
+        state
+            .read_scheduler_affinity_target(
+                &other_affinity_cache_key,
+                crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL,
+            )
+            .is_some(),
+        "deleting one session-scoped row should keep sibling sessions"
+    );
+}
+
+#[tokio::test]
 async fn admin_monitoring_cache_users_delete_returns_local_payload_from_test_store() {
     let user_repository = Arc::new(
         InMemoryUserReadRepository::seed_auth_users(vec![sample_monitoring_auth_user("user-1")])

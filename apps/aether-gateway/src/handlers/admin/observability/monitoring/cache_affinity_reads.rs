@@ -197,10 +197,13 @@ pub(super) async fn build_admin_monitoring_cache_affinities_response(
             "global_model_id": affinity.model_name,
             "model_name": affinity.model_name,
             "model_display_name": serde_json::Value::Null,
+            "client_family": affinity.client_family,
+            "session_hash": affinity.session_hash,
             "api_format": affinity.api_format,
             "created_at": affinity.created_at,
             "expire_at": affinity.expire_at,
             "request_count": affinity.request_count,
+            "request_count_known": affinity.request_count_known,
         }));
     }
 
@@ -318,9 +321,12 @@ pub(super) async fn build_admin_monitoring_cache_affinity_response(
                 "key_id": item.key_id,
                 "api_format": item.api_format,
                 "model_name": item.model_name,
+                "client_family": item.client_family,
+                "session_hash": item.session_hash,
                 "created_at": item.created_at,
                 "expire_at": item.expire_at,
                 "request_count": item.request_count,
+                "request_count_known": item.request_count_known,
             })
         })
         .collect::<Vec<_>>();
