@@ -308,10 +308,24 @@ detect_arch() {
 download_to() {
     local url="$1"
     local output="$2"
+    local mode="${3:-quiet}"
+    local show_progress="false"
+    if [[ "${mode}" == "progress" && -t 2 ]]; then
+        show_progress="true"
+    fi
+
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "${url}" -o "${output}"
+        if [[ "${show_progress}" == "true" ]]; then
+            curl -fL --progress-bar "${url}" -o "${output}"
+        else
+            curl -fsSL "${url}" -o "${output}"
+        fi
     elif command -v wget >/dev/null 2>&1; then
-        wget -qO "${output}" "${url}"
+        if [[ "${show_progress}" == "true" ]]; then
+            wget -O "${output}" "${url}"
+        else
+            wget -qO "${output}" "${url}"
+        fi
     else
         die "curl or wget is required to download release assets"
     fi
@@ -431,7 +445,7 @@ download_or_unpack_bundle() {
         sums_file="${TMP_ROOT}/SHA256SUMS"
 
         info "downloading ${asset} from ${REPO}"
-        download_to "${base_url}/${asset}" "${archive_file}"
+        download_to "${base_url}/${asset}" "${archive_file}" progress
         download_to "${base_url}/SHA256SUMS" "${sums_file}"
         verify_checksum "${sums_file}" "${archive_file}"
         tar -xzf "${archive_file}" -C "${TMP_ROOT}"

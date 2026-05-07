@@ -172,6 +172,27 @@ describe('UsageRecordsTable', () => {
     expect(titles.join('\n')).not.toContain('首字后生成耗时')
   })
 
+  it('shows an output speed placeholder when the rate is unavailable', () => {
+    const root = mountUsageRecordsTable([buildRecord({
+      output_tokens: 0,
+      response_time_ms: 1000,
+      first_byte_time_ms: 500,
+    })])
+
+    const performanceCell = root.querySelector('table tbody tr td:last-child') as HTMLElement
+    expect(performanceCell.textContent).toContain('0.50s / 1.00s')
+    expect([...performanceCell.querySelectorAll<HTMLElement>('.text-muted-foreground')]
+      .some((element) => element.textContent?.trim() === '-')).toBe(true)
+
+    const titles = [...root.querySelectorAll<HTMLElement>('[title]')].map((element) => element.title)
+    expect(titles).toContain([
+      '首字: 0.50s',
+      '总耗时: 1.00s',
+      '生成耗时: 0.50s',
+      '输出速度: -',
+    ].join('\n'))
+  })
+
   it('keeps active request latency in one first-byte / live-total line without TPS', () => {
     const root = mountUsageRecordsTable([buildRecord({
       status: 'streaming',

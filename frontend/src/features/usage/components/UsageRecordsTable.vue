@@ -289,10 +289,9 @@
               :title="getRecordPerformanceTitle(record)"
             >
               <span class="whitespace-nowrap">{{ formatRecordLatencyPair(record) }}</span>
-              <span
-                v-if="getRecordDisplayOutputRate(record) != null"
-                class="text-muted-foreground tabular-nums whitespace-nowrap"
-              >{{ formatOutputRate(getRecordDisplayOutputRate(record)) }}</span>
+              <span class="text-muted-foreground tabular-nums whitespace-nowrap">
+                {{ formatOutputRate(getRecordDisplayOutputRate(record)) }}
+              </span>
             </span>
             <span
               v-else
@@ -751,10 +750,9 @@
               :title="getRecordPerformanceTitle(record)"
             >
               <span class="tabular-nums whitespace-nowrap">{{ formatRecordLatencyPair(record) }}</span>
-              <span
-                v-if="getRecordDisplayOutputRate(record) != null"
-                class="text-muted-foreground tabular-nums whitespace-nowrap"
-              >{{ formatOutputRate(getRecordDisplayOutputRate(record)) }}</span>
+              <span class="text-muted-foreground tabular-nums whitespace-nowrap">
+                {{ formatOutputRate(getRecordDisplayOutputRate(record)) }}
+              </span>
             </div>
             <span
               v-else
