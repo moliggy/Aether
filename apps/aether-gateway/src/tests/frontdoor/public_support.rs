@@ -6858,7 +6858,8 @@ async fn gateway_rejects_users_me_management_token_nested_get_path_as_local_not_
 #[tokio::test]
 async fn gateway_handles_users_me_management_token_writes_locally_without_proxying_upstream() {
     let now = Utc::now();
-    let user = sample_auth_user(now);
+    let mut user = sample_auth_user(now);
+    user.role = "admin".to_string();
     let access_token = build_test_auth_token(
         "access",
         serde_json::Map::from_iter([
@@ -6913,6 +6914,7 @@ async fn gateway_handles_users_me_management_token_writes_locally_without_proxyi
             "name": "writer-token",
             "description": "writer token",
             "allowed_ips": ["127.0.0.1"],
+            "permissions": ["admin:usage:read"],
             "expires_at": (now + chrono::Duration::days(1)).to_rfc3339(),
         }))
         .send()
@@ -6930,6 +6932,10 @@ async fn gateway_handles_users_me_management_token_writes_locally_without_proxyi
         .to_string();
     assert_eq!(create_payload["message"], "Management Token 创建成功");
     assert_eq!(create_payload["data"]["name"], "writer-token");
+    assert_eq!(
+        create_payload["data"]["permissions"],
+        json!(["admin:usage:read"])
+    );
     let created_token = create_payload["token"].as_str().unwrap_or_default();
     let created_token_random = created_token.strip_prefix("ae-").unwrap_or_default();
     assert_eq!(created_token_random.len(), 32);
@@ -6951,6 +6957,7 @@ async fn gateway_handles_users_me_management_token_writes_locally_without_proxyi
             "name": "writer-token-renamed",
             "description": null,
             "allowed_ips": ["10.0.0.1"],
+            "permissions": ["admin:usage:read", "admin:pool:write"],
             "expires_at": (now + chrono::Duration::days(2)).to_rfc3339(),
         }))
         .send()
@@ -6966,6 +6973,10 @@ async fn gateway_handles_users_me_management_token_writes_locally_without_proxyi
     assert_eq!(
         update_payload["data"]["description"],
         serde_json::Value::Null
+    );
+    assert_eq!(
+        update_payload["data"]["permissions"],
+        json!(["admin:pool:write", "admin:usage:read"])
     );
 
     let toggle_response = client
@@ -7049,6 +7060,81 @@ async fn gateway_handles_users_me_management_token_writes_locally_without_proxyi
         .await
         .expect("request should succeed");
     assert_eq!(missing_response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_rejects_users_me_management_token_create_for_non_admin_user_without_proxying_upstream(
+) {
+    let now = Utc::now();
+    let user = sample_auth_user(now);
+    let access_token = build_test_auth_token(
+        "access",
+        serde_json::Map::from_iter([
+            ("user_id".to_string(), json!(user.id)),
+            ("role".to_string(), json!(user.role)),
+            (
+                "created_at".to_string(),
+                json!(user.created_at.map(|value| value.to_rfc3339())),
+            ),
+            (
+                "session_id".to_string(),
+                json!("session-users-me-management-token-create-denied"),
+            ),
+        ]),
+        now + chrono::Duration::hours(1),
+    );
+    let repository = Arc::new(InMemoryManagementTokenRepository::default());
+    let user_repository = Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![user]));
+
+    let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
+        start_auth_gateway_with_builder(|| {
+            let data_state =
+                crate::data::GatewayDataState::with_management_token_repository_for_tests(
+                    repository,
+                )
+                .with_user_reader(user_repository);
+            AppState::new()
+                .expect("gateway should build")
+                .with_data_state_for_tests(data_state)
+                .with_auth_sessions_for_tests([sample_auth_session(
+                    "user-auth-1",
+                    "session-users-me-management-token-create-denied",
+                    "device-users-me-management-token-create-denied",
+                    "refresh-token-users-me-management-token-create-denied",
+                    now,
+                )])
+        })
+        .await;
+
+    let create_response = reqwest::Client::new()
+        .post(format!("{gateway_url}/api/me/management-tokens"))
+        .header("authorization", format!("Bearer {access_token}"))
+        .header(
+            "x-client-device-id",
+            "device-users-me-management-token-create-denied",
+        )
+        .header("user-agent", "AetherTest/1.0")
+        .json(&json!({
+            "name": "ordinary-user-token",
+            "description": "ordinary user token",
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(create_response.status(), StatusCode::FORBIDDEN);
+    let create_payload: serde_json::Value = create_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(
+        create_payload["detail"],
+        json!("仅管理员可以创建 Management Token")
+    );
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();

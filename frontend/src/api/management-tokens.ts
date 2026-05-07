@@ -13,6 +13,9 @@ export interface ManagementToken {
   description?: string
   token_display: string
   allowed_ips?: string[] | null
+  permissions?: string[] | null
+  permission_mode?: 'legacy_full' | 'full' | 'read_only' | 'custom'
+  permission_summary?: string
   expires_at?: string | null
   last_used_at?: string | null
   last_used_ip?: string | null
@@ -32,6 +35,7 @@ export interface CreateManagementTokenRequest {
   name: string
   description?: string
   allowed_ips?: string[]
+  permissions?: string[] | null
   expires_at?: string | null
 }
 
@@ -45,8 +49,23 @@ export interface UpdateManagementTokenRequest {
   name?: string
   description?: string | null
   allowed_ips?: string[] | null
+  permissions?: string[] | null
   expires_at?: string | null
   is_active?: boolean
+}
+
+export interface ManagementTokenPermissionCatalogItem {
+  key: string
+  scope: string
+  scope_label: string
+  access: 'read' | 'write' | 'admin'
+  access_label: string
+}
+
+export interface ManagementTokenPermissionCatalogResponse {
+  items: ManagementTokenPermissionCatalogItem[]
+  all_permissions: string[]
+  read_only_permissions: string[]
 }
 
 export interface ManagementTokenListResponse {
@@ -180,6 +199,43 @@ export const adminManagementTokenApi = {
   },
 
   /**
+   * 获取可分配权限目录（管理员）
+   */
+  async getPermissionCatalog(): Promise<ManagementTokenPermissionCatalogResponse> {
+    const response = await apiClient.get<ManagementTokenPermissionCatalogResponse>(
+      '/api/admin/management-tokens/permissions/catalog'
+    )
+    return response.data
+  },
+
+  /**
+   * 创建 Management Token（管理员）
+   */
+  async createToken(
+    data: CreateManagementTokenRequest
+  ): Promise<CreateManagementTokenResponse> {
+    const response = await apiClient.post<CreateManagementTokenResponse>(
+      '/api/admin/management-tokens',
+      data
+    )
+    return response.data
+  },
+
+  /**
+   * 更新 Management Token（管理员）
+   */
+  async updateToken(
+    tokenId: string,
+    data: UpdateManagementTokenRequest
+  ): Promise<{ message: string; data: ManagementToken }> {
+    const response = await apiClient.put<{ message: string; data: ManagementToken }>(
+      `/api/admin/management-tokens/${tokenId}`,
+      data
+    )
+    return response.data
+  },
+
+  /**
    * 删除任意 Token（管理员）
    */
   async deleteToken(tokenId: string): Promise<{ message: string }> {
@@ -197,6 +253,18 @@ export const adminManagementTokenApi = {
   ): Promise<{ message: string; data: ManagementToken }> {
     const response = await apiClient.patch<{ message: string; data: ManagementToken }>(
       `/api/admin/management-tokens/${tokenId}/status`
+    )
+    return response.data
+  },
+
+  /**
+   * 重新生成任意 Token（管理员）
+   */
+  async regenerateToken(
+    tokenId: string
+  ): Promise<{ token: string; data: ManagementToken }> {
+    const response = await apiClient.post<{ token: string; data: ManagementToken }>(
+      `/api/admin/management-tokens/${tokenId}/regenerate`
     )
     return response.data
   }

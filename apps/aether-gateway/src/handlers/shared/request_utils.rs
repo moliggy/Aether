@@ -224,6 +224,8 @@ pub(crate) fn admin_proxy_local_requires_buffered_body(
                 | (Some("endpoints_manage"), http::Method::PUT, Some("update_key"))
                 | (Some("endpoints_manage"), http::Method::PUT, Some("update_endpoint"))
                 | (Some("modules_manage"), http::Method::PUT, Some("set_enabled"))
+                | (Some("management_tokens_manage"), http::Method::POST, Some("create_token"))
+                | (Some("management_tokens_manage"), http::Method::PUT, Some("update_token"))
                 | (Some("oauth_manage"), http::Method::PUT, Some("upsert_provider"))
                 | (Some("oauth_manage"), http::Method::POST, Some("test_provider"))
                 | (Some("provider_oauth_manage"), http::Method::POST, Some("complete_key_oauth"))

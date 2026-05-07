@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS management_tokens (
     `token_hash` VARCHAR(255) NOT NULL,
     `token_prefix` VARCHAR(64),
     `allowed_ips` JSON,
+    `permissions` JSON,
     `expires_at` BIGINT,
     `last_used_at` BIGINT,
     `last_used_ip` VARCHAR(255),

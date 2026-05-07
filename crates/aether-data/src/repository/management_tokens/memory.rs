@@ -152,6 +152,7 @@ impl ManagementTokenWriteRepository for InMemoryManagementTokenRepository {
             record.token_prefix.clone(),
             record.allowed_ips.clone(),
         )
+        .with_permissions(record.permissions.clone())
         .with_runtime_fields(record.expires_at_unix_secs, None, None, 0, record.is_active)
         .with_timestamps(now, now);
         items.push(StoredManagementTokenWithUser::new(
@@ -203,6 +204,10 @@ impl ManagementTokenWriteRepository for InMemoryManagementTokenRepository {
             items[index].token.allowed_ips = None;
         } else if let Some(allowed_ips) = &record.allowed_ips {
             items[index].token.allowed_ips = Some(allowed_ips.clone());
+        }
+
+        if let Some(permissions) = &record.permissions {
+            items[index].token.permissions = Some(permissions.clone());
         }
 
         if record.clear_expires_at {
@@ -371,12 +376,17 @@ mod tests {
                 name: "created".to_string(),
                 description: Some("created token".to_string()),
                 allowed_ips: Some(serde_json::json!(["127.0.0.1"])),
+                permissions: Some(serde_json::json!(["admin:usage:read"])),
                 expires_at_unix_secs: Some(1_800_000_000),
                 is_active: true,
             })
             .await
             .expect("create should succeed");
         assert_eq!(created.name, "created");
+        assert_eq!(
+            created.permissions,
+            Some(serde_json::json!(["admin:usage:read"]))
+        );
 
         let updated = repository
             .update_management_token(&UpdateManagementTokenRecord {
@@ -386,6 +396,7 @@ mod tests {
                 clear_description: true,
                 allowed_ips: Some(serde_json::json!(["10.0.0.1"])),
                 clear_allowed_ips: false,
+                permissions: Some(serde_json::json!(["admin:usage:read", "admin:usage:write"])),
                 expires_at_unix_secs: None,
                 clear_expires_at: true,
                 is_active: Some(false),
@@ -396,6 +407,10 @@ mod tests {
         assert_eq!(updated.name, "renamed");
         assert_eq!(updated.description, None);
         assert_eq!(updated.allowed_ips, Some(serde_json::json!(["10.0.0.1"])));
+        assert_eq!(
+            updated.permissions,
+            Some(serde_json::json!(["admin:usage:read", "admin:usage:write"]))
+        );
         assert_eq!(updated.expires_at_unix_secs, None);
         assert!(!updated.is_active);
 
@@ -416,6 +431,10 @@ mod tests {
             .expect("lookup by hash should succeed")
             .expect("token should exist");
         assert_eq!(by_hash.token.id, "token-3");
+        assert_eq!(
+            by_hash.token.permissions,
+            Some(serde_json::json!(["admin:usage:read", "admin:usage:write"]))
+        );
 
         let used = repository
             .record_management_token_usage("token-3", Some("127.0.0.1"))

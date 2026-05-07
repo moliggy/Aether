@@ -764,6 +764,173 @@ async fn gateway_registers_and_unregisters_proxy_nodes_locally_with_management_t
 }
 
 #[tokio::test]
+async fn gateway_allows_management_token_with_proxy_nodes_write_permission() {
+    let raw_token = "ae-proxy-register-write-permission";
+    let proxy_node_repository = Arc::new(InMemoryProxyNodeRepository::default());
+    let state = AppState::new().expect("gateway should build");
+    let admin_user = state
+        .create_local_auth_user_with_settings(
+            Some("proxy-admin-write@example.com".to_string()),
+            true,
+            "admin".to_string(),
+            "hash".to_string(),
+            "admin".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("admin user should be created")
+        .expect("admin user should exist");
+    let mut management_token = sample_management_token(
+        "token-proxy-register-write",
+        &admin_user.id,
+        "proxy-admin-write",
+        true,
+    );
+    management_token.token.allowed_ips = None;
+    management_token.token.permissions = Some(json!(["admin:proxy_nodes:write"]));
+    let management_token_repository =
+        Arc::new(InMemoryManagementTokenRepository::seed_with_hashes(
+            vec![management_token],
+            vec![(
+                hash_management_token(raw_token),
+                "token-proxy-register-write".to_string(),
+            )],
+        ));
+
+    let state = state.with_data_state_for_tests(
+        GatewayDataState::with_management_token_repository_for_tests(management_token_repository)
+            .attach_proxy_node_repository_for_tests(proxy_node_repository),
+    );
+    let gateway = build_router_with_state(state);
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let register_response = reqwest::Client::new()
+        .post(format!("{gateway_url}/api/admin/proxy-nodes/register"))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .bearer_auth(raw_token)
+        .json(&json!({
+            "name": "proxy-write",
+            "ip": "1.1.1.1",
+            "port": 0,
+            "heartbeat_interval": 30,
+            "tunnel_mode": true
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(register_response.status(), StatusCode::OK);
+    let register_payload: serde_json::Value = register_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(register_payload["node"]["name"], "proxy-write");
+    assert_eq!(
+        register_payload["node"]["registered_by"],
+        json!(admin_user.id)
+    );
+
+    gateway_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_rejects_management_token_without_required_admin_route_permission() {
+    let upstream_hits = Arc::new(Mutex::new(0usize));
+    let upstream_hits_clone = Arc::clone(&upstream_hits);
+    let upstream = Router::new().route(
+        "/api/admin/proxy-nodes/register",
+        any(move |_request: Request| {
+            let upstream_hits_inner = Arc::clone(&upstream_hits_clone);
+            async move {
+                *upstream_hits_inner.lock().expect("mutex should lock") += 1;
+                (StatusCode::OK, Body::from("unexpected upstream hit"))
+            }
+        }),
+    );
+
+    let raw_token = "ae-proxy-register-denied";
+    let proxy_node_repository = Arc::new(InMemoryProxyNodeRepository::default());
+    let state = AppState::new().expect("gateway should build");
+    let admin_user = state
+        .create_local_auth_user_with_settings(
+            Some("proxy-admin-denied@example.com".to_string()),
+            true,
+            "admin".to_string(),
+            "hash".to_string(),
+            "admin".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("admin user should be created")
+        .expect("admin user should exist");
+    let mut management_token = sample_management_token(
+        "token-proxy-register-denied",
+        &admin_user.id,
+        "proxy-admin-denied",
+        true,
+    );
+    management_token.token.allowed_ips = None;
+    management_token.token.permissions = Some(json!(["admin:usage:read"]));
+    let management_token_repository =
+        Arc::new(InMemoryManagementTokenRepository::seed_with_hashes(
+            vec![management_token],
+            vec![(
+                hash_management_token(raw_token),
+                "token-proxy-register-denied".to_string(),
+            )],
+        ));
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let state = state.with_data_state_for_tests(
+        GatewayDataState::with_management_token_repository_for_tests(management_token_repository)
+            .attach_proxy_node_repository_for_tests(proxy_node_repository),
+    );
+    let gateway = build_router_with_state(state);
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let register_response = reqwest::Client::new()
+        .post(format!("{gateway_url}/api/admin/proxy-nodes/register"))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .bearer_auth(raw_token)
+        .json(&json!({
+            "name": "proxy-denied",
+            "ip": "1.1.1.1",
+            "port": 0,
+            "heartbeat_interval": 30,
+            "tunnel_mode": true
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(register_response.status(), StatusCode::FORBIDDEN);
+    let denied_payload: serde_json::Value = register_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(
+        denied_payload["detail"],
+        json!("management token permission denied")
+    );
+    assert_eq!(
+        denied_payload["required_permission"],
+        json!("admin:proxy_nodes:write")
+    );
+    assert_eq!(denied_payload["route_family"], json!("proxy_nodes_manage"));
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+    drop(upstream_url);
+}
+
+#[tokio::test]
 async fn gateway_registers_proxy_node_with_management_token_when_allowed_ips_is_json_null() {
     let raw_token = "ae_proxy_register_json_null";
     let proxy_node_repository = Arc::new(InMemoryProxyNodeRepository::default());

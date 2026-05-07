@@ -72,6 +72,30 @@ impl<'a> AdminAppState<'a> {
         self.app.delete_management_token(token_id).await
     }
 
+    pub(crate) async fn create_management_token(
+        &self,
+        record: &aether_data::repository::management_tokens::CreateManagementTokenRecord,
+    ) -> Result<
+        crate::LocalMutationOutcome<
+            aether_data::repository::management_tokens::StoredManagementToken,
+        >,
+        GatewayError,
+    > {
+        self.app.create_management_token(record).await
+    }
+
+    pub(crate) async fn update_management_token(
+        &self,
+        record: &aether_data::repository::management_tokens::UpdateManagementTokenRecord,
+    ) -> Result<
+        crate::LocalMutationOutcome<
+            aether_data::repository::management_tokens::StoredManagementToken,
+        >,
+        GatewayError,
+    > {
+        self.app.update_management_token(record).await
+    }
+
     pub(crate) async fn list_management_tokens(
         &self,
         query: &aether_data::repository::management_tokens::ManagementTokenListQuery,
@@ -93,6 +117,18 @@ impl<'a> AdminAppState<'a> {
         self.app
             .set_management_token_active(token_id, is_active)
             .await
+    }
+
+    pub(crate) async fn regenerate_management_token_secret(
+        &self,
+        mutation: &aether_data::repository::management_tokens::RegenerateManagementTokenSecret,
+    ) -> Result<
+        crate::LocalMutationOutcome<
+            aether_data::repository::management_tokens::StoredManagementToken,
+        >,
+        GatewayError,
+    > {
+        self.app.regenerate_management_token_secret(mutation).await
     }
 
     pub(crate) async fn remove_admin_security_blacklist(

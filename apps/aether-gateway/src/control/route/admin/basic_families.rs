@@ -10,6 +10,20 @@ pub(super) fn classify_admin_basic_family_route(
     if method == http::Method::GET
         && matches!(
             normalized_path,
+            "/api/admin/management-tokens/permissions/catalog"
+                | "/api/admin/management-tokens/permissions/catalog/"
+        )
+    {
+        Some(classified(
+            "admin_proxy",
+            "management_tokens_manage",
+            "permissions_catalog",
+            "admin:management_tokens",
+            false,
+        ))
+    } else if method == http::Method::GET
+        && matches!(
+            normalized_path,
             "/api/admin/management-tokens" | "/api/admin/management-tokens/"
         )
     {
@@ -17,6 +31,19 @@ pub(super) fn classify_admin_basic_family_route(
             "admin_proxy",
             "management_tokens_manage",
             "list_tokens",
+            "admin:management_tokens",
+            false,
+        ))
+    } else if method == http::Method::POST
+        && matches!(
+            normalized_path,
+            "/api/admin/management-tokens" | "/api/admin/management-tokens/"
+        )
+    {
+        Some(classified(
+            "admin_proxy",
+            "management_tokens_manage",
+            "create_token",
             "admin:management_tokens",
             false,
         ))
@@ -30,6 +57,16 @@ pub(super) fn classify_admin_basic_family_route(
             "admin:management_tokens",
             false,
         ))
+    } else if method == http::Method::PUT
+        && normalized_path.starts_with("/api/admin/management-tokens/")
+    {
+        Some(classified(
+            "admin_proxy",
+            "management_tokens_manage",
+            "update_token",
+            "admin:management_tokens",
+            false,
+        ))
     } else if method == http::Method::DELETE
         && normalized_path.starts_with("/api/admin/management-tokens/")
     {
@@ -37,6 +74,17 @@ pub(super) fn classify_admin_basic_family_route(
             "admin_proxy",
             "management_tokens_manage",
             "delete_token",
+            "admin:management_tokens",
+            false,
+        ))
+    } else if method == http::Method::POST
+        && normalized_path.starts_with("/api/admin/management-tokens/")
+        && normalized_path.ends_with("/regenerate")
+    {
+        Some(classified(
+            "admin_proxy",
+            "management_tokens_manage",
+            "regenerate_token",
             "admin:management_tokens",
             false,
         ))

@@ -3,6 +3,7 @@ use axum::http::Uri;
 
 mod auth;
 mod execute;
+mod management_token_permissions;
 mod public;
 mod route;
 
@@ -12,6 +13,12 @@ pub(crate) use auth::{
     GatewayAdminPrincipalContext, GatewayControlAuthContext, GatewayLocalAuthRejection,
 };
 pub(crate) use execute::{allows_control_execute_emergency, maybe_execute_via_control};
+pub(crate) use management_token_permissions::{
+    all_assignable_management_token_permissions, management_token_permission_catalog_payload,
+    management_token_permission_keys_from_value, management_token_permission_mode_and_summary,
+    management_token_required_permission, normalize_assignable_management_token_permissions,
+    validate_management_token_admin_route_permission,
+};
 pub(crate) use public::{resolve_public_request_context, GatewayPublicRequestContext};
 #[cfg(test)]
 pub(crate) use route::classify_control_route;

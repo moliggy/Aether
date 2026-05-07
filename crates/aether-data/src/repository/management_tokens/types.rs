@@ -47,6 +47,7 @@ pub struct StoredManagementToken {
     pub description: Option<String>,
     pub token_prefix: Option<String>,
     pub allowed_ips: Option<serde_json::Value>,
+    pub permissions: Option<serde_json::Value>,
     pub expires_at_unix_secs: Option<u64>,
     pub last_used_at_unix_secs: Option<u64>,
     pub last_used_ip: Option<String>,
@@ -80,6 +81,7 @@ impl StoredManagementToken {
             description: None,
             token_prefix: None,
             allowed_ips: None,
+            permissions: None,
             expires_at_unix_secs: None,
             last_used_at_unix_secs: None,
             last_used_ip: None,
@@ -99,6 +101,11 @@ impl StoredManagementToken {
         self.description = description;
         self.token_prefix = token_prefix;
         self.allowed_ips = allowed_ips;
+        self
+    }
+
+    pub fn with_permissions(mut self, permissions: Option<serde_json::Value>) -> Self {
+        self.permissions = permissions;
         self
     }
 
@@ -166,6 +173,7 @@ pub struct CreateManagementTokenRecord {
     pub name: String,
     pub description: Option<String>,
     pub allowed_ips: Option<serde_json::Value>,
+    pub permissions: Option<serde_json::Value>,
     pub expires_at_unix_secs: Option<u64>,
     pub is_active: bool,
 }
@@ -214,6 +222,7 @@ impl CreateManagementTokenRecord {
                 ));
             }
         }
+        validate_management_token_permissions(self.permissions.as_ref())?;
         Ok(())
     }
 }
@@ -226,6 +235,7 @@ pub struct UpdateManagementTokenRecord {
     pub clear_description: bool,
     pub allowed_ips: Option<serde_json::Value>,
     pub clear_allowed_ips: bool,
+    pub permissions: Option<serde_json::Value>,
     pub expires_at_unix_secs: Option<u64>,
     pub clear_expires_at: bool,
     pub is_active: Option<bool>,
@@ -262,8 +272,33 @@ impl UpdateManagementTokenRecord {
                 ));
             }
         }
+        validate_management_token_permissions(self.permissions.as_ref())?;
         Ok(())
     }
+}
+
+fn validate_management_token_permissions(
+    permissions: Option<&serde_json::Value>,
+) -> Result<(), crate::DataLayerError> {
+    let Some(permissions) = permissions else {
+        return Ok(());
+    };
+    let Some(items) = permissions.as_array() else {
+        return Err(crate::DataLayerError::InvalidInput(
+            "permissions must be an array".to_string(),
+        ));
+    };
+    if items.is_empty() {
+        return Err(crate::DataLayerError::InvalidInput(
+            "permissions must not be empty".to_string(),
+        ));
+    }
+    if items.iter().any(|value| value.as_str().is_none()) {
+        return Err(crate::DataLayerError::InvalidInput(
+            "permissions must contain only strings".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

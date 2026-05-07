@@ -500,6 +500,11 @@ type = "json"
 nullable = true
 
 [[table.management_tokens.columns]]
+name = "permissions"
+type = "json"
+nullable = true
+
+[[table.management_tokens.columns]]
 name = "expires_at"
 type = "unix_seconds"
 nullable = true

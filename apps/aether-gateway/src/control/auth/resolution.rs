@@ -54,6 +54,7 @@ pub(crate) struct GatewayAdminPrincipalContext {
     pub(crate) user_role: String,
     pub(crate) session_id: Option<String>,
     pub(crate) management_token_id: Option<String>,
+    pub(crate) management_token_permissions: Option<Vec<String>>,
 }
 
 pub(in super::super) enum ControlDecisionAuthResolution {
@@ -243,6 +244,7 @@ fn resolve_trusted_admin_principal(
         user_role: trusted_headers.user_role,
         session_id: trusted_headers.session_id,
         management_token_id: trusted_headers.management_token_id,
+        management_token_permissions: None,
     })
 }
 
@@ -328,6 +330,7 @@ async fn resolve_local_admin_principal_from_claims(
         user_role: "admin".to_string(),
         session_id: Some(session.id),
         management_token_id: None,
+        management_token_permissions: None,
     }))
 }
 

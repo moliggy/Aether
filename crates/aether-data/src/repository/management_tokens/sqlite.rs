@@ -41,6 +41,7 @@ SELECT
   description,
   token_prefix,
   allowed_ips,
+  permissions,
   expires_at AS expires_at_unix_secs,
   last_used_at AS last_used_at_unix_secs,
   last_used_ip,
@@ -61,6 +62,7 @@ SELECT
   mt.description,
   mt.token_prefix,
   mt.allowed_ips,
+  mt.permissions,
   mt.expires_at AS expires_at_unix_secs,
   mt.last_used_at AS last_used_at_unix_secs,
   mt.last_used_ip,
@@ -95,6 +97,7 @@ SELECT
   mt.description,
   mt.token_prefix,
   mt.allowed_ips,
+  mt.permissions,
   mt.expires_at AS expires_at_unix_secs,
   mt.last_used_at AS last_used_at_unix_secs,
   mt.last_used_ip,
@@ -120,6 +123,7 @@ SELECT
   mt.description,
   mt.token_prefix,
   mt.allowed_ips,
+  mt.permissions,
   mt.expires_at AS expires_at_unix_secs,
   mt.last_used_at AS last_used_at_unix_secs,
   mt.last_used_ip,
@@ -210,8 +214,8 @@ impl ManagementTokenWriteRepository for SqliteManagementTokenRepository {
             r#"
 INSERT INTO management_tokens (
   id, user_id, token_hash, token_prefix, name, description, allowed_ips,
-  expires_at, is_active, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  permissions, expires_at, is_active, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 "#,
         )
         .bind(&record.id)
@@ -221,6 +225,7 @@ INSERT INTO management_tokens (
         .bind(&record.name)
         .bind(record.description.as_deref())
         .bind(json_to_string(record.allowed_ips.as_ref())?)
+        .bind(json_to_string(record.permissions.as_ref())?)
         .bind(
             record
                 .expires_at_unix_secs
@@ -261,6 +266,7 @@ INSERT INTO management_tokens (
         } else {
             record.allowed_ips.as_ref().or(current.allowed_ips.as_ref())
         };
+        let permissions = record.permissions.as_ref().or(current.permissions.as_ref());
         let expires_at = if record.clear_expires_at {
             None
         } else {
@@ -275,6 +281,7 @@ UPDATE management_tokens
 SET name = ?,
     description = ?,
     allowed_ips = ?,
+    permissions = ?,
     expires_at = ?,
     is_active = ?,
     updated_at = ?
@@ -284,6 +291,7 @@ WHERE id = ?
         .bind(name)
         .bind(description)
         .bind(json_to_string(allowed_ips)?)
+        .bind(json_to_string(permissions)?)
         .bind(expires_at.and_then(|value| i64::try_from(value).ok()))
         .bind(is_active)
         .bind(now as i64)
@@ -435,6 +443,7 @@ fn map_token_row(row: &SqliteRow) -> Result<StoredManagementToken, DataLayerErro
         row.try_get("token_prefix").map_sql_err()?,
         json_from_string(row.try_get("allowed_ips").map_sql_err()?)?,
     )
+    .with_permissions(json_from_string(row.try_get("permissions").map_sql_err()?)?)
     .with_runtime_fields(
         optional_unix_secs(row.try_get("expires_at_unix_secs").map_sql_err()?),
         optional_unix_secs(row.try_get("last_used_at_unix_secs").map_sql_err()?),
@@ -516,12 +525,17 @@ VALUES ('user-1', 'user-1@example.com', 'user-1', 'admin', 1, 1, 1)
                 name: "primary".to_string(),
                 description: Some("primary token".to_string()),
                 allowed_ips: Some(serde_json::json!(["127.0.0.1"])),
+                permissions: Some(serde_json::json!(["admin:usage:read"])),
                 expires_at_unix_secs: Some(1_800_000_000),
                 is_active: true,
             })
             .await
             .expect("token should create");
         assert_eq!(created.name, "primary");
+        assert_eq!(
+            created.permissions,
+            Some(serde_json::json!(["admin:usage:read"]))
+        );
 
         let page = repository
             .list_management_tokens(&ManagementTokenListQuery {
@@ -550,6 +564,7 @@ VALUES ('user-1', 'user-1@example.com', 'user-1', 'admin', 1, 1, 1)
                 clear_description: true,
                 allowed_ips: Some(serde_json::json!(["10.0.0.1"])),
                 clear_allowed_ips: false,
+                permissions: Some(serde_json::json!(["admin:usage:read", "admin:usage:write"])),
                 expires_at_unix_secs: None,
                 clear_expires_at: true,
                 is_active: Some(false),
@@ -560,6 +575,10 @@ VALUES ('user-1', 'user-1@example.com', 'user-1', 'admin', 1, 1, 1)
         assert_eq!(updated.name, "renamed");
         assert!(!updated.is_active);
         assert_eq!(updated.description, None);
+        assert_eq!(
+            updated.permissions,
+            Some(serde_json::json!(["admin:usage:read", "admin:usage:write"]))
+        );
         assert_eq!(updated.expires_at_unix_secs, None);
 
         let toggled = repository

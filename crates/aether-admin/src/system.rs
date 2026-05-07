@@ -1518,6 +1518,10 @@ pub fn admin_management_token_status_id_from_path(request_path: &str) -> Option<
     suffixed_path_identifier_from_path(request_path, "/api/admin/management-tokens/", "/status")
 }
 
+pub fn admin_management_token_regenerate_id_from_path(request_path: &str) -> Option<String> {
+    suffixed_path_identifier_from_path(request_path, "/api/admin/management-tokens/", "/regenerate")
+}
+
 pub fn admin_adaptive_effective_limit(key: &StoredProviderCatalogKey) -> Option<u32> {
     if key.rpm_limit.is_none() {
         key.learned_rpm_limit

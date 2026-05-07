@@ -7056,6 +7056,152 @@ async fn gateway_handles_admin_management_token_detail_locally_with_trusted_admi
 }
 
 #[tokio::test]
+async fn gateway_creates_updates_and_regenerates_admin_management_token_locally_with_permissions() {
+    let upstream_hits = Arc::new(Mutex::new(0usize));
+    let upstream_hits_clone = Arc::clone(&upstream_hits);
+    let upstream = Router::new().fallback(any(move |_request: Request| {
+        let upstream_hits_inner = Arc::clone(&upstream_hits_clone);
+        async move {
+            *upstream_hits_inner.lock().expect("mutex should lock") += 1;
+            (StatusCode::OK, Body::from("unexpected upstream hit"))
+        }
+    }));
+
+    let repository = Arc::new(InMemoryManagementTokenRepository::default());
+    let state = AppState::new().expect("gateway should build");
+    let admin_user = state
+        .create_local_auth_user_with_settings(
+            Some("management-admin@example.com".to_string()),
+            true,
+            "admin".to_string(),
+            "hash".to_string(),
+            "admin".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("admin user should be created")
+        .expect("admin user should exist");
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let gateway = build_router_with_state(state.with_data_state_for_tests(
+        GatewayDataState::with_management_token_repository_for_tests(repository.clone()),
+    ));
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+    let client = reqwest::Client::new();
+
+    let create_response = client
+        .post(format!("{gateway_url}/api/admin/management-tokens"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, admin_user.id.as_str())
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "name": "admin-token",
+            "description": "admin token",
+            "allowed_ips": ["127.0.0.1"],
+            "permissions": ["admin:usage:read", "admin:pool:write"],
+            "expires_at": "2099-01-01T00:00:00Z",
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    let create_status = create_response.status();
+    let create_body = create_response.text().await.expect("body should read");
+    assert_eq!(create_status, StatusCode::CREATED, "{create_body}");
+    let create_payload: serde_json::Value =
+        serde_json::from_str(&create_body).expect("json body should parse");
+    let token_id = create_payload["data"]["id"]
+        .as_str()
+        .expect("token id should exist")
+        .to_string();
+    assert_eq!(create_payload["message"], "Management Token 创建成功");
+    assert_eq!(create_payload["data"]["user"]["id"], json!(admin_user.id));
+    assert_eq!(
+        create_payload["data"]["permissions"],
+        json!(["admin:pool:write", "admin:usage:read"])
+    );
+    let created_secret = create_payload["token"].as_str().unwrap_or_default();
+    assert!(created_secret.starts_with("ae-"));
+
+    let update_response = client
+        .put(format!(
+            "{gateway_url}/api/admin/management-tokens/{token_id}"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, admin_user.id.as_str())
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "name": "admin-token-updated",
+            "description": null,
+            "allowed_ips": null,
+            "permissions": ["admin:usage:read"],
+            "expires_at": null,
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(update_response.status(), StatusCode::OK);
+    let update_payload: serde_json::Value = update_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(update_payload["message"], "更新成功");
+    assert_eq!(update_payload["data"]["name"], "admin-token-updated");
+    assert_eq!(
+        update_payload["data"]["permissions"],
+        json!(["admin:usage:read"])
+    );
+    assert_eq!(
+        update_payload["data"]["allowed_ips"],
+        serde_json::Value::Null
+    );
+
+    let regenerate_response = client
+        .post(format!(
+            "{gateway_url}/api/admin/management-tokens/{token_id}/regenerate"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, admin_user.id.as_str())
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(regenerate_response.status(), StatusCode::OK);
+    let regenerate_payload: serde_json::Value = regenerate_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(regenerate_payload["message"], "Token 已重新生成");
+    assert!(regenerate_payload["token"]
+        .as_str()
+        .unwrap_or_default()
+        .starts_with("ae-"));
+    assert_eq!(
+        repository
+            .get_management_token_with_user(&token_id)
+            .await
+            .expect("lookup should succeed")
+            .expect("token should remain")
+            .token
+            .permissions,
+        Some(json!(["admin:usage:read"]))
+    );
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+    drop(upstream_url);
+}
+
+#[tokio::test]
 async fn gateway_deletes_admin_management_token_locally_with_trusted_admin_principal() {
     let upstream_hits = Arc::new(Mutex::new(0usize));
     let upstream_hits_clone = Arc::clone(&upstream_hits);

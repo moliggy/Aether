@@ -37,3 +37,7 @@ pub(crate) fn admin_management_token_id_from_path(request_path: &str) -> Option<
 pub(crate) fn admin_management_token_status_id_from_path(request_path: &str) -> Option<String> {
     aether_admin::system::admin_management_token_status_id_from_path(request_path)
 }
+
+pub(crate) fn admin_management_token_regenerate_id_from_path(request_path: &str) -> Option<String> {
+    aether_admin::system::admin_management_token_regenerate_id_from_path(request_path)
+}

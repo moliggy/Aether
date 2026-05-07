@@ -18,6 +18,7 @@ SELECT
   mt.description,
   mt.token_prefix,
   mt.allowed_ips,
+  mt.permissions,
   EXTRACT(EPOCH FROM mt.expires_at)::bigint AS expires_at_unix_secs,
   EXTRACT(EPOCH FROM mt.last_used_at)::bigint AS last_used_at_unix_secs,
   mt.last_used_ip,
@@ -53,6 +54,7 @@ SELECT
   mt.description,
   mt.token_prefix,
   mt.allowed_ips,
+  mt.permissions,
   EXTRACT(EPOCH FROM mt.expires_at)::bigint AS expires_at_unix_secs,
   EXTRACT(EPOCH FROM mt.last_used_at)::bigint AS last_used_at_unix_secs,
   mt.last_used_ip,
@@ -78,6 +80,7 @@ SELECT
   mt.description,
   mt.token_prefix,
   mt.allowed_ips,
+  mt.permissions,
   EXTRACT(EPOCH FROM mt.expires_at)::bigint AS expires_at_unix_secs,
   EXTRACT(EPOCH FROM mt.last_used_at)::bigint AS last_used_at_unix_secs,
   mt.last_used_ip,
@@ -109,6 +112,7 @@ INSERT INTO management_tokens (
   name,
   description,
   allowed_ips,
+  permissions,
   expires_at,
   is_active
 )
@@ -120,11 +124,12 @@ VALUES (
   $5,
   $6,
   $7,
+  $8,
   CASE
-    WHEN $8::bigint IS NULL THEN NULL
-    ELSE to_timestamp($8::double precision)
+    WHEN $9::bigint IS NULL THEN NULL
+    ELSE to_timestamp($9::double precision)
   END,
-  $9
+  $10
 )
 RETURNING
   id,
@@ -133,6 +138,7 @@ RETURNING
   description,
   token_prefix,
   allowed_ips,
+  permissions,
   EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix_secs,
   EXTRACT(EPOCH FROM last_used_at)::bigint AS last_used_at_unix_secs,
   last_used_ip,
@@ -155,12 +161,13 @@ SET name = COALESCE($2, name),
       WHEN $6::json IS NULL THEN allowed_ips
       ELSE $6
     END,
+    permissions = COALESCE($7::json, permissions),
     expires_at = CASE
-      WHEN $7 THEN NULL
-      WHEN $8::bigint IS NULL THEN expires_at
-      ELSE to_timestamp($8::double precision)
+      WHEN $8 THEN NULL
+      WHEN $9::bigint IS NULL THEN expires_at
+      ELSE to_timestamp($9::double precision)
     END,
-    is_active = COALESCE($9, is_active),
+    is_active = COALESCE($10, is_active),
     updated_at = NOW()
 WHERE id = $1
 RETURNING
@@ -170,6 +177,7 @@ RETURNING
   description,
   token_prefix,
   allowed_ips,
+  permissions,
   EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix_secs,
   EXTRACT(EPOCH FROM last_used_at)::bigint AS last_used_at_unix_secs,
   last_used_ip,
@@ -191,6 +199,7 @@ RETURNING
   description,
   token_prefix,
   allowed_ips,
+  permissions,
   EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix_secs,
   EXTRACT(EPOCH FROM last_used_at)::bigint AS last_used_at_unix_secs,
   last_used_ip,
@@ -213,6 +222,7 @@ RETURNING
   description,
   token_prefix,
   allowed_ips,
+  permissions,
   EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix_secs,
   EXTRACT(EPOCH FROM last_used_at)::bigint AS last_used_at_unix_secs,
   last_used_ip,
@@ -236,6 +246,7 @@ RETURNING
   description,
   token_prefix,
   allowed_ips,
+  permissions,
   EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix_secs,
   EXTRACT(EPOCH FROM last_used_at)::bigint AS last_used_at_unix_secs,
   last_used_ip,
@@ -327,6 +338,7 @@ impl ManagementTokenWriteRepository for SqlxManagementTokenRepository {
             .bind(&record.name)
             .bind(record.description.as_deref())
             .bind(record.allowed_ips.as_ref())
+            .bind(record.permissions.as_ref())
             .bind(
                 record
                     .expires_at_unix_secs
@@ -351,6 +363,7 @@ impl ManagementTokenWriteRepository for SqlxManagementTokenRepository {
             .bind(record.description.as_deref())
             .bind(record.clear_allowed_ips)
             .bind(record.allowed_ips.as_ref())
+            .bind(record.permissions.as_ref())
             .bind(record.clear_expires_at)
             .bind(
                 record
@@ -458,6 +471,7 @@ fn map_token_row(row: &PgRow) -> Result<StoredManagementToken, DataLayerError> {
         row.try_get("token_prefix").map_postgres_err()?,
         row.try_get("allowed_ips").map_postgres_err()?,
     )
+    .with_permissions(row.try_get("permissions").map_postgres_err()?)
     .with_runtime_fields(
         optional_unix_secs(row.try_get("expires_at_unix_secs").map_postgres_err()?),
         optional_unix_secs(row.try_get("last_used_at_unix_secs").map_postgres_err()?),

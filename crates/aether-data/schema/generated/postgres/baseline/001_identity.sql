@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS public.management_tokens (
     token_hash character varying(255) NOT NULL,
     token_prefix character varying(64),
     allowed_ips jsonb,
+    permissions jsonb,
     expires_at bigint,
     last_used_at bigint,
     last_used_ip character varying(255),

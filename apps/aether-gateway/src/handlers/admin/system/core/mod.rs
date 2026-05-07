@@ -47,6 +47,7 @@ pub(crate) async fn maybe_build_local_admin_core_response(
         super::management_tokens::maybe_build_local_admin_management_tokens_response(
             state,
             request_context,
+            request_body,
         )
         .await?
     {

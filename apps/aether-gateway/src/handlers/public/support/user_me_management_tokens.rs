@@ -19,6 +19,7 @@ use super::{
     query_param_value, resolve_authenticated_local_user, AppState, AuthenticatedLocalUserContext,
     GatewayPublicRequestContext,
 };
+use crate::control::normalize_assignable_management_token_permissions;
 use crate::handlers::shared::generate_gateway_secret_plaintext;
 use crate::LocalMutationOutcome;
 
@@ -38,6 +39,7 @@ struct UsersMeManagementTokenCreateInput {
     name: String,
     description: Option<String>,
     allowed_ips: Option<serde_json::Value>,
+    permissions: serde_json::Value,
     expires_at_unix_secs: Option<u64>,
 }
 
@@ -48,6 +50,7 @@ struct UsersMeManagementTokenUpdateInput {
     clear_description: bool,
     allowed_ips: Option<serde_json::Value>,
     clear_allowed_ips: bool,
+    permissions: Option<serde_json::Value>,
     expires_at_unix_secs: Option<u64>,
     clear_expires_at: bool,
 }
@@ -59,6 +62,7 @@ impl UsersMeManagementTokenUpdateInput {
             && !self.clear_description
             && self.allowed_ips.is_none()
             && !self.clear_allowed_ips
+            && self.permissions.is_none()
             && self.expires_at_unix_secs.is_none()
             && !self.clear_expires_at
     }
@@ -282,6 +286,8 @@ fn users_me_parse_management_token_create_input(
         _ => return Err("输入验证失败".to_string()),
     };
     let allowed_ips = users_me_parse_management_token_allowed_ips(payload.get("allowed_ips"))?;
+    let permissions =
+        normalize_assignable_management_token_permissions(payload.get("permissions"))?;
     let expires_at_unix_secs = match payload.get("expires_at") {
         Some(value) => users_me_parse_management_token_expires_at(value, false)?,
         None => None,
@@ -291,6 +297,7 @@ fn users_me_parse_management_token_create_input(
         name,
         description,
         allowed_ips,
+        permissions,
         expires_at_unix_secs,
     })
 }
@@ -333,6 +340,12 @@ fn users_me_parse_management_token_update_input(
         } else {
             input.allowed_ips = users_me_parse_management_token_allowed_ips(Some(value))?;
         }
+    }
+
+    if let Some(value) = payload.get("permissions") {
+        input.permissions = Some(normalize_assignable_management_token_permissions(Some(
+            value,
+        ))?);
     }
 
     if let Some(value) = payload.get("expires_at") {
@@ -482,6 +495,13 @@ pub(super) async fn handle_users_me_management_token_create(
         Ok(value) => value,
         Err(response) => return response,
     };
+    if !auth.user.role.eq_ignore_ascii_case("admin") {
+        return build_auth_error_response(
+            http::StatusCode::FORBIDDEN,
+            "仅管理员可以创建 Management Token",
+            false,
+        );
+    }
     let Some(request_body) = request_body else {
         return build_auth_error_response(http::StatusCode::BAD_REQUEST, "缺少请求体", false);
     };
@@ -536,6 +556,7 @@ pub(super) async fn handle_users_me_management_token_create(
         name: input.name.clone(),
         description: input.description,
         allowed_ips: input.allowed_ips,
+        permissions: Some(input.permissions),
         expires_at_unix_secs: input.expires_at_unix_secs,
         is_active: true,
     };
@@ -668,6 +689,7 @@ pub(super) async fn handle_users_me_management_token_update(
         clear_description: input.clear_description,
         allowed_ips: input.allowed_ips,
         clear_allowed_ips: input.clear_allowed_ips,
+        permissions: input.permissions,
         expires_at_unix_secs: input.expires_at_unix_secs,
         clear_expires_at: input.clear_expires_at,
         is_active: None,

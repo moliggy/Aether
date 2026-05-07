@@ -7,7 +7,7 @@ use crate::constants::{
     EXECUTION_PATH_HEADER, EXECUTION_PATH_LOCAL_AUTH_DENIED, EXECUTION_PATH_LOCAL_OVERLOADED,
     EXECUTION_PATH_LOCAL_RATE_LIMITED, EXECUTION_PATH_PUBLIC_PROXY_PASSTHROUGH,
 };
-use crate::control::GatewayControlDecision;
+use crate::control::{management_token_permission_mode_and_summary, GatewayControlDecision};
 use crate::execution_runtime::{
     maybe_build_local_sync_finalize_response, maybe_build_local_video_error_response,
     maybe_build_local_video_success_outcome, resolve_local_sync_error_background_report_kind,
@@ -465,6 +465,8 @@ pub(crate) fn build_management_token_payload(
     token: &StoredManagementToken,
     user: Option<&StoredManagementTokenUserSummary>,
 ) -> serde_json::Value {
+    let (permission_mode, permission_summary) =
+        management_token_permission_mode_and_summary(token.permissions.as_ref());
     let mut payload = json!({
         "id": token.id,
         "user_id": token.user_id,
@@ -472,6 +474,9 @@ pub(crate) fn build_management_token_payload(
         "description": token.description,
         "token_display": token.token_display(),
         "allowed_ips": token.allowed_ips,
+        "permissions": token.permissions,
+        "permission_mode": permission_mode,
+        "permission_summary": permission_summary,
         "expires_at": token.expires_at_unix_secs.and_then(unix_secs_to_rfc3339),
         "last_used_at": token.last_used_at_unix_secs.and_then(unix_secs_to_rfc3339),
         "last_used_ip": token.last_used_ip,

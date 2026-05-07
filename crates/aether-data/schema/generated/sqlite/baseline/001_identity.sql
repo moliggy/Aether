@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS management_tokens (
     token_hash TEXT NOT NULL,
     token_prefix TEXT,
     allowed_ips TEXT,
+    permissions TEXT,
     expires_at INTEGER,
     last_used_at INTEGER,
     last_used_ip TEXT,
