@@ -1459,6 +1459,7 @@ const RESERVED_BODY_FIELDS = new Set([
 
 const BODY_RULE_JSON_ACTIONS = new Set(['set', 'drop', 'rename', 'append', 'insert', 'regex_replace'])
 const CONDITION_JSON_OPS = new Set(['eq', 'neq', 'gt', 'lt', 'gte', 'lte', 'starts_with', 'ends_with', 'contains', 'matches', 'exists', 'not_exists', 'in', 'type_is'])
+const CONDITION_JSON_SOURCES = new Set(['body', 'current', 'original', 'request_headers', 'headers'])
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -1508,8 +1509,8 @@ function validateJsonConditionShape(condition: Record<string, unknown>, label: s
   if (typeof condition.op !== 'string' || !CONDITION_JSON_OPS.has(condition.op)) {
     return `${label}.op 无效`
   }
-  if (condition.source !== undefined && condition.source !== 'request_headers') {
-    return `${label}.source 只能是 request_headers；请求体条件不要填写 source`
+  if (condition.source !== undefined && (typeof condition.source !== 'string' || !CONDITION_JSON_SOURCES.has(condition.source))) {
+    return `${label}.source 无效`
   }
   return null
 }

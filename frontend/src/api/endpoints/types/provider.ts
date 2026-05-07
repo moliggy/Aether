@@ -140,7 +140,7 @@ export interface BodyRuleConditionLeaf {
   path: string
   op: BodyRuleConditionOp
   value?: unknown  // exists / not_exists 不需要 value
-  source?: 'request_headers'  // 不填表示请求体；填 request_headers 表示请求头
+  source?: 'body' | 'current' | 'original' | 'request_headers' | 'headers'
 }
 
 export interface BodyRuleConditionAll {

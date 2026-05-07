@@ -1,6 +1,6 @@
 import type { BodyRuleCondition, BodyRuleConditionOp } from '@/api/endpoints'
 
-export type ConditionSource = 'body' | 'request_headers'
+export type ConditionSource = 'body' | 'original' | 'request_headers'
 export type ConditionGroupMode = 'all' | 'any'
 
 export interface EditableConditionLeaf {
@@ -96,6 +96,8 @@ export function conditionToEditable(condition?: BodyRuleCondition | null): Edita
       : '',
     source: source === 'request_headers' || source === 'headers'
         ? 'request_headers'
+        : source === 'original'
+          ? 'original'
         : 'body',
   }
 }
@@ -117,7 +119,11 @@ export function editableConditionToApi(node: EditableConditionNode | null): Body
   const base = {
     path,
     op: node.op,
-    ...(node.source === 'request_headers' ? { source: 'request_headers' as const } : {}),
+    ...(node.source === 'request_headers'
+      ? { source: 'request_headers' as const }
+      : node.source === 'original'
+        ? { source: 'original' as const }
+        : {}),
   }
 
   if (node.op === 'exists' || node.op === 'not_exists') {

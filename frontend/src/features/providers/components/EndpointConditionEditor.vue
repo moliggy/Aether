@@ -130,6 +130,9 @@
           <SelectItem value="body">
             请求体
           </SelectItem>
+          <SelectItem value="original">
+            原始请求体
+          </SelectItem>
           <SelectItem value="request_headers">
             请求头
           </SelectItem>

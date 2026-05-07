@@ -586,10 +586,10 @@ fn evaluate_local_condition(
     let current_value = if condition_source_is_headers(source) {
         request_headers.and_then(|headers| get_header_condition_value(headers, path))
     } else {
-        let target = if source.eq_ignore_ascii_case("current") {
-            body
-        } else {
+        let target = if source.eq_ignore_ascii_case("original") {
             original_body.unwrap_or(body)
+        } else {
+            body
         };
         parse_body_path(path).and_then(|path| get_nested_value(target, &path))
     };
@@ -1552,7 +1552,7 @@ mod tests {
     }
 
     #[test]
-    fn body_conditions_default_to_original_request_body() {
+    fn body_conditions_default_to_current_request_body() {
         let rules = serde_json::json!([
             {"action":"set","path":"model","value":"provider-model"},
             {"action":"set","path":"metadata.original_hit","value":true,"condition":{"path":"model","op":"eq","value":"client-model"}},
@@ -1570,8 +1570,36 @@ mod tests {
         ));
 
         assert_eq!(body["model"], "provider-model");
-        assert_eq!(body["metadata"]["original_hit"], true);
-        assert!(body["metadata"].get("current_hit").is_none());
+        assert!(body["metadata"].get("original_hit").is_none());
+        assert_eq!(body["metadata"]["current_hit"], true);
+    }
+
+    #[test]
+    fn body_conditions_default_to_current_request_body_for_wildcard_drop() {
+        let rules = serde_json::json!([
+            {
+                "action": "drop",
+                "path": "tools[*]",
+                "condition": {"path": "$item.name", "op": "eq", "value": "Agent"}
+            }
+        ]);
+        let original = serde_json::json!({
+            "model": "client-model"
+        });
+        let mut body = serde_json::json!({
+            "tools": [
+                {"name": "Agent"},
+                {"name": "Bash"}
+            ]
+        });
+
+        assert!(apply_local_body_rules(
+            &mut body,
+            Some(&rules),
+            Some(&original)
+        ));
+
+        assert_eq!(body["tools"], serde_json::json!([{"name": "Bash"}]));
     }
 
     #[test]
