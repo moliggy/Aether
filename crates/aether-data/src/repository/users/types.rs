@@ -596,6 +596,7 @@ pub trait UserReadRepository: Send + Sync {
         allowed_api_formats: Option<Vec<String>>,
         allowed_models_present: bool,
         allowed_models: Option<Vec<String>>,
+        rate_limit_present: bool,
         rate_limit: Option<i32>,
         is_active: Option<bool>,
     ) -> Result<Option<StoredUserAuthRecord>, crate::DataLayerError>;

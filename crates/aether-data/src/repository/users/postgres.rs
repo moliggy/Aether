@@ -1107,6 +1107,7 @@ WHERE id = $1
         allowed_api_formats: Option<Vec<String>>,
         allowed_models_present: bool,
         allowed_models: Option<Vec<String>>,
+        rate_limit_present: bool,
         rate_limit: Option<i32>,
         is_active: Option<bool>,
     ) -> Result<Option<StoredUserAuthRecord>, DataLayerError> {
@@ -1130,7 +1131,7 @@ SET role = CASE
         ELSE allowed_models
     END,
     rate_limit = CASE
-        WHEN $10::BOOLEAN AND $11 IS NOT NULL THEN $11
+        WHEN $10::BOOLEAN THEN $11
         ELSE rate_limit
     END,
     is_active = CASE
@@ -1150,7 +1151,7 @@ WHERE id = $1
         .bind(allowed_api_formats.map(serde_json::Value::from))
         .bind(allowed_models_present)
         .bind(allowed_models.map(serde_json::Value::from))
-        .bind(rate_limit.is_some())
+        .bind(rate_limit_present)
         .bind(rate_limit)
         .bind(is_active.is_some())
         .bind(is_active)
@@ -1882,6 +1883,7 @@ impl UserReadRepository for SqlxUserReadRepository {
         allowed_api_formats: Option<Vec<String>>,
         allowed_models_present: bool,
         allowed_models: Option<Vec<String>>,
+        rate_limit_present: bool,
         rate_limit: Option<i32>,
         is_active: Option<bool>,
     ) -> Result<Option<StoredUserAuthRecord>, DataLayerError> {
@@ -1894,6 +1896,7 @@ impl UserReadRepository for SqlxUserReadRepository {
             allowed_api_formats,
             allowed_models_present,
             allowed_models,
+            rate_limit_present,
             rate_limit,
             is_active,
         )

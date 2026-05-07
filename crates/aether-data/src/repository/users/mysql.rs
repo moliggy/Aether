@@ -655,6 +655,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         allowed_api_formats: Option<Vec<String>>,
         allowed_models_present: bool,
         allowed_models: Option<Vec<String>>,
+        rate_limit_present: bool,
         rate_limit: Option<i32>,
         is_active: Option<bool>,
     ) -> Result<Option<StoredUserAuthRecord>, DataLayerError> {
@@ -688,7 +689,7 @@ WHERE id = ?
             allowed_models,
             "users.allowed_models",
         )?)
-        .bind(rate_limit.is_some())
+        .bind(rate_limit_present)
         .bind(rate_limit)
         .bind(is_active.is_some())
         .bind(is_active)
