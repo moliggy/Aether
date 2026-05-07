@@ -355,11 +355,10 @@ import {
 import { UserPlus, SquarePen } from 'lucide-vue-next'
 import { useFormDialog } from '@/composables/useFormDialog'
 import { MultiSelect } from '@/components/common'
-import { getProvidersSummary } from '@/api/endpoints/providers'
-import { getGlobalModels } from '@/api/global-models'
 import { adminApi } from '@/api/admin'
 import { log } from '@/utils/logger'
 import { parseNumberInput } from '@/utils/form'
+import { useUserAccessControlOptions } from '@/features/users/composables/useUserAccessControlOptions'
 import {
   getPasswordPolicyHint,
   getPasswordPolicyPlaceholder,
@@ -367,10 +366,6 @@ import {
   validatePasswordByPolicy,
   type PasswordPolicyLevel,
 } from '@/utils/passwordPolicy'
-import type {
-  ProviderWithEndpointsSummary,
-  GlobalModelResponse,
-} from '@/api/endpoints/types'
 
 export interface UserFormData {
   id?: string
@@ -401,29 +396,12 @@ const saving = ref(false)
 const formNonce = ref(createFieldNonce())
 const passwordPolicyLevel = ref<PasswordPolicyLevel>('weak')
 
-// 选项数据
-const providers = ref<ProviderWithEndpointsSummary[]>([])
-const globalModels = ref<GlobalModelResponse[]>([])
-const apiFormats = ref<Array<{ value: string; label: string }>>([])
-
-const providerOptions = computed(() =>
-  providers.value.map((provider) => ({
-    value: provider.id,
-    label: provider.name,
-  })),
-)
-const apiFormatOptions = computed(() =>
-  apiFormats.value.map((format) => ({
-    value: format.value,
-    label: format.label,
-  })),
-)
-const modelOptions = computed(() =>
-  globalModels.value.map((model) => ({
-    value: model.name,
-    label: model.name,
-  })),
-)
+const {
+  providerOptions,
+  apiFormatOptions,
+  modelOptions,
+  loadAccessControlOptions: loadAccessControlOptionLists,
+} = useUserAccessControlOptions()
 
 // 表单数据
 const form = ref({
@@ -547,15 +525,10 @@ const isFormValid = computed(() => {
 // 加载访问控制选项
 async function loadAccessControlOptions(): Promise<void> {
   try {
-    const [providersResponse, modelsData, formatsData, passwordPolicyResponse] = await Promise.all([
-      getProvidersSummary({ page_size: 9999 }),
-      getGlobalModels({ limit: 1000, is_active: true }),
-      adminApi.getApiFormats(),
+    const [, passwordPolicyResponse] = await Promise.all([
+      loadAccessControlOptionLists(),
       adminApi.getSystemConfig('password_policy_level').catch(() => ({ value: 'weak' })),
     ])
-    providers.value = providersResponse.items
-    globalModels.value = modelsData.models || []
-    apiFormats.value = formatsData.formats || []
     passwordPolicyLevel.value = normalizePasswordPolicyLevel(passwordPolicyResponse.value)
   } catch (err) {
     log.error('加载访问限制选项失败:', err)
