@@ -87,11 +87,59 @@ describe('providerKeyStatus', () => {
     )
 
     expect(status).toEqual({
-      text: '已失效',
+      text: expect.stringMatching(/^续期失败 /),
       isExpired: false,
-      isExpiringSoon: false,
-      isInvalid: true,
+      isExpiringSoon: expect.any(Boolean),
+      isInvalid: false,
       invalidReason: '[REFRESH_FAILED] Token 续期失败 (401): refresh_token_reused',
+      requiresReauth: true,
+      usableUntilExpiry: true,
+    })
+    expect(status?.requiresReauth).toBe(true)
+    expect(getOAuthStatusTitle({
+      auth_type: 'oauth',
+      oauth_expires_at: future,
+      oauth_invalid_reason: '[REFRESH_FAILED] Token 续期失败 (401): refresh_token_reused',
+    }, 0)).toContain('当前 Access Token 未到期仍可使用')
+    expect(getOAuthRefreshButtonTitle({
+      auth_type: 'oauth',
+      oauth_expires_at: future,
+      oauth_invalid_reason: '[REFRESH_FAILED] Token 续期失败 (401): refresh_token_reused',
+    }, 0)).toBe('重新授权')
+  })
+
+  it('shows refresh failure as reauth required while access token is still usable', () => {
+    const future = Math.floor(Date.now() / 1000) + 2 * 24 * 3600
+    const status = getOAuthStatusDisplay(
+      {
+        auth_type: 'oauth',
+        oauth_expires_at: future,
+        status_snapshot: {
+          oauth: {
+            code: 'reauth_required',
+            reason: 'Token 续期失败 (400): refresh_token_reused',
+            expires_at: future,
+            requires_reauth: true,
+            usable_until_expiry: true,
+          },
+          account: {
+            code: 'ok',
+            blocked: false,
+          },
+          quota: { code: 'ok', exhausted: false },
+        },
+      },
+      0,
+    )
+
+    expect(status).toEqual({
+      text: expect.stringMatching(/^续期失败 /),
+      isExpired: false,
+      isExpiringSoon: expect.any(Boolean),
+      isInvalid: false,
+      invalidReason: 'Token 续期失败 (400): refresh_token_reused',
+      requiresReauth: true,
+      usableUntilExpiry: true,
     })
   })
 

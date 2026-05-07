@@ -395,15 +395,36 @@ pub fn admin_pool_is_oauth_invalid(key: &StoredProviderCatalogKey, now_unix_secs
     if key.auth_type.trim() != "oauth" {
         return false;
     }
-    if key
-        .oauth_invalid_reason
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return true;
+    if let Some(reason) = key.oauth_invalid_reason.as_deref().map(str::trim) {
+        let account_state = provider_status::resolve_pool_account_state(
+            None,
+            key.upstream_metadata.as_ref(),
+            Some(reason),
+        );
+        if account_state.blocked && !account_state.recoverable {
+            return true;
+        }
+        if admin_pool_reason_has_tag(reason, "[REFRESH_FAILED]") {
+            return key
+                .expires_at_unix_secs
+                .is_none_or(|value| value == 0 || value <= now_unix_secs);
+        }
+        if admin_pool_reason_has_tag(reason, "[REQUEST_FAILED]") {
+            return false;
+        }
+        if !reason.is_empty() {
+            return true;
+        }
     }
     key.expires_at_unix_secs
         .is_some_and(|value| value > 0 && value <= now_unix_secs)
+}
+
+fn admin_pool_reason_has_tag(reason: &str, tag: &str) -> bool {
+    reason
+        .lines()
+        .map(str::trim)
+        .any(|line| line.starts_with(tag))
 }
 
 pub fn admin_pool_matches_quick_selector(

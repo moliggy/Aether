@@ -56,6 +56,7 @@ export function isAccountLevelBlockReason(reason: string | null | undefined): bo
   if (!text) return false
   if (text.startsWith('[ACCOUNT_BLOCK]')) return true
   if (text.startsWith('[OAUTH_EXPIRED]')) return true
+  if (text.startsWith('[REFRESH_FAILED]')) return false
   const lowered = text.toLowerCase()
   return ACCOUNT_BLOCK_REASON_KEYWORDS.some(keyword => lowered.includes(keyword))
 }

@@ -147,7 +147,7 @@ pub(crate) fn merge_provider_oauth_refresh_failure_reason(
         return Some(refresh_reason.to_string());
     }
     if current_reason.starts_with(OAUTH_EXPIRED_PREFIX) {
-        return Some(refresh_reason.to_string());
+        return Some(current_reason.to_string());
     }
     if oauth_invalid_reason_is_account_level_block(Some(current_reason)) {
         return None;
@@ -190,13 +190,13 @@ mod tests {
     }
 
     #[test]
-    fn refresh_failure_replaces_access_token_expired_marker() {
+    fn refresh_failure_does_not_replace_access_token_expired_marker() {
         assert_eq!(
             merge_provider_oauth_refresh_failure_reason(
                 Some("[OAUTH_EXPIRED] access token invalid"),
                 "[REFRESH_FAILED] Token 续期失败 (401): refresh_token 无效",
             ),
-            Some("[REFRESH_FAILED] Token 续期失败 (401): refresh_token 无效".to_string()),
+            Some("[OAUTH_EXPIRED] access token invalid".to_string()),
         );
     }
 }

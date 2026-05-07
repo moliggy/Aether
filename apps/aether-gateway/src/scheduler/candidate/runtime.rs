@@ -10,6 +10,7 @@ use aether_scheduler_core::{
     candidate_is_selectable_with_runtime_state, candidate_runtime_skip_reason_with_state,
     CandidateRuntimeSelectabilityInput,
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::data::auth::GatewayAuthApiKeySnapshot;
 use crate::GatewayError;
@@ -343,7 +344,7 @@ fn read_key_oauth_invalid_map(
 fn key_requires_oauth_reauth(
     key: &StoredProviderCatalogKey,
     provider_type: &str,
-    _now_unix_secs: u64,
+    now_unix_secs: u64,
 ) -> bool {
     if !key.auth_type.trim().eq_ignore_ascii_case("oauth") {
         return false;
@@ -355,34 +356,69 @@ fn key_requires_oauth_reauth(
         .map(str::trim)
         .unwrap_or_default();
     if !invalid_reason.is_empty() {
-        return oauth_invalid_reason_is_hard_account_block(key, provider_type, invalid_reason);
+        return oauth_invalid_reason_blocks_scheduling(
+            key,
+            provider_type,
+            invalid_reason,
+            now_unix_secs,
+        );
     }
 
     false
 }
 
-fn oauth_invalid_reason_is_hard_account_block(
+fn oauth_invalid_reason_blocks_scheduling(
     key: &StoredProviderCatalogKey,
     provider_type: &str,
     invalid_reason: &str,
+    now_unix_secs: u64,
 ) -> bool {
-    if provider_type.trim().eq_ignore_ascii_case("kiro")
-        && invalid_reason.trim().starts_with("[REFRESH_FAILED] ")
-    {
+    let trimmed_reason = invalid_reason.trim();
+    if oauth_invalid_reason_has_tag(trimmed_reason, "[OAUTH_EXPIRED]") {
         return true;
     }
 
     let account_state = admin_provider_status_pure::resolve_pool_account_state(
         Some(provider_type),
         key.upstream_metadata.as_ref(),
-        Some(invalid_reason),
+        Some(trimmed_reason),
     );
-    account_state.blocked
+    if account_state.blocked
         && !account_state.recoverable
         && account_state
             .code
             .as_deref()
             .is_some_and(oauth_account_state_code_is_hard_block)
+    {
+        return true;
+    }
+
+    if oauth_invalid_reason_has_tag(trimmed_reason, "[REFRESH_FAILED]") {
+        return oauth_access_token_expired(key, now_unix_secs);
+    }
+
+    false
+}
+
+fn oauth_invalid_reason_has_tag(reason: &str, tag: &str) -> bool {
+    reason
+        .lines()
+        .map(str::trim)
+        .any(|line| line.starts_with(tag))
+}
+
+fn oauth_access_token_expired(key: &StoredProviderCatalogKey, now_unix_secs: u64) -> bool {
+    let now_unix_secs = if now_unix_secs == 0 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0)
+    } else {
+        now_unix_secs
+    };
+    key.expires_at_unix_secs
+        .is_none_or(|expires_at| expires_at == 0 || expires_at <= now_unix_secs)
 }
 
 fn oauth_account_state_code_is_hard_block(code: &str) -> bool {

@@ -501,6 +501,7 @@ pub(crate) struct ProviderApiKeyUsageContribution {
     pub total_cost_usd: f64,
     pub total_response_time_ms: i64,
     pub last_used_at_unix_secs: Option<u64>,
+    pub usage_created_at_unix_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -513,6 +514,7 @@ pub(crate) struct ProviderApiKeyUsageDelta {
     pub total_response_time_ms: i64,
     pub candidate_last_used_at_unix_secs: Option<u64>,
     pub removed_last_used_at_unix_secs: Option<u64>,
+    pub usage_created_at_unix_secs: Option<u64>,
 }
 
 impl ProviderApiKeyUsageDelta {
@@ -529,6 +531,7 @@ impl ProviderApiKeyUsageDelta {
             total_response_time_ms: after.total_response_time_ms - before.total_response_time_ms,
             candidate_last_used_at_unix_secs: after.last_used_at_unix_secs,
             removed_last_used_at_unix_secs: None,
+            usage_created_at_unix_secs: after.usage_created_at_unix_secs,
         }
     }
 
@@ -542,6 +545,7 @@ impl ProviderApiKeyUsageDelta {
             total_response_time_ms: after.total_response_time_ms,
             candidate_last_used_at_unix_secs: after.last_used_at_unix_secs,
             removed_last_used_at_unix_secs: None,
+            usage_created_at_unix_secs: after.usage_created_at_unix_secs,
         }
     }
 
@@ -555,6 +559,7 @@ impl ProviderApiKeyUsageDelta {
             total_response_time_ms: -before.total_response_time_ms,
             candidate_last_used_at_unix_secs: None,
             removed_last_used_at_unix_secs: before.last_used_at_unix_secs,
+            usage_created_at_unix_secs: before.usage_created_at_unix_secs,
         }
     }
 
@@ -664,6 +669,7 @@ pub(crate) fn provider_api_key_usage_contribution(
             0
         },
         last_used_at_unix_secs: Some(usage.created_at_unix_ms),
+        usage_created_at_unix_secs: Some(usage.created_at_unix_ms),
     })
 }
 

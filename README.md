@@ -85,13 +85,13 @@ git pull
 curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/aether-rust-pioneer/install.sh | sudo bash
 ```
 
-运行后按提示输入版本和部署方式。固定安装某个 tag 时，版本选择选 `2`，再输入类似 `v0.7.0-rc22` 的 tag。
+运行后按提示输入版本和部署方式。固定安装某个 tag 时，版本选择选 `2`，再输入类似 `v0.7.0-rc23` 的 tag。默认会安装最新预发布版本；Docker Compose 模式默认使用 `pre` 镜像通道。
 如果安装目录里已经有配置，脚本会优先复用：Docker Compose 保留已有 `.env`，systemd 保留已有 `/etc/aether/aether-gateway.env`。只有首次生成新配置时才会提示输入管理员密码。
 
 ```text
 Choose Aether version:
-  1) Latest rc tag
-  2) Exact tag, for example v0.7.0-rc22
+  1) Latest pre release
+  2) Exact tag, for example v0.7.0-rc23
 
 Enter choice [1]:
 

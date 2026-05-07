@@ -2,9 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY};
 use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
-use aether_data::repository::usage::InMemoryUsageReadRepository;
 use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
-use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
 use axum::body::{to_bytes, Body, Bytes};
 use axum::routing::{any, get, post};
 use axum::{extract::Request, Router};
@@ -22,54 +20,6 @@ use crate::constants::{
 };
 use crate::control::resolve_public_request_context;
 use crate::data::GatewayDataState;
-
-fn sample_pool_usage_row(
-    request_id: &str,
-    provider_api_key_id: &str,
-    created_at_unix_secs: i64,
-    total_tokens: i32,
-    total_cost_usd: f64,
-) -> StoredRequestUsageAudit {
-    StoredRequestUsageAudit::new(
-        format!("usage-{request_id}"),
-        request_id.to_string(),
-        Some("user-codex".to_string()),
-        Some("api-key-codex".to_string()),
-        Some("codex-user".to_string()),
-        Some("codex-api-key".to_string()),
-        "codex".to_string(),
-        "gpt-5-codex".to_string(),
-        None,
-        Some("provider-codex".to_string()),
-        Some("endpoint-codex".to_string()),
-        Some(provider_api_key_id.to_string()),
-        Some("responses".to_string()),
-        Some("openai:responses".to_string()),
-        Some("openai".to_string()),
-        Some("responses".to_string()),
-        Some("openai:responses".to_string()),
-        Some("openai".to_string()),
-        Some("responses".to_string()),
-        false,
-        false,
-        total_tokens,
-        0,
-        total_tokens,
-        total_cost_usd,
-        total_cost_usd,
-        Some(200),
-        None,
-        None,
-        Some(240),
-        Some(80),
-        "completed".to_string(),
-        "settled".to_string(),
-        created_at_unix_secs,
-        created_at_unix_secs + 1,
-        Some(created_at_unix_secs + 2),
-    )
-    .expect("usage row should build")
-}
 
 fn trusted_admin_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
@@ -866,8 +816,8 @@ async fn gateway_sorts_admin_pool_keys_by_imported_and_last_used_time() {
 }
 
 #[tokio::test]
-async fn gateway_pool_list_adds_codex_cycle_usage_to_quota_windows() {
-    const RESET_AT: u64 = 1_711_000_000;
+async fn gateway_pool_list_reads_materialized_codex_cycle_usage_from_quota_windows() {
+    const RESET_AT: u64 = 4_102_444_800;
 
     let mut provider = sample_provider("provider-codex", "codex", 10).with_transport_fields(
         true,
@@ -898,21 +848,21 @@ async fn gateway_pool_list_adds_codex_cycle_usage_to_quota_windows() {
     usage_key.total_tokens = 999;
     usage_key.total_cost_usd = 9.99;
     usage_key.status_snapshot = Some(json!({
-        "quota": {
-            "version": 2,
-            "provider_type": "codex",
-            "code": "ok",
-            "label": serde_json::Value::Null,
-            "reason": serde_json::Value::Null,
-            "freshness": "fresh",
-            "source": "response_headers",
-            "observed_at": RESET_AT,
-            "exhausted": false,
-            "usage_ratio": 0.0,
-            "updated_at": RESET_AT,
-            "reset_seconds": serde_json::Value::Null,
-            "plan_type": "plus",
-            "windows": [
+    "quota": {
+        "version": 2,
+        "provider_type": "codex",
+        "code": "ok",
+        "label": serde_json::Value::Null,
+        "reason": serde_json::Value::Null,
+        "freshness": "fresh",
+        "source": "response_headers",
+        "observed_at": RESET_AT,
+        "exhausted": false,
+        "usage_ratio": 0.0,
+        "updated_at": RESET_AT,
+        "reset_seconds": serde_json::Value::Null,
+        "plan_type": "plus",
+        "windows": [
                 {
                     "code": "weekly",
                     "label": "周",
@@ -922,7 +872,12 @@ async fn gateway_pool_list_adds_codex_cycle_usage_to_quota_windows() {
                     "remaining_ratio": 1.0,
                     "reset_at": RESET_AT,
                     "reset_seconds": 604_800,
-                    "window_minutes": 10_080
+                    "window_minutes": 10_080,
+                    "usage": {
+                        "request_count": 3,
+                        "total_tokens": 375,
+                        "total_cost_usd": "0.60000000"
+                    }
                 },
                 {
                     "code": "5h",
@@ -933,7 +888,12 @@ async fn gateway_pool_list_adds_codex_cycle_usage_to_quota_windows() {
                     "remaining_ratio": 1.0,
                     "reset_at": RESET_AT,
                     "reset_seconds": 18_000,
-                    "window_minutes": 300
+                    "window_minutes": 300,
+                    "usage": {
+                        "request_count": 2,
+                        "total_tokens": 225,
+                        "total_cost_usd": "0.30000000"
+                    }
                 }
             ]
         }
@@ -947,7 +907,37 @@ async fn gateway_pool_list_adds_codex_cycle_usage_to_quota_windows() {
     );
     zero_key.name = "codex zero usage".to_string();
     zero_key.auth_type = "oauth".to_string();
-    zero_key.status_snapshot = usage_key.status_snapshot.clone();
+    zero_key.status_snapshot = Some(json!({
+        "quota": {
+            "version": 2,
+            "provider_type": "codex",
+            "code": "ok",
+            "windows": [
+                {
+                    "code": "weekly",
+                    "label": "周",
+                    "reset_at": RESET_AT,
+                    "window_minutes": 10_080,
+                    "usage": {
+                        "request_count": 0,
+                        "total_tokens": 0,
+                        "total_cost_usd": "0.00000000"
+                    }
+                },
+                {
+                    "code": "5h",
+                    "label": "5H",
+                    "reset_at": RESET_AT,
+                    "window_minutes": 300,
+                    "usage": {
+                        "request_count": 0,
+                        "total_tokens": 0,
+                        "total_cost_usd": "0.00000000"
+                    }
+                }
+            ]
+        }
+    }));
 
     let mut invalid_key = sample_key(
         "key-codex-invalid",
@@ -984,44 +974,11 @@ async fn gateway_pool_list_adds_codex_cycle_usage_to_quota_windows() {
         Vec::new(),
         vec![usage_key, zero_key, invalid_key],
     ));
-    let usage_repository = Arc::new(InMemoryUsageReadRepository::seed(vec![
-        sample_pool_usage_row(
-            "req-5h-a",
-            "key-codex-cycle",
-            RESET_AT as i64 - 60,
-            100,
-            0.10,
-        ),
-        sample_pool_usage_row(
-            "req-5h-b",
-            "key-codex-cycle",
-            RESET_AT as i64 - 17_999,
-            125,
-            0.20,
-        ),
-        sample_pool_usage_row(
-            "req-weekly-only",
-            "key-codex-cycle",
-            RESET_AT as i64 - 18_001,
-            150,
-            0.30,
-        ),
-        sample_pool_usage_row(
-            "req-before-weekly",
-            "key-codex-cycle",
-            RESET_AT as i64 - 604_801,
-            200,
-            0.40,
-        ),
-    ]));
     let state = AppState::new()
         .expect("gateway should build")
-        .with_data_state_for_tests(
-            GatewayDataState::with_provider_catalog_and_usage_reader_for_tests(
-                provider_catalog_repository,
-                usage_repository,
-            ),
-        );
+        .with_data_state_for_tests(GatewayDataState::with_provider_catalog_reader_for_tests(
+            provider_catalog_repository,
+        ));
 
     let response = local_admin_pool_response(
         &state,
@@ -1302,11 +1259,11 @@ async fn gateway_handles_admin_pool_list_keys_with_quota_compatibility_fields() 
         "oauth": {
             "code": "expired",
             "label": "已过期",
-            "reason": "Token 已过期，请重新授权",
+            "reason": "Access Token 已过期，等待自动续期",
             "expires_at": 1775556730u64,
             "invalid_at": null,
             "source": "expires_at",
-            "requires_reauth": true,
+            "requires_reauth": false,
             "expiring_soon": false
         },
         "account": {
@@ -1441,11 +1398,11 @@ async fn gateway_includes_pool_quota_and_compat_fields_in_list_keys_response() {
         "oauth": {
             "code": "expired",
             "label": "已过期",
-            "reason": "Token 已过期，请重新授权",
+            "reason": "Access Token 已过期，等待自动续期",
             "expires_at": 1_775_556_730u64,
             "invalid_at": serde_json::Value::Null,
             "source": "expires_at",
-            "requires_reauth": true,
+            "requires_reauth": false,
             "expiring_soon": false
         },
         "account": {

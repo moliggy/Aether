@@ -2873,9 +2873,38 @@ function getSchedulingStatus(key: PoolKeyDetail): 'available' | 'degraded' | 'bl
   return 'available'
 }
 
+function compactPoolStatusLabel(label: string | null | undefined): string | null {
+  const normalized = String(label || '').trim()
+  if (!normalized) return null
+
+  const mapped: Record<string, string> = {
+    'Token 失效': '已失效',
+    'Token 过期': '已过期',
+    Token失效: '已失效',
+    Token过期: '已过期',
+    账号已封禁: '账号封禁',
+    工作区已停用: '工作区停用',
+    账号访问受限: '访问受限',
+    健康度较低: '健康低',
+  }
+  const labelText = mapped[normalized] || normalized
+  return Array.from(labelText).slice(0, 5).join('')
+}
+
+function getOAuthStatusBadgeLabel(status: ReturnType<typeof getVisibleOAuthState>): string | null {
+  if (!status) return null
+  if (status.requiresReauth) return '续期失败'
+  if (status.isInvalid) return '已失效'
+  if (status.isExpired) return '已过期'
+  if (status.text === '未添加') return '未添加'
+  if (status.text === '有效期未知') return '未知'
+  if (status.isExpiringSoon) return '将过期'
+  return '有效'
+}
+
 function getSchedulingBadgeLabel(key: PoolKeyDetail): string {
   const accountAlert = getAccountAlertLabel(key)
-  if (accountAlert) return accountAlert
+  if (accountAlert) return compactPoolStatusLabel(accountAlert) || accountAlert
 
   const rawLabel = String(key.scheduling_label || '').trim()
   if (
@@ -2884,7 +2913,7 @@ function getSchedulingBadgeLabel(key: PoolKeyDetail): string {
     && !isHealthDerivedSchedulingLabel(rawLabel)
   ) {
     if (rawLabel === '禁用' || rawLabel === '停用') return '禁用'
-    return rawLabel
+    return compactPoolStatusLabel(rawLabel) || rawLabel
   }
 
   if (!key.is_active) return '禁用'
@@ -2961,9 +2990,9 @@ function getMobileTagItems(key: PoolKeyDetail): PoolMobileTagItem[] {
   const orgBadge = getOAuthOrgBadge(key)
 
   return buildPoolMobileTagItems({
-    accountStatusLabel: accountAlert,
+    accountStatusLabel: compactPoolStatusLabel(accountAlert),
     accountStatusTone: accountAlert ? 'danger' : null,
-    oauthStatusLabel: oauthState?.text ?? null,
+    oauthStatusLabel: getOAuthStatusBadgeLabel(oauthState),
     oauthStatusTone: getMobileOAuthTone(key),
     priorityLabel: `P${key.internal_priority ?? 50}`,
     authLabel: getAuthTypeChipLabel(key),

@@ -1692,6 +1692,7 @@ async fn keeps_refresh_failed_oauth_candidate_selectable_before_local_auth_resol
             {
                 let mut key = sample_key("key-codex", "provider-codex", Some(10));
                 key.auth_type = "oauth".to_string();
+                key.expires_at_unix_secs = Some(1_710_000_200);
                 key.oauth_invalid_at_unix_secs = Some(1_710_000_000);
                 key.oauth_invalid_reason = Some(
                     "[REFRESH_FAILED] Token 续期失败 (401): refresh_token 已被使用并轮换，请重新登录授权"
@@ -1731,6 +1732,136 @@ async fn keeps_refresh_failed_oauth_candidate_selectable_before_local_auth_resol
     assert_eq!(selected[0].provider_id, "provider-codex");
     assert_eq!(selected[1].provider_id, "provider-openai");
     assert!(skipped.is_empty());
+}
+
+#[tokio::test]
+async fn skips_refresh_failed_oauth_candidate_after_access_token_expiry() {
+    let mut row = sample_row();
+    row.provider_id = "provider-codex".to_string();
+    row.provider_name = "codex".to_string();
+    row.provider_type = "codex".to_string();
+    row.endpoint_id = "endpoint-codex".to_string();
+    row.endpoint_api_format = "openai:responses".to_string();
+    row.key_id = "key-codex".to_string();
+    row.key_name = "codex-refresh-failed-expired".to_string();
+    row.key_auth_type = "oauth".to_string();
+    row.key_api_formats = Some(vec!["openai:responses".to_string()]);
+    row.key_global_priority_by_format = Some(serde_json::json!({"openai:responses": 1}));
+
+    let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+        row,
+    ]));
+    let mut provider = sample_provider("provider-codex", None);
+    provider.provider_type = "codex".to_string();
+    let provider_catalog = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        Vec::new(),
+        vec![{
+            let mut key = sample_key("key-codex", "provider-codex", Some(10));
+            key.auth_type = "oauth".to_string();
+            key.expires_at_unix_secs = Some(1_710_000_000);
+            key.oauth_invalid_at_unix_secs = Some(1_710_000_000);
+            key.oauth_invalid_reason = Some(
+                "[REFRESH_FAILED] Token 续期失败 (401): refresh_token 已被使用并轮换，请重新登录授权"
+                    .to_string(),
+            );
+            key
+        }],
+    ));
+    let quotas = Arc::new(InMemoryProviderQuotaRepository::seed(vec![]));
+    let request_candidates = Arc::new(InMemoryRequestCandidateRepository::seed(vec![]));
+    let state = AppState::new()
+        .expect("state should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_candidate_selection_provider_catalog_quota_and_request_candidates_for_tests(
+                candidates,
+                provider_catalog,
+                quotas,
+                request_candidates,
+            ),
+        );
+
+    let (selected, skipped) = collect_selectable_candidates_with_skip_reasons(
+        state.data.as_ref(),
+        &state,
+        "openai:responses",
+        "gpt-4.1",
+        false,
+        None,
+        1_710_000_100,
+    )
+    .await
+    .expect("selection should succeed");
+
+    assert!(selected.is_empty());
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0].candidate.key_id, "key-codex");
+    assert_eq!(skipped[0].skip_reason, "oauth_invalid");
+}
+
+#[tokio::test]
+async fn skips_oauth_candidate_with_account_block_even_when_refresh_failed_is_present() {
+    let mut row = sample_row();
+    row.provider_id = "provider-codex".to_string();
+    row.provider_name = "codex".to_string();
+    row.provider_type = "codex".to_string();
+    row.endpoint_id = "endpoint-codex".to_string();
+    row.endpoint_api_format = "openai:responses".to_string();
+    row.key_id = "key-codex".to_string();
+    row.key_name = "codex-account-blocked-refresh-failed".to_string();
+    row.key_auth_type = "oauth".to_string();
+    row.key_api_formats = Some(vec!["openai:responses".to_string()]);
+    row.key_global_priority_by_format = Some(serde_json::json!({"openai:responses": 1}));
+
+    let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+        row,
+    ]));
+    let mut provider = sample_provider("provider-codex", None);
+    provider.provider_type = "codex".to_string();
+    let provider_catalog = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        Vec::new(),
+        vec![{
+            let mut key = sample_key("key-codex", "provider-codex", Some(10));
+            key.auth_type = "oauth".to_string();
+            key.expires_at_unix_secs = Some(1_710_000_200);
+            key.oauth_invalid_at_unix_secs = Some(1_710_000_000);
+            key.oauth_invalid_reason = Some(
+                "[REFRESH_FAILED] Token 续期失败 (401): refresh_token 已被使用并轮换，请重新登录授权\n[ACCOUNT_BLOCK] account has been deactivated"
+                    .to_string(),
+            );
+            key
+        }],
+    ));
+    let quotas = Arc::new(InMemoryProviderQuotaRepository::seed(vec![]));
+    let request_candidates = Arc::new(InMemoryRequestCandidateRepository::seed(vec![]));
+    let state = AppState::new()
+        .expect("state should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_candidate_selection_provider_catalog_quota_and_request_candidates_for_tests(
+                candidates,
+                provider_catalog,
+                quotas,
+                request_candidates,
+            ),
+        );
+
+    let (selected, skipped) = collect_selectable_candidates_with_skip_reasons(
+        state.data.as_ref(),
+        &state,
+        "openai:responses",
+        "gpt-4.1",
+        false,
+        None,
+        1_710_000_100,
+    )
+    .await
+    .expect("selection should succeed");
+
+    assert!(selected.is_empty());
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0].candidate.key_id, "key-codex");
+    assert_eq!(skipped[0].skip_reason, "oauth_invalid");
 }
 
 #[tokio::test]
@@ -1971,7 +2102,7 @@ async fn keeps_refreshable_kiro_candidate_selectable_when_oauth_token_expired() 
 }
 
 #[tokio::test]
-async fn skips_kiro_candidate_after_refresh_token_failure() {
+async fn keeps_kiro_candidate_selectable_after_refresh_token_failure_until_access_token_expiry() {
     let mut row = sample_row();
     row.provider_id = "provider-kiro".to_string();
     row.provider_name = "kiro".to_string();
@@ -1995,6 +2126,71 @@ async fn skips_kiro_candidate_after_refresh_token_failure() {
             let mut key = sample_key("key-kiro", "provider-kiro", Some(10));
             key.auth_type = "oauth".to_string();
             key.encrypted_auth_config = Some("encrypted-refreshable-session".to_string());
+            key.expires_at_unix_secs = Some(1_710_000_200);
+            key.oauth_invalid_at_unix_secs = Some(1_710_000_000);
+            key.oauth_invalid_reason = Some(
+                "[REFRESH_FAILED] Token 续期失败 (401): refresh_token 无效、已过期或已撤销，请重新登录授权"
+                    .to_string(),
+            );
+            key
+        }],
+    ));
+    let quotas = Arc::new(InMemoryProviderQuotaRepository::seed(vec![]));
+    let request_candidates = Arc::new(InMemoryRequestCandidateRepository::seed(vec![]));
+    let state = AppState::new()
+        .expect("state should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_candidate_selection_provider_catalog_quota_and_request_candidates_for_tests(
+                candidates,
+                provider_catalog,
+                quotas,
+                request_candidates,
+            ),
+        );
+
+    let (selected, skipped) = collect_selectable_candidates_with_skip_reasons(
+        state.data.as_ref(),
+        &state,
+        "claude:messages",
+        "gpt-4.1",
+        false,
+        None,
+        1_710_000_100,
+    )
+    .await
+    .expect("selection should succeed");
+
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].provider_id, "provider-kiro");
+    assert!(skipped.is_empty());
+}
+
+#[tokio::test]
+async fn skips_kiro_candidate_after_refresh_token_failure_and_access_token_expiry() {
+    let mut row = sample_row();
+    row.provider_id = "provider-kiro".to_string();
+    row.provider_name = "kiro".to_string();
+    row.provider_type = "kiro".to_string();
+    row.endpoint_id = "endpoint-kiro".to_string();
+    row.endpoint_api_format = "claude:messages".to_string();
+    row.key_id = "key-kiro".to_string();
+    row.key_name = "kiro-refresh-failed-expired".to_string();
+    row.key_auth_type = "oauth".to_string();
+    row.key_api_formats = Some(vec!["claude:messages".to_string()]);
+
+    let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+        row,
+    ]));
+    let mut provider = sample_provider("provider-kiro", None);
+    provider.provider_type = "kiro".to_string();
+    let provider_catalog = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        Vec::new(),
+        vec![{
+            let mut key = sample_key("key-kiro", "provider-kiro", Some(10));
+            key.auth_type = "oauth".to_string();
+            key.encrypted_auth_config = Some("encrypted-refreshable-session".to_string());
+            key.expires_at_unix_secs = Some(1_710_000_000);
             key.oauth_invalid_at_unix_secs = Some(1_710_000_000);
             key.oauth_invalid_reason = Some(
                 "[REFRESH_FAILED] Token 续期失败 (401): refresh_token 无效、已过期或已撤销，请重新登录授权"

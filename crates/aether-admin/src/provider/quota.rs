@@ -396,7 +396,8 @@ fn codex_merge_invalid_reason(current: &str, candidate_reason: &str) -> String {
         return current.to_string();
     }
     if current.starts_with(OAUTH_EXPIRED_PREFIX)
-        && candidate_reason.starts_with(OAUTH_REQUEST_FAILED_PREFIX)
+        && (candidate_reason.starts_with(OAUTH_REQUEST_FAILED_PREFIX)
+            || candidate_reason.starts_with(OAUTH_REFRESH_FAILED_PREFIX))
     {
         return current.to_string();
     }
@@ -872,9 +873,11 @@ pub fn parse_chatgpt_web_conversation_init_response(
 #[cfg(test)]
 mod tests {
     use super::{
-        codex_runtime_invalid_reason, parse_chatgpt_web_conversation_init_response,
-        OAUTH_ACCOUNT_BLOCK_PREFIX, OAUTH_EXPIRED_PREFIX,
+        codex_build_invalid_state, codex_runtime_invalid_reason,
+        parse_chatgpt_web_conversation_init_response, OAUTH_ACCOUNT_BLOCK_PREFIX,
+        OAUTH_EXPIRED_PREFIX, OAUTH_REFRESH_FAILED_PREFIX, OAUTH_REQUEST_FAILED_PREFIX,
     };
+    use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
     use serde_json::json;
 
     #[test]
@@ -898,6 +901,73 @@ mod tests {
     #[test]
     fn codex_runtime_invalid_reason_ignores_generic_403() {
         assert_eq!(codex_runtime_invalid_reason(403, Some("forbidden")), None);
+    }
+
+    #[test]
+    fn codex_invalid_state_keeps_oauth_expired_over_refresh_failure() {
+        let mut key = StoredProviderCatalogKey::new(
+            "key-1".to_string(),
+            "provider-1".to_string(),
+            "key-1".to_string(),
+            "oauth".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build");
+        key.oauth_invalid_at_unix_secs = Some(100);
+        key.oauth_invalid_reason = Some(format!("{OAUTH_EXPIRED_PREFIX}session expired"));
+
+        assert_eq!(
+            codex_build_invalid_state(
+                &key,
+                format!("{OAUTH_REFRESH_FAILED_PREFIX}Token 续期失败"),
+                200,
+            ),
+            (
+                Some(100),
+                Some(format!("{OAUTH_EXPIRED_PREFIX}session expired"))
+            )
+        );
+        assert_eq!(
+            codex_build_invalid_state(
+                &key,
+                format!("{OAUTH_REQUEST_FAILED_PREFIX}账号状态检查失败"),
+                200,
+            ),
+            (
+                Some(100),
+                Some(format!("{OAUTH_EXPIRED_PREFIX}session expired"))
+            )
+        );
+    }
+
+    #[test]
+    fn codex_invalid_state_allows_account_block_to_override_oauth_expired() {
+        let mut key = StoredProviderCatalogKey::new(
+            "key-1".to_string(),
+            "provider-1".to_string(),
+            "key-1".to_string(),
+            "oauth".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build");
+        key.oauth_invalid_at_unix_secs = Some(100);
+        key.oauth_invalid_reason = Some(format!("{OAUTH_EXPIRED_PREFIX}session expired"));
+
+        assert_eq!(
+            codex_build_invalid_state(
+                &key,
+                format!("{OAUTH_ACCOUNT_BLOCK_PREFIX}account has been deactivated"),
+                200,
+            ),
+            (
+                Some(200),
+                Some(format!(
+                    "{OAUTH_ACCOUNT_BLOCK_PREFIX}account has been deactivated"
+                ))
+            )
+        );
     }
 
     #[test]

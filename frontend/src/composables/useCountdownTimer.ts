@@ -157,6 +157,8 @@ export interface OAuthStatusInfo {
   isExpiringSoon: boolean
   isInvalid: boolean  // Token 已失效（账号被封、授权撤销等）
   invalidReason?: string  // 失效原因
+  requiresReauth?: boolean
+  usableUntilExpiry?: boolean
 }
 
 /**

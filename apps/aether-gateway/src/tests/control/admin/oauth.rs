@@ -4463,11 +4463,11 @@ async fn gateway_refreshes_admin_provider_oauth_key_locally_with_trusted_admin_p
         "oauth": {
             "code": "expired",
             "label": "已过期",
-            "reason": "Token 已过期，请重新授权",
+            "reason": "Access Token 已过期，等待自动续期",
             "expires_at": 1u64,
             "invalid_at": 1_700_000_000u64,
             "source": "expires_at",
-            "requires_reauth": true,
+            "requires_reauth": false,
             "expiring_soon": false
         },
         "account": {
@@ -4754,13 +4754,13 @@ async fn gateway_marks_manual_oauth_refresh_failures_as_invalid_in_pool_payload(
         "stale-codex-access-token",
     );
     key.auth_type = "oauth".to_string();
-    key.expires_at_unix_secs = Some(1_900_000_000);
+    key.expires_at_unix_secs = Some(4_102_444_800);
     key.status_snapshot = Some(json!({
         "oauth": {
             "code": "valid",
             "label": "有效",
             "reason": serde_json::Value::Null,
-            "expires_at": 1_900_000_000u64,
+            "expires_at": 4_102_444_800u64,
             "invalid_at": serde_json::Value::Null,
             "source": "expires_at",
             "requires_reauth": false,
@@ -4788,7 +4788,7 @@ async fn gateway_marks_manual_oauth_refresh_failures_as_invalid_in_pool_payload(
     key.encrypted_auth_config = Some(
         encrypt_python_fernet_plaintext(
             DEVELOPMENT_ENCRYPTION_KEY,
-            r#"{"provider_type":"codex","refresh_token":"used-refresh-token","email":"alice@example.com","account_id":"acct-codex-123","plan_type":"plus","expires_at":1900000000}"#,
+            r#"{"provider_type":"codex","refresh_token":"used-refresh-token","email":"alice@example.com","account_id":"acct-codex-123","plan_type":"plus","expires_at":4102444800}"#,
         )
         .expect("auth config ciphertext should build"),
     );
@@ -4873,7 +4873,7 @@ async fn gateway_marks_manual_oauth_refresh_failures_as_invalid_in_pool_payload(
     );
     assert_eq!(
         keys[0]["status_snapshot"]["oauth"]["code"],
-        json!("invalid")
+        json!("reauth_required")
     );
     assert_eq!(
         keys[0]["status_snapshot"]["oauth"]["reason"],
@@ -4885,6 +4885,10 @@ async fn gateway_marks_manual_oauth_refresh_failures_as_invalid_in_pool_payload(
     );
     assert_eq!(
         keys[0]["status_snapshot"]["oauth"]["requires_reauth"],
+        json!(true)
+    );
+    assert_eq!(
+        keys[0]["status_snapshot"]["oauth"]["usable_until_expiry"],
         json!(true)
     );
 

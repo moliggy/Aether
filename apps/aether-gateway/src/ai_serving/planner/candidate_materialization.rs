@@ -35,6 +35,8 @@ use crate::handlers::shared::provider_pool::admin_provider_pool_config_from_conf
 use crate::orchestration::{local_attempt_slot_count, ExecutionAttemptIdentity};
 use crate::{AppState, GatewayError};
 
+const POOL_KEY_RETRY_INDEX_STRIDE: u32 = 100;
+
 #[derive(Debug, Clone)]
 pub(crate) struct LocalExecutionCandidateAttempt {
     pub(crate) eligible: EligibleLocalExecutionCandidate,
@@ -127,6 +129,16 @@ impl LocalExecutionCandidateAttempt {
         ExecutionAttemptIdentity::new(self.candidate_index, self.retry_index)
             .with_pool_key_index(self.eligible.orchestration.pool_key_index)
     }
+}
+
+fn effective_retry_index(retry_index: u32, pool_key_index: Option<u32>) -> u32 {
+    pool_key_index
+        .and_then(|index| {
+            index
+                .checked_mul(POOL_KEY_RETRY_INDEX_STRIDE)
+                .and_then(|base| base.checked_add(retry_index))
+        })
+        .unwrap_or(retry_index)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -326,7 +338,7 @@ where
                 self.api_key_id,
                 &candidate.candidate,
                 candidate_index,
-                retry_index,
+                effective_retry_index(retry_index, candidate.orchestration.pool_key_index),
                 generated_candidate_id,
                 self.required_capabilities,
                 extra_data,
@@ -343,6 +355,8 @@ where
         retry_index: u32,
         candidate_id: String,
     ) -> Self::Attempt {
+        let retry_index =
+            effective_retry_index(retry_index, candidate.orchestration.pool_key_index);
         LocalExecutionCandidateAttempt {
             eligible: candidate,
             candidate_index,
@@ -908,7 +922,7 @@ where
                     context.api_key_id,
                     &candidate_ref.candidate,
                     candidate_index,
-                    retry_index,
+                    effective_retry_index(retry_index, candidate_ref.orchestration.pool_key_index),
                     generated_candidate_id.as_str(),
                     context.required_capabilities,
                     extra_data.clone(),
@@ -927,6 +941,8 @@ where
         } else {
             candidate_ref.clone()
         };
+        let retry_index =
+            effective_retry_index(retry_index, candidate.orchestration.pool_key_index);
         attempts.push(LocalExecutionCandidateAttempt {
             eligible: candidate,
             candidate_index,
@@ -957,6 +973,8 @@ fn build_unpersisted_local_execution_candidate_attempts(
                 .expect("candidate should remain available until final retry")
                 .clone()
         };
+        let retry_index =
+            effective_retry_index(retry_index, candidate.orchestration.pool_key_index);
         attempts.push_back(LocalExecutionCandidateAttempt {
             eligible: candidate,
             candidate_index,
@@ -1288,6 +1306,29 @@ mod tests {
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].key_id.as_deref(), Some("normal-key"));
         assert_eq!(stored[0].candidate_index, 2);
+    }
+
+    #[test]
+    fn pool_key_attempts_use_distinct_effective_retry_indices() {
+        let first = build_unpersisted_local_execution_candidate_attempts(
+            sample_eligible("pool-key-1", Some(0)),
+            0,
+        )
+        .pop_front()
+        .expect("first pool key attempt");
+        let second = build_unpersisted_local_execution_candidate_attempts(
+            sample_eligible("pool-key-2", Some(1)),
+            0,
+        )
+        .pop_front()
+        .expect("second pool key attempt");
+
+        assert_eq!(first.retry_index, 0);
+        assert_eq!(second.retry_index, 100);
+        assert_eq!(first.attempt_identity().retry_index, 0);
+        assert_eq!(second.attempt_identity().retry_index, 100);
+        assert_eq!(first.attempt_identity().pool_key_index, Some(0));
+        assert_eq!(second.attempt_identity().pool_key_index, Some(1));
     }
 
     #[tokio::test]

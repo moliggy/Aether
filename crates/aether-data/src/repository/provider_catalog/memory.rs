@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::RwLock;
 
 use async_trait::async_trait;
+use serde_json::{json, Map, Value};
 
 use super::{
     ProviderCatalogKeyListOrder, ProviderCatalogKeyListQuery, ProviderCatalogReadRepository,
@@ -88,6 +89,8 @@ impl InMemoryProviderCatalogReadRepository {
         {
             key.last_used_at_unix_secs = recomputed_last_used_at_unix_secs;
         }
+
+        apply_codex_window_usage_stats_delta(&mut key.status_snapshot, delta);
     }
 
     pub(crate) fn rebuild_usage_stats(
@@ -153,6 +156,156 @@ fn apply_f64_delta(current: f64, delta: f64) -> f64 {
         next.max(0.0)
     } else {
         0.0
+    }
+}
+
+fn json_u64(value: Option<&Value>) -> Option<u64> {
+    value.and_then(|value| {
+        value.as_u64().or_else(|| {
+            value
+                .as_str()
+                .and_then(|text| text.trim().parse::<u64>().ok())
+        })
+    })
+}
+
+fn json_i64(value: Option<&Value>) -> Option<i64> {
+    value.and_then(|value| {
+        value.as_i64().or_else(|| {
+            value
+                .as_str()
+                .and_then(|text| text.trim().parse::<i64>().ok())
+        })
+    })
+}
+
+fn json_f64(value: Option<&Value>) -> Option<f64> {
+    value.and_then(|value| {
+        value.as_f64().or_else(|| {
+            value
+                .as_str()
+                .and_then(|text| text.trim().parse::<f64>().ok())
+        })
+    })
+}
+
+fn apply_i64_delta_to_json_u64(current: u64, delta: i64) -> u64 {
+    if delta >= 0 {
+        current.saturating_add(delta as u64)
+    } else {
+        current.saturating_sub(delta.unsigned_abs())
+    }
+}
+
+fn apply_f64_delta_to_json_cost(current: f64, delta: f64) -> f64 {
+    let current = if current.is_finite() { current } else { 0.0 };
+    let delta = if delta.is_finite() { delta } else { 0.0 };
+    (current + delta).max(0.0)
+}
+
+fn codex_window_matches_usage_time(window: &Map<String, Value>, usage_created_at: u64) -> bool {
+    let code = window
+        .get("code")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if !code.eq_ignore_ascii_case("5h") && !code.eq_ignore_ascii_case("weekly") {
+        return false;
+    }
+
+    let Some(reset_at) = json_u64(window.get("reset_at")) else {
+        return false;
+    };
+    let Some(window_minutes) = json_u64(window.get("window_minutes")) else {
+        return false;
+    };
+    let Some(window_seconds) = window_minutes.checked_mul(60) else {
+        return false;
+    };
+    let Some(window_start) = reset_at.checked_sub(window_seconds) else {
+        return false;
+    };
+    let usage_reset_at = json_u64(window.get("usage_reset_at")).unwrap_or(0);
+    let start = window_start.max(usage_reset_at);
+    usage_created_at >= start && usage_created_at < reset_at
+}
+
+fn apply_codex_window_usage_stats_delta(
+    status_snapshot: &mut Option<Value>,
+    delta: &ProviderApiKeyUsageDelta,
+) {
+    let Some(usage_created_at) = delta.usage_created_at_unix_secs else {
+        return;
+    };
+    if delta.request_count == 0 && delta.total_tokens == 0 && delta.total_cost_usd == 0.0 {
+        return;
+    }
+
+    let Some(quota) = status_snapshot
+        .as_mut()
+        .and_then(Value::as_object_mut)
+        .and_then(|snapshot| snapshot.get_mut("quota"))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    let quota_provider_type = quota
+        .get("provider_type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if !quota_provider_type.eq_ignore_ascii_case("codex") {
+        return;
+    }
+    let Some(windows) = quota.get_mut("windows").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    for window in windows.iter_mut().filter_map(Value::as_object_mut) {
+        if !codex_window_matches_usage_time(window, usage_created_at) {
+            continue;
+        }
+
+        let usage = window
+            .entry("usage".to_string())
+            .or_insert_with(|| json!({}))
+            .as_object_mut();
+        let Some(usage) = usage else {
+            window.insert("usage".to_string(), json!({}));
+            let Some(usage) = window.get_mut("usage").and_then(Value::as_object_mut) else {
+                continue;
+            };
+            let request_count = apply_i64_delta_to_json_u64(0, delta.request_count);
+            let total_tokens = apply_i64_delta_to_json_u64(0, delta.total_tokens);
+            let total_cost_usd = apply_f64_delta_to_json_cost(0.0, delta.total_cost_usd);
+            usage.insert("request_count".to_string(), json!(request_count));
+            usage.insert("total_tokens".to_string(), json!(total_tokens));
+            usage.insert(
+                "total_cost_usd".to_string(),
+                json!(format!("{total_cost_usd:.8}")),
+            );
+            continue;
+        };
+
+        let request_count = apply_i64_delta_to_json_u64(
+            json_i64(usage.get("request_count")).unwrap_or(0).max(0) as u64,
+            delta.request_count,
+        );
+        let total_tokens = apply_i64_delta_to_json_u64(
+            json_i64(usage.get("total_tokens")).unwrap_or(0).max(0) as u64,
+            delta.total_tokens,
+        );
+        let total_cost_usd = apply_f64_delta_to_json_cost(
+            json_f64(usage.get("total_cost_usd")).unwrap_or(0.0),
+            delta.total_cost_usd,
+        );
+
+        usage.insert("request_count".to_string(), json!(request_count));
+        usage.insert("total_tokens".to_string(), json!(total_tokens));
+        usage.insert(
+            "total_cost_usd".to_string(),
+            json!(format!("{total_cost_usd:.8}")),
+        );
     }
 }
 
@@ -573,6 +726,8 @@ mod tests {
         ProviderCatalogWriteRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
         StoredProviderCatalogProvider,
     };
+    use crate::repository::usage::ProviderApiKeyUsageDelta;
+    use serde_json::json;
 
     fn sample_provider(id: &str) -> StoredProviderCatalogProvider {
         StoredProviderCatalogProvider::new(
@@ -714,6 +869,73 @@ mod tests {
             Some("ciphertext-auth-2")
         );
         assert_eq!(stored[0].expires_at_unix_secs, Some(4_102_444_800));
+    }
+
+    #[tokio::test]
+    async fn materializes_codex_window_usage_stats_delta_in_memory() {
+        let mut key = sample_key("key-1", "provider-1");
+        key.status_snapshot = Some(json!({
+            "quota": {
+                "provider_type": "codex",
+                "windows": [
+                    {
+                        "code": "5h",
+                        "reset_at": 120_000u64,
+                        "window_minutes": 300u64,
+                        "usage": {
+                            "request_count": 1,
+                            "total_tokens": 10,
+                            "total_cost_usd": "0.10000000"
+                        }
+                    },
+                    {
+                        "code": "weekly",
+                        "reset_at": 700_000u64,
+                        "window_minutes": 10_080u64
+                    }
+                ]
+            }
+        }));
+        let repository = InMemoryProviderCatalogReadRepository::seed(
+            vec![sample_provider("provider-1")],
+            vec![],
+            vec![key],
+        );
+
+        repository.apply_usage_stats_delta(
+            "key-1",
+            &ProviderApiKeyUsageDelta {
+                request_count: 2,
+                total_tokens: 25,
+                total_cost_usd: 0.25,
+                usage_created_at_unix_secs: Some(110_000),
+                ..ProviderApiKeyUsageDelta::default()
+            },
+            None,
+        );
+
+        let stored = repository
+            .list_keys_by_ids(&["key-1".to_string()])
+            .await
+            .expect("keys should read");
+        let windows = stored[0].status_snapshot.as_ref().expect("snapshot")["quota"]["windows"]
+            .as_array()
+            .expect("windows");
+        let five_h = windows
+            .iter()
+            .find(|window| window["code"] == json!("5h"))
+            .expect("5h window should exist");
+        let weekly = windows
+            .iter()
+            .find(|window| window["code"] == json!("weekly"))
+            .expect("weekly window should exist");
+
+        assert_eq!(five_h["usage"]["request_count"], json!(3));
+        assert_eq!(five_h["usage"]["total_tokens"], json!(35));
+        assert_eq!(five_h["usage"]["total_cost_usd"], json!("0.35000000"));
+        assert_eq!(weekly["usage"]["request_count"], json!(2));
+        assert_eq!(weekly["usage"]["total_tokens"], json!(25));
+        assert_eq!(weekly["usage"]["total_cost_usd"], json!("0.25000000"));
     }
 
     #[tokio::test]

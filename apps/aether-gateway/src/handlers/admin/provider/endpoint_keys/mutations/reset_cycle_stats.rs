@@ -111,7 +111,14 @@ fn reset_codex_cycle_usage_windows(status_snapshot: &mut Value, now_unix_secs: u
         }
 
         window.insert("usage_reset_at".to_string(), json!(now_unix_secs));
-        window.remove("usage");
+        window.insert(
+            "usage".to_string(),
+            json!({
+                "request_count": 0,
+                "total_tokens": 0,
+                "total_cost_usd": "0.00000000",
+            }),
+        );
         reset_count += 1;
     }
 
@@ -173,9 +180,13 @@ mod tests {
         assert_eq!(reset_codex_cycle_usage_windows(&mut snapshot, 1_234), 2);
         let windows = snapshot["quota"]["windows"].as_array().expect("windows");
         assert_eq!(windows[0]["usage_reset_at"], json!(1_234));
-        assert!(windows[0].get("usage").is_none());
+        assert_eq!(windows[0]["usage"]["request_count"], json!(0));
+        assert_eq!(windows[0]["usage"]["total_tokens"], json!(0));
+        assert_eq!(windows[0]["usage"]["total_cost_usd"], json!("0.00000000"));
         assert_eq!(windows[1]["usage_reset_at"], json!(1_234));
-        assert!(windows[1].get("usage").is_none());
+        assert_eq!(windows[1]["usage"]["request_count"], json!(0));
+        assert_eq!(windows[1]["usage"]["total_tokens"], json!(0));
+        assert_eq!(windows[1]["usage"]["total_cost_usd"], json!("0.00000000"));
         assert!(windows[2].get("usage_reset_at").is_none());
         assert!(windows[2].get("usage").is_some());
     }

@@ -1,19 +1,6 @@
 ALTER TABLE IF EXISTS public.usage
   ADD COLUMN IF NOT EXISTS upstream_is_stream boolean;
 
-UPDATE public.usage
-SET upstream_is_stream = COALESCE(
-  CASE
-    WHEN (request_metadata->>'upstream_is_stream') IN ('true', 'false')
-    THEN (request_metadata->>'upstream_is_stream')::boolean
-    ELSE NULL
-  END,
-  COALESCE(is_stream, FALSE)
-)
-WHERE upstream_is_stream IS NULL;
-
-ANALYZE public.usage;
-
 COMMENT ON COLUMN public.usage.upstream_is_stream IS
   'Resolved upstream stream mode from request_metadata.upstream_is_stream, falling back to is_stream for legacy rows.';
 

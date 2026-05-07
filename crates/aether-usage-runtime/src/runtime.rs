@@ -328,6 +328,26 @@ impl UsageRuntime {
         self.enqueue_or_write_terminal(data, event).await;
     }
 
+    pub async fn record_terminal_event_direct<T>(&self, data: &T, mut event: UsageEvent)
+    where
+        T: UsageRuntimeAccess,
+    {
+        if !self.is_enabled() {
+            return;
+        }
+        apply_body_capture_policy_from_data(data, &mut event).await;
+        if let Err(err) = data.enrich_usage_event(&mut event).await {
+            warn!(
+                event_name = "usage_terminal_billing_enrichment_failed",
+                log_type = "event",
+                request_id = %event.request_id,
+                error = %err,
+                "usage runtime failed to enrich terminal usage event with billing"
+            );
+        }
+        self.write_terminal_direct(data, &event).await;
+    }
+
     async fn enqueue_or_write_terminal<T>(&self, data: &T, event: UsageEvent)
     where
         T: UsageRuntimeAccess,
@@ -360,7 +380,14 @@ impl UsageRuntime {
             }
         }
 
-        match build_upsert_usage_record_from_event(&event) {
+        self.write_terminal_direct(data, &event).await;
+    }
+
+    async fn write_terminal_direct<T>(&self, data: &T, event: &UsageEvent)
+    where
+        T: UsageRuntimeAccess,
+    {
+        match build_upsert_usage_record_from_event(event) {
             Ok(record) => match data.upsert_usage_record(record).await {
                 Ok(Some(stored)) => {
                     if let Err(err) = settle_usage_if_needed(data, &stored).await {
@@ -518,7 +545,9 @@ fn now_unix_secs() -> u64 {
 mod tests {
     use std::sync::Mutex;
 
-    use aether_data::driver::redis::RedisStreamRunner;
+    use aether_data::driver::redis::{
+        RedisClientConfig, RedisClientFactory, RedisStreamRunner, RedisStreamRunnerConfig,
+    };
     use aether_data_contracts::repository::settlement::{
         StoredUsageSettlement, UsageSettlementInput,
     };
@@ -540,6 +569,29 @@ mod tests {
     #[derive(Default)]
     struct NoRedisUsageStore {
         records: Mutex<Vec<UpsertUsageRecord>>,
+    }
+
+    struct RedisConfiguredUsageStore {
+        inner: NoRedisUsageStore,
+        runner: RedisStreamRunner,
+    }
+
+    fn sample_runner() -> RedisStreamRunner {
+        let config = RedisClientConfig {
+            url: "redis://127.0.0.1/0".to_string(),
+            key_prefix: Some("aether".to_string()),
+        };
+        let client = RedisClientFactory::new(config.clone())
+            .expect("factory should build")
+            .connect_lazy()
+            .expect("client should build");
+
+        RedisStreamRunner::new(
+            client,
+            config.keyspace(),
+            RedisStreamRunnerConfig::default(),
+        )
+        .expect("runner should build")
     }
 
     #[async_trait]
@@ -601,6 +653,64 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl UsageRecordWriter for RedisConfiguredUsageStore {
+        async fn upsert_usage_record(
+            &self,
+            record: UpsertUsageRecord,
+        ) -> Result<Option<StoredRequestUsageAudit>, DataLayerError> {
+            self.inner.upsert_usage_record(record).await
+        }
+    }
+
+    #[async_trait]
+    impl UsageSettlementWriter for RedisConfiguredUsageStore {
+        fn has_usage_settlement_writer(&self) -> bool {
+            false
+        }
+
+        async fn settle_usage(
+            &self,
+            _input: UsageSettlementInput,
+        ) -> Result<Option<StoredUsageSettlement>, DataLayerError> {
+            Ok(None)
+        }
+    }
+
+    #[async_trait]
+    impl UsageBillingEventEnricher for RedisConfiguredUsageStore {
+        async fn enrich_usage_event(&self, _event: &mut UsageEvent) -> Result<(), DataLayerError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl ManualProxyNodeCounter for RedisConfiguredUsageStore {
+        async fn increment_manual_proxy_node_requests(
+            &self,
+            _node_id: &str,
+            _total_delta: i64,
+            _failed_delta: i64,
+            _latency_ms: Option<i64>,
+        ) -> Result<(), DataLayerError> {
+            Ok(())
+        }
+    }
+
+    impl UsageRuntimeAccess for RedisConfiguredUsageStore {
+        fn has_usage_writer(&self) -> bool {
+            true
+        }
+
+        fn has_usage_worker_runner(&self) -> bool {
+            true
+        }
+
+        fn usage_worker_runner(&self) -> Option<RedisStreamRunner> {
+            Some(self.runner.clone())
+        }
+    }
+
     #[tokio::test]
     async fn terminal_usage_without_redis_writes_directly_to_usage_repository() {
         let runtime = UsageRuntime::new(UsageRuntimeConfig {
@@ -631,6 +741,41 @@ mod tests {
         assert_eq!(records[0].request_id, "req-no-redis-1");
         assert_eq!(records[0].status, "completed");
         assert_eq!(records[0].total_tokens, Some(12));
+    }
+
+    #[tokio::test]
+    async fn direct_terminal_usage_bypasses_redis_queue_and_writes_repository() {
+        let runtime = UsageRuntime::new(UsageRuntimeConfig {
+            enabled: true,
+            ..UsageRuntimeConfig::default()
+        })
+        .expect("usage runtime should build");
+        let runner = sample_runner();
+        let store = RedisConfiguredUsageStore {
+            inner: NoRedisUsageStore::default(),
+            runner,
+        };
+        let event = UsageEvent::new(
+            UsageEventType::Failed,
+            "req-direct-terminal-1",
+            UsageEventData {
+                user_id: Some("user-direct-terminal-1".to_string()),
+                provider_name: "openai".to_string(),
+                model: "gpt-5".to_string(),
+                status_code: Some(503),
+                error_message: Some("upstream failed".to_string()),
+                ..UsageEventData::default()
+            },
+        );
+
+        runtime.record_terminal_event_direct(&store, event).await;
+
+        let records = store.inner.records.lock().expect("records lock");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].request_id, "req-direct-terminal-1");
+        assert_eq!(records[0].status, "failed");
+        assert_eq!(records[0].billing_status, "void");
+        assert_eq!(records[0].status_code, Some(503));
     }
 
     #[test]

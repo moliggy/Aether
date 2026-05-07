@@ -486,12 +486,25 @@ function normalizeAuthTypeLabel(key: PoolKeyDetail | PoolKeySelectionItem): stri
 
 function getStatusBadgeLabel(key: PoolKeyDetail): string | null {
   const account = getAccountStatusDisplay(key)
-  if (account.blocked && account.label) return account.label
+  if (account.blocked && account.label) return compactStatusBadgeLabel(account.label)
 
   const oauth = getOAuthStatusDisplay(key, 0)
-  if (oauth?.isInvalid) return 'Token 失效'
-  if (oauth?.isExpired) return 'Token 过期'
+  if (oauth?.requiresReauth) return '续期失败'
+  if (oauth?.isInvalid) return '已失效'
+  if (oauth?.isExpired) return '已过期'
   return null
+}
+
+function compactStatusBadgeLabel(label: string): string {
+  const normalized = label.trim()
+  const mapped: Record<string, string> = {
+    'Token 失效': '已失效',
+    'Token 过期': '已过期',
+    账号已封禁: '账号封禁',
+    工作区已停用: '工作区停用',
+    账号访问受限: '访问受限',
+  }
+  return Array.from(mapped[normalized] || normalized).slice(0, 5).join('')
 }
 
 function getStatusBadgeTitle(key: PoolKeyDetail): string {

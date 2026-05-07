@@ -84,6 +84,19 @@ function getSnapshotOAuthState(
   const expiresAt = oauth.expires_at ?? input.oauth_expires_at ?? null
   const reason = normalizeText(oauth.reason)
 
+  if (code === 'reauth_required') {
+    const countdown = expiresAt == null ? null : getOAuthExpiresCountdown(expiresAt, tick, null, null)
+    return {
+      text: countdown?.text ? `续期失败 ${countdown.text}` : '续期失败',
+      isExpired: false,
+      isExpiringSoon: countdown?.isExpiringSoon ?? false,
+      isInvalid: false,
+      invalidReason: reason || undefined,
+      requiresReauth: true,
+      usableUntilExpiry: true,
+    }
+  }
+
   if (code === 'invalid') {
     return {
       text: '已失效',
@@ -107,6 +120,27 @@ function getSnapshotOAuthState(
   return getOAuthExpiresCountdown(expiresAt, tick, null, null)
 }
 
+function refreshFailureAccessTokenStillUsable(expiresAt: number | null | undefined): boolean {
+  return typeof expiresAt === 'number' && expiresAt > Math.floor(Date.now() / 1000)
+}
+
+function getReauthRequiredOAuthState(
+  expiresAt: number | null | undefined,
+  tick: number,
+  reason: string,
+): OAuthStatusInfo {
+  const countdown = expiresAt == null ? null : getOAuthExpiresCountdown(expiresAt, tick, null, null)
+  return {
+    text: countdown?.text ? `续期失败 ${countdown.text}` : '续期失败',
+    isExpired: false,
+    isExpiringSoon: countdown?.isExpiringSoon ?? false,
+    isInvalid: false,
+    invalidReason: reason,
+    requiresReauth: true,
+    usableUntilExpiry: true,
+  }
+}
+
 function getLegacyOAuthState(
   input: ProviderKeyStatusCarrier,
   tick: number,
@@ -115,6 +149,14 @@ function getLegacyOAuthState(
   if (!input.oauth_expires_at && !input.oauth_invalid_at && !input.oauth_invalid_reason) return null
 
   const rawReason = normalizeText(input.oauth_invalid_reason)
+  if (
+    rawReason
+    && isRefreshFailedReason(rawReason)
+    && refreshFailureAccessTokenStillUsable(input.oauth_expires_at)
+  ) {
+    return getReauthRequiredOAuthState(input.oauth_expires_at, tick, rawReason)
+  }
+
   if (rawReason && isAccountLevelBlockReason(rawReason) && !isRefreshFailedReason(rawReason)) {
     if (!input.oauth_expires_at) return null
     return getOAuthExpiresCountdown(input.oauth_expires_at, tick, null, null)
@@ -132,6 +174,7 @@ function getOAuthStatusSeverity(status: OAuthStatusInfo | null): number {
   if (!status) return 0
   if (status.isInvalid) return 3
   if (status.isExpired) return 2
+  if (status.requiresReauth) return 2
   return 1
 }
 
@@ -217,8 +260,15 @@ export function getOAuthStatusTitle(
     const reason = normalizeText(status.invalidReason)
     return reason ? `Token 已失效: ${reason}` : 'Token 已失效'
   }
+  const snapshotCode = normalizeText(input.status_snapshot?.oauth?.code)
+  if (snapshotCode === 'reauth_required' || status.requiresReauth) {
+    const reason = normalizeText(status.invalidReason)
+    return reason
+      ? `Refresh Token 续期失败，当前 Access Token 未到期仍可使用: ${reason}`
+      : 'Refresh Token 续期失败，当前 Access Token 未到期仍可使用'
+  }
   if (status.isExpired) {
-    return 'Token 已过期，请重新授权'
+    return 'Access Token 已过期，等待自动续期'
   }
   return `Token 剩余有效期: ${status.text}`
 }
@@ -235,7 +285,7 @@ export function getOAuthRefreshButtonTitle(
   }
 
   const status = getOAuthStatusDisplay(input, tick)
-  if (status?.isInvalid || status?.isExpired) {
+  if (status?.isInvalid || status?.isExpired || status?.requiresReauth) {
     return '重新授权'
   }
   return '刷新 Token'

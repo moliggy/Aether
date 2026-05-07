@@ -24,6 +24,8 @@ pub struct SchedulerRequestCandidateReportContext {
     pub body_rules: Option<Value>,
     pub proxy: Option<Value>,
     pub error_flow: Option<Value>,
+    pub candidate_group_id: Option<String>,
+    pub pool_key_index: Option<u32>,
     pub ranking_mode: Option<String>,
     pub priority_mode: Option<String>,
     pub ranking_index: Option<u32>,
@@ -65,6 +67,8 @@ struct ReportCandidateExtraDataInput {
     body_rules: Option<Value>,
     proxy: Option<Value>,
     error_flow: Option<Value>,
+    candidate_group_id: Option<String>,
+    pool_key_index: Option<u32>,
     ranking_mode: Option<String>,
     priority_mode: Option<String>,
     ranking_index: Option<u32>,
@@ -153,6 +157,8 @@ pub fn parse_request_candidate_report_context(
             .get("error_flow")
             .cloned()
             .filter(|value| !value.is_null()),
+        candidate_group_id: string_field(report_context, "candidate_group_id"),
+        pool_key_index: u32_field(report_context, "pool_key_index"),
         ranking_mode: string_field(report_context, "ranking_mode"),
         priority_mode: string_field(report_context, "priority_mode"),
         ranking_index: u32_field(report_context, "ranking_index"),
@@ -188,6 +194,8 @@ pub fn resolve_report_request_candidate_slot(
         body_rules,
         proxy,
         error_flow,
+        candidate_group_id,
+        pool_key_index,
         ranking_mode,
         priority_mode,
         ranking_index,
@@ -206,6 +214,8 @@ pub fn resolve_report_request_candidate_slot(
         body_rules,
         proxy,
         error_flow,
+        candidate_group_id,
+        pool_key_index,
         ranking_mode,
         priority_mode,
         ranking_index,
@@ -323,6 +333,8 @@ pub fn build_execution_request_candidate_seed(
             body_rules: metadata.body_rules,
             proxy: metadata.proxy,
             error_flow: metadata.error_flow,
+            candidate_group_id: metadata.candidate_group_id,
+            pool_key_index: metadata.pool_key_index,
             ranking_mode: metadata.ranking_mode,
             priority_mode: metadata.priority_mode,
             ranking_index: metadata.ranking_index,
@@ -426,6 +438,8 @@ pub fn build_local_request_candidate_status_record(
         body_rules: metadata.body_rules.clone(),
         proxy: metadata.proxy.clone(),
         error_flow: metadata.error_flow.clone(),
+        candidate_group_id: metadata.candidate_group_id.clone(),
+        pool_key_index: metadata.pool_key_index,
         ranking_mode: metadata.ranking_mode.clone(),
         priority_mode: metadata.priority_mode.clone(),
         ranking_index: metadata.ranking_index,
@@ -660,6 +674,8 @@ fn build_report_candidate_extra_data(input: ReportCandidateExtraDataInput) -> Op
         body_rules,
         proxy,
         error_flow,
+        candidate_group_id,
+        pool_key_index,
         ranking_mode,
         priority_mode,
         ranking_index,
@@ -702,6 +718,22 @@ fn build_report_candidate_extra_data(input: ReportCandidateExtraDataInput) -> Op
     }
     if let Some(error_flow) = error_flow {
         extra_data.insert("error_flow".to_string(), error_flow);
+    }
+    if let Some(candidate_group_id) = candidate_group_id {
+        extra_data.insert(
+            "candidate_group_id".to_string(),
+            Value::String(candidate_group_id.clone()),
+        );
+        extra_data.insert(
+            "pool_group_id".to_string(),
+            Value::String(candidate_group_id),
+        );
+    }
+    if let Some(pool_key_index) = pool_key_index {
+        extra_data.insert(
+            "pool_key_index".to_string(),
+            Value::Number(pool_key_index.into()),
+        );
     }
     if let Some(ranking_mode) = ranking_mode {
         extra_data.insert("ranking_mode".to_string(), Value::String(ranking_mode));
@@ -880,7 +912,9 @@ mod tests {
                 "classification": "retry_upstream_failure",
                 "decision": "retry_next_candidate",
                 "propagation": "suppressed"
-            }
+            },
+            "candidate_group_id": "pool-group-1",
+            "pool_key_index": 2
         })))
         .expect("metadata");
 
@@ -934,6 +968,24 @@ mod tests {
                 .and_then(|value| value.get("error_flow"))
                 .and_then(|value| value.get("propagation")),
             Some(&json!("suppressed"))
+        );
+        assert_eq!(
+            slot.extra_data
+                .as_ref()
+                .and_then(|value| value.get("candidate_group_id")),
+            Some(&json!("pool-group-1"))
+        );
+        assert_eq!(
+            slot.extra_data
+                .as_ref()
+                .and_then(|value| value.get("pool_group_id")),
+            Some(&json!("pool-group-1"))
+        );
+        assert_eq!(
+            slot.extra_data
+                .as_ref()
+                .and_then(|value| value.get("pool_key_index")),
+            Some(&json!(2))
         );
     }
 

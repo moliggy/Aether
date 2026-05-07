@@ -4,7 +4,7 @@ set -euo pipefail
 REPO="${AETHER_REPO:-fawney19/Aether}"
 SOURCE_REF="${AETHER_SOURCE_REF:-aether-rust-pioneer}"
 VERSION="${AETHER_VERSION:-}"
-CHANNEL="${AETHER_CHANNEL:-rc}"
+CHANNEL="${AETHER_CHANNEL:-pre}"
 CHANNEL_EXPLICIT="false"
 if [[ -n "${AETHER_CHANNEL:-}" ]]; then
     CHANNEL_EXPLICIT="true"
@@ -38,9 +38,10 @@ Options:
                       compose: Docker Compose app + Postgres + Redis
                       single: systemd service with SQLite + in-process runtime
                       cluster: systemd service connected to shared database + Redis
-  --channel CHANNEL    Release channel to resolve when --version is omitted: rc
-                      (default: rc)
-  --version VERSION    Exact release tag to install, for example v0.7.0-rc22
+  --channel CHANNEL    Release channel to resolve when --version is omitted: pre or rc
+                      pre resolves the latest semver prerelease tag (default)
+                      rc restricts resolution to tags like v0.7.0-rc23
+  --version VERSION    Exact release tag to install, for example v0.7.0-rc23
   --repo OWNER/REPO    GitHub repository to download from (default: fawney19/Aether)
   --source-ref REF     Source branch/tag used for compose templates (default: aether-rust-pioneer)
   --archive PATH       Install from a local release tarball instead of downloading
@@ -177,8 +178,8 @@ select_version() {
         cat >/dev/tty <<'EOF'
 
 Choose Aether version:
-  1) Latest rc tag
-  2) Exact tag, for example v0.7.0-rc22
+  1) Latest pre release
+  2) Exact tag, for example v0.7.0-rc23
 
 Enter choice [1]:
 EOF
@@ -186,7 +187,7 @@ EOF
         IFS= read -r choice </dev/tty || choice=""
         case "${choice:-1}" in
             1)
-                CHANNEL="rc"
+                CHANNEL="pre"
                 ;;
             2)
                 cat >/dev/tty <<'EOF'
@@ -356,6 +357,12 @@ resolve_version() {
 
     local tag=""
     case "${CHANNEL}" in
+        pre)
+            tag="$(download_stdout "https://api.github.com/repos/${REPO}/releases?per_page=50" |
+                sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+                grep -E '^v[0-9]+(\.[0-9]+)*-[0-9A-Za-z][0-9A-Za-z.-]*$' |
+                head -n1 || true)"
+            ;;
         rc)
             tag="$(download_stdout "https://api.github.com/repos/${REPO}/releases?per_page=50" |
                 sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
@@ -363,7 +370,7 @@ resolve_version() {
                 head -n1 || true)"
             ;;
         *)
-            die "unsupported release channel: ${CHANNEL}; expected rc"
+            die "unsupported release channel: ${CHANNEL}; expected pre or rc"
             ;;
     esac
     echo "${tag}"
@@ -634,8 +641,8 @@ compose_image() {
         tag="${VERSION#v}"
     else
         case "${CHANNEL}" in
-            rc)
-                tag="rc"
+            pre|rc)
+                tag="${CHANNEL}"
                 ;;
             *)
                 tag="${CHANNEL}"

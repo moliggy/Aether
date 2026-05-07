@@ -1333,15 +1333,20 @@ const REBUILD_API_KEY_USAGE_STATS_SQL: &str =
 const APPLY_PROVIDER_API_KEY_USAGE_DELTA_SQL: &str =
     include_str!("queries/apply_provider_api_key_usage_delta_sql.sql");
 
+const APPLY_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_DELTA_SQL: &str =
+    include_str!("queries/apply_provider_api_key_codex_window_usage_delta_sql.sql");
+
 const RESET_PROVIDER_API_KEY_USAGE_STATS_SQL: &str =
     include_str!("queries/reset_provider_api_key_usage_stats_sql.sql");
 
 const REBUILD_PROVIDER_API_KEY_USAGE_STATS_SQL: &str =
     include_str!("queries/rebuild_provider_api_key_usage_stats_sql.sql");
 
+const REBUILD_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_STATS_SQL: &str =
+    include_str!("queries/rebuild_provider_api_key_codex_window_usage_stats_sql.sql");
+
 const LIST_USAGE_AUDITS_PREFIX: &str = include_str!("queries/list_usage_audits_prefix.sql");
-const USAGE_RESERVED_PROVIDER_LABELS_FILTER_SQL: &str =
-    " AND BTRIM(COALESCE(\"usage\".provider_name, '')) <> '' AND lower(BTRIM(COALESCE(\"usage\".provider_name, ''))) NOT IN ('unknown', 'unknow', 'pending')";
+const USAGE_RESERVED_PROVIDER_LABELS_FILTER_SQL: &str = " AND BTRIM(COALESCE(\"usage\".provider_name, '')) <> '' AND lower(BTRIM(COALESCE(\"usage\".provider_name, ''))) NOT IN ('unknown', 'unknow', 'pending')";
 
 struct UsageAuditAggregationSqlFragments {
     filtered_extra_where: &'static str,
@@ -6395,33 +6400,38 @@ WHERE stats_daily_api_key.date >=
             return Ok(Vec::new());
         }
 
-        let (table_name, group_column, display_name_expr, avg_response_time_expr, success_count_expr) =
-            match group_by {
-                UsageAuditAggregationGroupBy::Model => (
-                    "stats_user_daily_model",
-                    "model",
-                    "NULL::varchar",
-                    "NULL::DOUBLE PRECISION",
-                    "NULL::BIGINT",
-                ),
-                UsageAuditAggregationGroupBy::Provider => (
-                    "stats_user_daily_provider",
-                    "provider_name",
-                    "provider_name",
-                    "CASE WHEN COALESCE(SUM(response_time_samples), 0) > 0 THEN COALESCE(SUM(response_time_sum_ms), 0) / COALESCE(SUM(response_time_samples), 0) ELSE NULL END",
-                    "COALESCE(SUM(success_requests), 0)::BIGINT",
-                ),
-                UsageAuditAggregationGroupBy::ApiFormat => (
-                    "stats_user_daily_api_format",
-                    "api_format",
-                    "NULL::varchar",
-                    "CASE WHEN COALESCE(SUM(response_time_samples), 0) > 0 THEN COALESCE(SUM(response_time_sum_ms), 0) / COALESCE(SUM(response_time_samples), 0) ELSE NULL END",
-                    "NULL::BIGINT",
-                ),
-                UsageAuditAggregationGroupBy::User => {
-                    return Ok(Vec::new());
-                }
-            };
+        let (
+            table_name,
+            group_column,
+            display_name_expr,
+            avg_response_time_expr,
+            success_count_expr,
+        ) = match group_by {
+            UsageAuditAggregationGroupBy::Model => (
+                "stats_user_daily_model",
+                "model",
+                "NULL::varchar",
+                "NULL::DOUBLE PRECISION",
+                "NULL::BIGINT",
+            ),
+            UsageAuditAggregationGroupBy::Provider => (
+                "stats_user_daily_provider",
+                "provider_name",
+                "provider_name",
+                "CASE WHEN COALESCE(SUM(response_time_samples), 0) > 0 THEN COALESCE(SUM(response_time_sum_ms), 0) / COALESCE(SUM(response_time_samples), 0) ELSE NULL END",
+                "COALESCE(SUM(success_requests), 0)::BIGINT",
+            ),
+            UsageAuditAggregationGroupBy::ApiFormat => (
+                "stats_user_daily_api_format",
+                "api_format",
+                "NULL::varchar",
+                "CASE WHEN COALESCE(SUM(response_time_samples), 0) > 0 THEN COALESCE(SUM(response_time_sum_ms), 0) / COALESCE(SUM(response_time_samples), 0) ELSE NULL END",
+                "NULL::BIGINT",
+            ),
+            UsageAuditAggregationGroupBy::User => {
+                return Ok(Vec::new());
+            }
+        };
 
         let provider_extra_where = if matches!(group_by, UsageAuditAggregationGroupBy::Provider) {
             " AND BTRIM(COALESCE(provider_name, '')) <> '' AND lower(BTRIM(COALESCE(provider_name, ''))) NOT IN ('unknown', 'unknow', 'pending')"
@@ -7925,6 +7935,10 @@ ORDER BY "usage".user_id ASC
                         .await
                         .map_postgres_err()?
                         .rows_affected();
+                    sqlx::query(REBUILD_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_STATS_SQL)
+                        .execute(&mut **tx)
+                        .await
+                        .map_postgres_err()?;
                     Ok(rows_affected)
                 }) as BoxFuture<'_, Result<u64, DataLayerError>>
             })
@@ -8368,6 +8382,40 @@ async fn apply_provider_api_key_usage_delta_in_tx(
                 .removed_last_used_at_unix_secs
                 .map(|value| value as f64),
         )
+        .execute(&mut **tx)
+        .await
+        .map_postgres_err()?;
+    apply_provider_api_key_codex_window_usage_delta_in_tx(tx, key_id, delta).await?;
+    Ok(())
+}
+
+async fn apply_provider_api_key_codex_window_usage_delta_in_tx(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    key_id: &str,
+    delta: &ProviderApiKeyUsageDelta,
+) -> Result<(), DataLayerError> {
+    let Some(usage_created_at_unix_secs) = delta.usage_created_at_unix_secs else {
+        return Ok(());
+    };
+    if delta.request_count == 0 && delta.total_tokens == 0 && delta.total_cost_usd == 0.0 {
+        return Ok(());
+    }
+    let total_cost_usd_delta = if delta.total_cost_usd.is_finite() {
+        delta.total_cost_usd
+    } else {
+        0.0
+    };
+
+    sqlx::query(APPLY_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_DELTA_SQL)
+        .bind(key_id)
+        .bind(i64::try_from(usage_created_at_unix_secs).map_err(|_| {
+            DataLayerError::UnexpectedValue(format!(
+                "provider api key window usage timestamp exceeds i64: {usage_created_at_unix_secs}"
+            ))
+        })?)
+        .bind(delta.request_count)
+        .bind(delta.total_tokens)
+        .bind(total_cost_usd_delta)
         .execute(&mut **tx)
         .await
         .map_postgres_err()?;
