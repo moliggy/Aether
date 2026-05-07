@@ -271,6 +271,169 @@ async fn gateway_refreshes_admin_provider_quota_locally_for_codex_with_trusted_a
 }
 
 #[tokio::test]
+async fn gateway_refreshes_admin_provider_quota_locally_for_requested_codex_keys_only() {
+    let upstream_hits = Arc::new(Mutex::new(0usize));
+    let upstream_hits_clone = Arc::clone(&upstream_hits);
+    let upstream = Router::new().route(
+        "/api/admin/endpoints/providers/provider-codex/refresh-quota",
+        any(move |_request: Request| {
+            let upstream_hits_inner = Arc::clone(&upstream_hits_clone);
+            async move {
+                *upstream_hits_inner.lock().expect("mutex should lock") += 1;
+                (StatusCode::OK, Body::from("unexpected upstream hit"))
+            }
+        }),
+    );
+
+    let seen_authorizations = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen_authorizations_clone = Arc::clone(&seen_authorizations);
+    let execution_runtime = Router::new().route(
+        "/v1/execute/sync",
+        any(move |request: Request| {
+            let seen_authorizations_inner = Arc::clone(&seen_authorizations_clone);
+            async move {
+                let plan: aether_contracts::ExecutionPlan = serde_json::from_slice(
+                    &to_bytes(request.into_body(), usize::MAX)
+                        .await
+                        .expect("body should read"),
+                )
+                .expect("plan should parse");
+                seen_authorizations_inner
+                    .lock()
+                    .expect("mutex should lock")
+                    .push(
+                        plan.headers
+                            .get("authorization")
+                            .cloned()
+                            .unwrap_or_default(),
+                    );
+                let result = aether_contracts::ExecutionResult {
+                    request_id: plan.request_id,
+                    candidate_id: None,
+                    status_code: 200,
+                    headers: BTreeMap::from([
+                        (
+                            "x-codex-primary-reset-after-seconds".to_string(),
+                            "18000".to_string(),
+                        ),
+                        (
+                            "x-codex-primary-reset-at".to_string(),
+                            "1900000000".to_string(),
+                        ),
+                    ]),
+                    body: Some(aether_contracts::ResponseBody {
+                        json_body: Some(json!({
+                            "plan_type": "plus",
+                            "rate_limit": {
+                                "primary_window": {
+                                    "used_percent": 12.5,
+                                    "window_minutes": 300
+                                }
+                            }
+                        })),
+                        body_bytes_b64: None,
+                    }),
+                    telemetry: None,
+                    error: None,
+                };
+                (StatusCode::OK, Json(result))
+            }
+        }),
+    );
+
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![StoredProviderCatalogProvider::new(
+            "provider-codex".to_string(),
+            "codex".to_string(),
+            Some("https://example.com".to_string()),
+            "codex".to_string(),
+        )
+        .expect("provider should build")],
+        vec![sample_endpoint(
+            "endpoint-codex-cli",
+            "provider-codex",
+            "openai:responses",
+            "https://chatgpt.com/backend-api",
+        )],
+        vec![
+            sample_key(
+                "key-codex-a",
+                "provider-codex",
+                "openai:responses",
+                "sk-codex-a",
+            ),
+            sample_key(
+                "key-codex-b",
+                "provider-codex",
+                "openai:responses",
+                "sk-codex-b",
+            ),
+        ],
+    ));
+
+    let (_upstream_url, upstream_handle) = start_server(upstream).await;
+    let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
+    let gateway = build_router_with_state(
+        build_state_with_execution_runtime_override(execution_runtime_url.clone())
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(
+                    provider_catalog_repository.clone(),
+                )
+                .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
+            ),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{gateway_url}/api/admin/endpoints/providers/provider-codex/refresh-quota"
+        ))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({ "key_ids": ["key-codex-a"] }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["success"], 1);
+    assert_eq!(payload["failed"], 0);
+    assert_eq!(payload["total"], 1);
+    assert_eq!(payload["results"].as_array().map(Vec::len), Some(1));
+    assert_eq!(payload["results"][0]["key_id"], "key-codex-a");
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+    assert_eq!(
+        seen_authorizations
+            .lock()
+            .expect("mutex should lock")
+            .clone(),
+        vec!["Bearer sk-codex-a".to_string()]
+    );
+
+    let reloaded = provider_catalog_repository
+        .list_keys_by_ids(&["key-codex-a".to_string(), "key-codex-b".to_string()])
+        .await
+        .expect("keys should read");
+    let key_a = reloaded
+        .iter()
+        .find(|key| key.id == "key-codex-a")
+        .expect("selected key should reload");
+    let key_b = reloaded
+        .iter()
+        .find(|key| key.id == "key-codex-b")
+        .expect("unselected key should reload");
+    assert!(key_a.upstream_metadata.is_some());
+    assert_eq!(key_b.upstream_metadata, None);
+
+    gateway_handle.abort();
+    execution_runtime_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
 async fn gateway_refreshes_admin_provider_quota_for_codex_proxy_with_extended_timeout() {
     let upstream =
         Router::new().route(

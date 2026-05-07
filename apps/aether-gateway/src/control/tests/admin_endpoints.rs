@@ -1,6 +1,8 @@
 use http::Uri;
 
-use super::{classify_control_route, headers};
+use crate::handlers::shared::local_proxy_route_requires_buffered_body;
+
+use super::{classify_control_route, headers, GatewayPublicRequestContext};
 
 #[test]
 fn classifies_admin_endpoint_health_summary_as_admin_proxy_route() {
@@ -376,6 +378,25 @@ fn classifies_admin_refresh_provider_quota_as_admin_proxy_route() {
     assert_eq!(decision.route_family.as_deref(), Some("endpoints_manage"));
     assert_eq!(decision.route_kind.as_deref(), Some("refresh_quota"));
     assert!(!decision.is_execution_runtime_candidate());
+}
+
+#[test]
+fn admin_refresh_provider_quota_buffers_request_body_for_key_selection() {
+    let headers = headers(&[]);
+    let uri: Uri = "/api/admin/endpoints/providers/provider-codex/refresh-quota"
+        .parse()
+        .expect("uri should parse");
+    let decision = classify_control_route(&http::Method::POST, &uri, &headers)
+        .expect("decision should resolve");
+    let context = GatewayPublicRequestContext::from_request_parts(
+        "trace-refresh-quota",
+        &http::Method::POST,
+        &uri,
+        &headers,
+        Some(decision),
+    );
+
+    assert!(local_proxy_route_requires_buffered_body(&context));
 }
 
 #[test]

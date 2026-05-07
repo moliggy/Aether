@@ -65,7 +65,7 @@ pub(super) async fn maybe_handle(
 
     let normalized_provider_type = provider.provider_type.trim().to_ascii_lowercase();
 
-    let payload = if let Some(request_body) = request_body {
+    let payload = if let Some(request_body) = request_body.filter(|body| !body.is_empty()) {
         match serde_json::from_slice::<AdminProviderQuotaRefreshRequest>(request_body) {
             Ok(payload) => payload,
             Err(_) => {

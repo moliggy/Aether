@@ -1772,13 +1772,18 @@ registerDynamicRoute('POST', '/api/admin/endpoints/providers/:providerId/keys', 
   return createMockResponse(newKey)
 })
 
-registerDynamicRoute('POST', '/api/admin/endpoints/providers/:providerId/refresh-quota', async (_config, params) => {
+registerDynamicRoute('POST', '/api/admin/endpoints/providers/:providerId/refresh-quota', async (config, params) => {
   await delay()
   requireAdmin()
   if (!PROVIDER_KEYS_CACHE[params.providerId]) {
     PROVIDER_KEYS_CACHE[params.providerId] = generateMockKeysForProvider(params.providerId, 2)
   }
-  const keys = PROVIDER_KEYS_CACHE[params.providerId] || []
+  const body = JSON.parse(config.data || '{}')
+  const requestedKeyIds = Array.isArray(body.key_ids)
+    ? new Set(body.key_ids.map((id: unknown) => String(id).trim()).filter(Boolean))
+    : null
+  const keys = (PROVIDER_KEYS_CACHE[params.providerId] || [])
+    .filter(key => !requestedKeyIds || requestedKeyIds.has(key.id))
   const results = keys.map(key => ({
     key_id: key.id,
     key_name: key.name || key.id.slice(0, 8),
