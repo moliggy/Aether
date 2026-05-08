@@ -95,6 +95,14 @@ pub(super) fn classify_admin_system_family_route(
             "admin:system",
             false,
         ))
+    } else if method == http::Method::GET && normalized_path == "/api/admin/system/cleanup/runs" {
+        Some(classified(
+            "admin_proxy",
+            "system_manage",
+            "cleanup_runs",
+            "admin:system",
+            false,
+        ))
     } else if method == http::Method::POST && normalized_path == "/api/admin/system/purge/config" {
         Some(classified(
             "admin_proxy",
@@ -136,6 +144,16 @@ pub(super) fn classify_admin_system_family_route(
             "admin_proxy",
             "system_manage",
             "purge_request_bodies",
+            "admin:system",
+            false,
+        ))
+    } else if method == http::Method::POST
+        && normalized_path == "/api/admin/system/purge/request-bodies/task"
+    {
+        Some(classified(
+            "admin_proxy",
+            "system_manage",
+            "purge_request_bodies_task",
             "admin:system",
             false,
         ))

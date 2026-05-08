@@ -1,4 +1,6 @@
 use aether_data_contracts::DataLayerError;
+use serde_json::json;
+use std::time::Instant;
 use tracing::{info, warn};
 
 use crate::data::GatewayDataState;
@@ -8,15 +10,41 @@ use super::{
     advance_proxy_upgrade_rollout_once, cleanup_audit_logs_once,
     cleanup_expired_gemini_file_mappings_once, cleanup_request_candidates_once,
     cleanup_stale_pending_requests_once, cleanup_stale_proxy_nodes_once,
-    collect_proxy_upgrade_rollout_probes, perform_db_maintenance_once,
+    collect_proxy_upgrade_rollout_probes, now_unix_secs, perform_db_maintenance_once,
     perform_provider_checkin_once, perform_stats_aggregation_once,
     perform_stats_hourly_aggregation_once, perform_usage_cleanup_once,
-    perform_wallet_daily_usage_aggregation_once, record_proxy_upgrade_traffic_success,
-    summarize_database_pool,
+    perform_wallet_daily_usage_aggregation_once, record_completed_cleanup_run,
+    record_failed_cleanup_run, record_proxy_upgrade_traffic_success, summarize_database_pool,
 };
 
 pub(super) async fn run_audit_cleanup_once(data: &GatewayDataState) -> Result<(), DataLayerError> {
-    let deleted = cleanup_audit_logs_once(data).await?;
+    let started_at_unix_secs = now_unix_secs();
+    let started_at = Instant::now();
+    let deleted = match cleanup_audit_logs_once(data).await {
+        Ok(deleted) => deleted,
+        Err(err) => {
+            record_failed_cleanup_run(
+                data,
+                "audit_cleanup",
+                "auto",
+                started_at_unix_secs,
+                started_at,
+                &err,
+            )
+            .await;
+            return Err(err);
+        }
+    };
+    record_completed_cleanup_run(
+        data,
+        "audit_cleanup",
+        "auto",
+        started_at_unix_secs,
+        started_at,
+        json!({ "audit_logs_deleted": deleted }),
+        format!("审计日志自动清理完成，删除 {deleted} 行"),
+    )
+    .await;
     if deleted > 0 {
         info!(
             event_name = "audit_cleanup_completed",
@@ -187,7 +215,49 @@ pub(super) async fn run_stats_aggregation_once(
 }
 
 pub(super) async fn run_usage_cleanup_once(data: &GatewayDataState) -> Result<(), DataLayerError> {
-    let summary = perform_usage_cleanup_once(data).await?;
+    let started_at_unix_secs = now_unix_secs();
+    let started_at = Instant::now();
+    let summary = match perform_usage_cleanup_once(data).await {
+        Ok(summary) => summary,
+        Err(err) => {
+            record_failed_cleanup_run(
+                data,
+                "usage_cleanup",
+                "auto",
+                started_at_unix_secs,
+                started_at,
+                &err,
+            )
+            .await;
+            return Err(err);
+        }
+    };
+    record_completed_cleanup_run(
+        data,
+        "usage_cleanup",
+        "auto",
+        started_at_unix_secs,
+        started_at,
+        json!({
+            "body_externalized": summary.body_externalized,
+            "legacy_body_refs_migrated": summary.legacy_body_refs_migrated,
+            "body_cleaned": summary.body_cleaned,
+            "header_cleaned": summary.header_cleaned,
+            "keys_cleaned": summary.keys_cleaned,
+            "records_deleted": summary.records_deleted,
+        }),
+        format!(
+            "请求记录自动清理完成，影响 {} 项",
+            summary
+                .body_externalized
+                .saturating_add(summary.legacy_body_refs_migrated)
+                .saturating_add(summary.body_cleaned)
+                .saturating_add(summary.header_cleaned)
+                .saturating_add(summary.keys_cleaned)
+                .saturating_add(summary.records_deleted)
+        ),
+    )
+    .await;
     if summary.body_externalized > 0
         || summary.legacy_body_refs_migrated > 0
         || summary.body_cleaned > 0

@@ -208,10 +208,104 @@
         <p>6. <strong>审计日志</strong>: 独立清理，记录用户登录、操作等安全事件</p>
       </div>
     </div>
+
+    <div class="mt-4 border border-border rounded-lg overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-border">
+        <div>
+          <h4 class="text-sm font-medium">
+            最近清理记录
+          </h4>
+          <p class="text-xs text-muted-foreground">
+            自动清理、手动系统清理和请求体后台任务的执行结果
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          :disabled="cleanupRunsLoading"
+          @click="loadCleanupRuns"
+        >
+          <RefreshCw
+            class="w-3.5 h-3.5 mr-1.5"
+            :class="{ 'animate-spin': cleanupRunsLoading }"
+          />
+          刷新
+        </Button>
+      </div>
+      <div
+        v-if="cleanupRuns.length === 0 && !cleanupRunsLoading"
+        class="px-4 py-6 text-sm text-muted-foreground"
+      >
+        暂无清理记录
+      </div>
+      <div
+        v-else
+        class="overflow-x-auto"
+      >
+        <table class="w-full text-sm">
+          <thead class="bg-muted/30 text-xs text-muted-foreground">
+            <tr>
+              <th class="px-4 py-2 text-left font-medium">
+                时间
+              </th>
+              <th class="px-4 py-2 text-left font-medium">
+                类型
+              </th>
+              <th class="px-4 py-2 text-left font-medium">
+                来源
+              </th>
+              <th class="px-4 py-2 text-left font-medium">
+                状态
+              </th>
+              <th class="px-4 py-2 text-left font-medium">
+                结果
+              </th>
+              <th class="px-4 py-2 text-right font-medium">
+                耗时
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="run in cleanupRuns"
+              :key="run.id"
+              class="border-t border-border"
+            >
+              <td class="px-4 py-2 whitespace-nowrap">
+                {{ formatRunTime(run.started_at_unix_secs) }}
+              </td>
+              <td class="px-4 py-2 whitespace-nowrap">
+                {{ cleanupKindLabel(run.kind) }}
+              </td>
+              <td class="px-4 py-2 whitespace-nowrap text-muted-foreground">
+                {{ run.trigger === 'manual' ? '手动' : '自动' }}
+              </td>
+              <td class="px-4 py-2 whitespace-nowrap">
+                <span :class="cleanupStatusClass(run.status)">
+                  {{ cleanupStatusLabel(run.status) }}
+                </span>
+              </td>
+              <td class="px-4 py-2 min-w-[18rem]">
+                <div>{{ run.error || run.message }}</div>
+                <div class="text-xs text-muted-foreground">
+                  {{ cleanupSummaryText(run.summary) }}
+                </div>
+              </td>
+              <td class="px-4 py-2 text-right whitespace-nowrap text-muted-foreground">
+                {{ formatDuration(run.duration_ms) }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </CardSection>
 </template>
 
 <script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { RefreshCw } from 'lucide-vue-next'
+import { adminApi, type CleanupRunRecord } from '@/api/admin'
 import Button from '@/components/ui/button.vue'
 import Input from '@/components/ui/input.vue'
 import Label from '@/components/ui/label.vue'
@@ -244,4 +338,90 @@ defineEmits<{
   'update:requestCandidatesRetentionDays': [value: number]
   'update:requestCandidatesCleanupBatchSize': [value: number]
 }>()
+
+const cleanupRuns = ref<CleanupRunRecord[]>([])
+const cleanupRunsLoading = ref(false)
+let cleanupRunsTimer: ReturnType<typeof window.setInterval> | null = null
+
+async function loadCleanupRuns() {
+  cleanupRunsLoading.value = true
+  try {
+    const response = await adminApi.getCleanupRuns()
+    cleanupRuns.value = response.items.slice(0, 10)
+  } finally {
+    cleanupRunsLoading.value = false
+  }
+}
+
+function cleanupKindLabel(kind: string): string {
+  const labels: Record<string, string> = {
+    usage_cleanup: '请求记录',
+    audit_cleanup: '审计日志',
+    request_candidate_cleanup: '候选记录',
+    request_bodies: '请求体',
+    system_cleanup: '系统清理',
+  }
+  return labels[kind] || kind
+}
+
+function cleanupStatusLabel(status: string): string {
+  if (status === 'processing') return '执行中'
+  if (status === 'failed') return '失败'
+  return '完成'
+}
+
+function cleanupStatusClass(status: string): string {
+  if (status === 'processing') return 'text-amber-500'
+  if (status === 'failed') return 'text-destructive'
+  return 'text-emerald-500'
+}
+
+function formatRunTime(value: number): string {
+  if (!value) return '-'
+  return new Date(value * 1000).toLocaleString()
+}
+
+function formatDuration(value: number | null): string {
+  if (value === null || value === undefined) return '-'
+  if (value < 1000) return `${value}ms`
+  return `${(value / 1000).toFixed(1)}s`
+}
+
+function cleanupSummaryText(summary: Record<string, unknown>): string {
+  const total = typeof summary.total === 'number' ? summary.total : null
+  if (total !== null) return `影响 ${total} 行`
+
+  const entries = Object.entries(summary)
+    .filter(([, value]) => typeof value === 'number' && value > 0)
+    .map(([key, value]) => `${summaryLabel(key)} ${value}`)
+  return entries.length > 0 ? entries.join(' / ') : '无数据变更'
+}
+
+function summaryLabel(key: string): string {
+  const labels: Record<string, string> = {
+    body_externalized: '压缩',
+    legacy_body_refs_migrated: '迁移',
+    body_cleaned: '清体',
+    header_cleaned: '清头',
+    keys_cleaned: 'Key',
+    records_deleted: '删记录',
+    audit_logs_deleted: '删日志',
+    request_candidates_deleted: '删候选',
+  }
+  return labels[key] || key
+}
+
+onMounted(() => {
+  void loadCleanupRuns()
+  cleanupRunsTimer = window.setInterval(() => {
+    void loadCleanupRuns()
+  }, 15_000)
+})
+
+onBeforeUnmount(() => {
+  if (cleanupRunsTimer) {
+    window.clearInterval(cleanupRunsTimer)
+    cleanupRunsTimer = null
+  }
+})
 </script>

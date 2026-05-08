@@ -26,6 +26,7 @@ use axum::{
     Json,
 };
 use serde_json::json;
+use std::time::Instant;
 
 pub(super) async fn maybe_build_local_admin_core_system_response(
     state: &AdminAppState<'_>,
@@ -191,6 +192,35 @@ pub(super) async fn maybe_build_local_admin_core_system_response(
             "cleanup_system_data",
             "system_cleanup",
             "global",
+        )));
+    }
+
+    if decision.route_kind.as_deref() == Some("cleanup_runs")
+        && request_method == http::Method::GET
+        && request_path == "/api/admin/system/cleanup/runs"
+    {
+        let records = crate::maintenance::list_admin_cleanup_run_records(&state.app().data)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))?;
+        return Ok(Some(Json(json!({ "items": records })).into_response()));
+    }
+
+    if decision.route_kind.as_deref() == Some("purge_request_bodies_task")
+        && request_method == http::Method::POST
+        && request_path == "/api/admin/system/purge/request-bodies/task"
+    {
+        let task =
+            crate::maintenance::start_admin_request_body_cleanup_task(state.cloned_app()).await?;
+        return Ok(Some(attach_admin_audit_response(
+            Json(json!({
+                "message": task.message.clone(),
+                "task": task,
+            }))
+            .into_response(),
+            "admin_system_request_body_cleanup_task_started",
+            "purge_request_bodies_async",
+            "request_bodies",
+            "all",
         )));
     }
 
@@ -529,6 +559,8 @@ async fn build_admin_system_purge_payload(
 async fn build_admin_system_cleanup_payload(
     state: &AdminAppState<'_>,
 ) -> Result<serde_json::Value, GatewayError> {
+    let started_at_unix_secs = chrono::Utc::now().timestamp().max(0) as u64;
+    let started_at = Instant::now();
     let summary = state.run_admin_system_cleanup_once().await?;
     let cleaned = json!({
         "audit_logs": summary.audit_logs_deleted,
@@ -553,6 +585,17 @@ async fn build_admin_system_cleanup_payload(
         .saturating_add(summary.usage.header_cleaned)
         .saturating_add(summary.usage.keys_cleaned)
         .saturating_add(summary.usage.records_deleted);
+
+    crate::maintenance::record_completed_cleanup_run(
+        &state.app().data,
+        "system_cleanup",
+        "manual",
+        started_at_unix_secs,
+        started_at,
+        cleaned.clone(),
+        format!("系统清理已执行，影响 {total} 项"),
+    )
+    .await;
 
     Ok(json!({
         "message": format!("系统清理已执行，影响 {} 项", total),

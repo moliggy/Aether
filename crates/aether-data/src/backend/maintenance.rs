@@ -194,6 +194,16 @@ impl DataBackends {
             None => Ok(AdminSystemPurgeSummary::default()),
         }
     }
+
+    pub async fn purge_admin_request_bodies_batch(
+        &self,
+        batch_size: usize,
+    ) -> Result<AdminSystemPurgeSummary, DataLayerError> {
+        match self.sql_backend() {
+            Some(backend) => backend.purge_admin_request_bodies_batch(batch_size).await,
+            None => Ok(AdminSystemPurgeSummary::default()),
+        }
+    }
 }
 
 impl PostgresBackend {
@@ -492,6 +502,17 @@ impl<'a> SqlBackendRef<'a> {
             Self::Postgres(postgres) => postgres.purge_admin_system_data(target).await,
             Self::Mysql(mysql) => mysql.purge_admin_system_data(target).await,
             Self::Sqlite(sqlite) => sqlite.purge_admin_system_data(target).await,
+        }
+    }
+
+    async fn purge_admin_request_bodies_batch(
+        self,
+        batch_size: usize,
+    ) -> Result<AdminSystemPurgeSummary, DataLayerError> {
+        match self {
+            Self::Postgres(postgres) => postgres.purge_admin_request_bodies_batch(batch_size).await,
+            Self::Mysql(mysql) => mysql.purge_admin_request_bodies_batch(batch_size).await,
+            Self::Sqlite(sqlite) => sqlite.purge_admin_request_bodies_batch(batch_size).await,
         }
     }
 }

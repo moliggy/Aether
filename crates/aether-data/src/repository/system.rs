@@ -41,6 +41,12 @@ impl AdminSystemPurgeSummary {
         *self.affected.entry(key.into()).or_insert(0) += count;
     }
 
+    pub fn merge(&mut self, other: &Self) {
+        for (key, count) in &other.affected {
+            self.add(key.clone(), *count);
+        }
+    }
+
     pub fn total(&self) -> u64 {
         self.affected.values().copied().sum()
     }

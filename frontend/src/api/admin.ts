@@ -236,6 +236,28 @@ export interface EmailTemplateResetResponse {
   }
 }
 
+export interface CleanupRunRecord {
+  id: string
+  kind: string
+  trigger: string
+  status: 'processing' | 'completed' | 'failed'
+  message: string
+  started_at_unix_secs: number
+  completed_at_unix_secs: number | null
+  duration_ms: number | null
+  summary: Record<string, unknown>
+  error: string | null
+}
+
+export interface CleanupRunListResponse {
+  items: CleanupRunRecord[]
+}
+
+export interface RequestBodyCleanupTaskResponse {
+  message: string
+  task: CleanupRunRecord
+}
+
 // 检查更新响应
 export interface CheckUpdateResponse {
   current_version: string
@@ -1056,7 +1078,15 @@ export const adminApi = {
   purgeUsage: () => purge<{ message: string; deleted: Record<string, number> }>('usage'),
   purgeAuditLogs: () => purge<{ message: string; deleted: Record<string, number> }>('audit-logs'),
   purgeRequestBodies: () => purge<{ message: string; cleaned: Record<string, number> }>('request-bodies'),
+  async purgeRequestBodiesAsync(): Promise<RequestBodyCleanupTaskResponse> {
+    const response = await apiClient.post<RequestBodyCleanupTaskResponse>('/api/admin/system/purge/request-bodies/task')
+    return response.data
+  },
   purgeStats: () => purge<{ message: string }>('stats'),
+  async getCleanupRuns(): Promise<CleanupRunListResponse> {
+    const response = await apiClient.get<CleanupRunListResponse>('/api/admin/system/cleanup/runs')
+    return response.data
+  },
 
   async getTimeSeries(params?: {
     start_date?: string

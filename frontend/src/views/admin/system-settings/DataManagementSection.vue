@@ -98,11 +98,11 @@ const purgeItems: PurgeItem[] = [
   {
     key: 'request-bodies',
     title: '清空请求体',
-    description: '清空所有请求/响应体数据，保留统计信息',
+    description: '后台分批清空所有请求/响应体数据，保留统计信息',
     buttonText: '清空请求体',
     icon: markRaw(FileText),
-    confirmMessage: '确定要清空全部请求体吗？请求/响应内容将被清除，但 token 和成本等统计信息会保留，操作不可逆。',
-    action: () => adminApi.purgeRequestBodies(),
+    confirmMessage: '确定要后台清空全部请求体吗？请求/响应内容将被分批清除，但 token 和成本等统计信息会保留，操作不可逆。',
+    action: () => adminApi.purgeRequestBodiesAsync(),
   },
   {
     key: 'stats',
