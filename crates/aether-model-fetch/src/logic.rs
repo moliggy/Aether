@@ -229,7 +229,7 @@ pub fn endpoint_supports_rust_models_fetch(api_format: &str) -> bool {
 pub fn provider_type_uses_preset_models(provider_type: &str) -> bool {
     matches!(
         provider_type.trim().to_ascii_lowercase().as_str(),
-        "kiro" | "claude_code" | "gemini_cli"
+        "claude_code" | "gemini_cli"
     )
 }
 
@@ -244,11 +244,19 @@ pub fn preset_models_for_provider(provider_type: &str) -> Option<Vec<Value>> {
             preset_model("gemini-3.1-pro-preview", "google", "Gemini 3.1 Pro Preview", "gemini:generate_content"),
         ],
         "kiro" => vec![
-            preset_model("claude-sonnet-4.5", "anthropic", "Claude Sonnet 4.5", "claude:messages"),
+            preset_model("auto", "kiro", "Auto", "claude:messages"),
+            preset_model("claude-opus-4.7", "anthropic", "Claude Opus 4.7", "claude:messages"),
+            preset_model("claude-opus-4.6", "anthropic", "Claude Opus 4.6", "claude:messages"),
             preset_model("claude-sonnet-4.6", "anthropic", "Claude Sonnet 4.6", "claude:messages"),
             preset_model("claude-opus-4.5", "anthropic", "Claude Opus 4.5", "claude:messages"),
-            preset_model("claude-opus-4.6", "anthropic", "Claude Opus 4.6", "claude:messages"),
+            preset_model("claude-sonnet-4.5", "anthropic", "Claude Sonnet 4.5", "claude:messages"),
+            preset_model("claude-sonnet-4", "anthropic", "Claude Sonnet 4", "claude:messages"),
             preset_model("claude-haiku-4.5", "anthropic", "Claude Haiku 4.5", "claude:messages"),
+            preset_model("deepseek-3.2", "deepseek", "Deepseek v3.2", "claude:messages"),
+            preset_model("minimax-m2.5", "minimax", "MiniMax M2.5", "claude:messages"),
+            preset_model("minimax-m2.1", "minimax", "MiniMax M2.1", "claude:messages"),
+            preset_model("glm-5", "zhipu", "GLM 5", "claude:messages"),
+            preset_model("qwen3-coder-next", "alibaba", "Qwen3 Coder Next", "claude:messages"),
         ],
         "claude_code" => vec![
             preset_model("claude-opus-4-5-20251101", "anthropic", "Claude Opus 4.5", "claude:messages"),
@@ -895,5 +903,35 @@ mod tests {
                 "gpt-5.3-codex-spark",
             ]
         );
+    }
+
+    #[test]
+    fn preset_models_cover_kiro_catalog() {
+        let models = preset_models_for_provider("kiro").expect("preset models should exist");
+        let model_ids = models
+            .iter()
+            .map(|model| model["id"].as_str().expect("model id"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            model_ids,
+            vec![
+                "auto",
+                "claude-opus-4.7",
+                "claude-opus-4.6",
+                "claude-sonnet-4.6",
+                "claude-opus-4.5",
+                "claude-sonnet-4.5",
+                "claude-sonnet-4",
+                "claude-haiku-4.5",
+                "deepseek-3.2",
+                "minimax-m2.5",
+                "minimax-m2.1",
+                "glm-5",
+                "qwen3-coder-next",
+            ]
+        );
+        assert!(models
+            .iter()
+            .all(|model| model["api_formats"] == json!(["claude:messages"])));
     }
 }

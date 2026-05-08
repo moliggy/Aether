@@ -18,8 +18,8 @@ use sha2::Sha256;
 use crate::logic::{extract_error_message, parse_models_response_page, preset_models_for_provider};
 use crate::transport::{
     build_antigravity_fetch_available_models_plan, build_gemini_cli_load_code_assist_plan,
-    build_standard_models_fetch_execution_plan, build_vertex_models_fetch_execution_plan,
-    ModelFetchTransportRuntime,
+    build_kiro_list_available_models_plan, build_standard_models_fetch_execution_plan,
+    build_vertex_models_fetch_execution_plan, ModelFetchTransportRuntime,
 };
 
 const ANTIGRAVITY_SANDBOX_BASE_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
@@ -48,6 +48,7 @@ pub enum ModelFetchStrategyKind {
     Vertex,
     Antigravity,
     GeminiCliPreset,
+    Kiro,
 }
 
 pub trait ModelFetchStrategy {
@@ -94,6 +95,13 @@ fn select_model_fetch_strategy(
         .trim()
         .to_ascii_lowercase();
     if let Some(models) = preset_models_for_provider(&provider_type) {
+        if provider_type == "kiro" {
+            return Ok(SelectedModelFetchStrategy {
+                provider_type,
+                kind: ModelFetchStrategyKind::Kiro,
+                preset_models: None,
+            });
+        }
         if provider_type == "codex" {
             return Ok(SelectedModelFetchStrategy {
                 provider_type,
@@ -165,6 +173,7 @@ async fn execute_model_fetch_strategy(
             )
             .await
         }
+        ModelFetchStrategyKind::Kiro => fetch_kiro_models(runtime, first_transport).await,
     }
 }
 
@@ -338,6 +347,21 @@ async fn fetch_gemini_cli_models(
         )
     });
     Ok(build_success_outcome(models, upstream_metadata, true))
+}
+
+async fn fetch_kiro_models(
+    runtime: &(impl ModelFetchTransportRuntime + ?Sized),
+    transport: &GatewayProviderTransportSnapshot,
+) -> Result<ModelsFetchOutcome, String> {
+    let plan = build_kiro_list_available_models_plan(runtime, transport).await?;
+    let result = runtime.execute_model_fetch_execution_plan(&plan).await?;
+    if !(200..300).contains(&result.status_code) {
+        return Err(execution_result_error_message(&result));
+    }
+
+    let body_json = execution_result_json_body_allow_empty(&result)?;
+    let (models, metadata) = parse_kiro_available_models_response(&body_json)?;
+    Ok(build_success_outcome(models, metadata, true))
 }
 
 async fn fetch_vertex_models(
@@ -733,6 +757,94 @@ fn parse_antigravity_models_response(body: &Value) -> Result<(Vec<Value>, Option
     });
 
     Ok((models, upstream_metadata))
+}
+
+fn parse_kiro_available_models_response(
+    body: &Value,
+) -> Result<(Vec<Value>, Option<Value>), String> {
+    let items = body
+        .get("models")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "kiro: invalid response (missing models)".to_string())?;
+
+    let mut seen = BTreeSet::new();
+    let mut models = Vec::new();
+    for item in items {
+        let Some(model_id) = item
+            .get("modelId")
+            .or_else(|| item.get("id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        if !seen.insert(model_id.to_string()) {
+            continue;
+        }
+
+        let display_name = item
+            .get("modelName")
+            .or_else(|| item.get("display_name"))
+            .or_else(|| item.get("name"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(model_id);
+        let mut model = item.as_object().cloned().unwrap_or_default();
+        model.insert("id".to_string(), Value::String(model_id.to_string()));
+        model.insert("object".to_string(), Value::String("model".to_string()));
+        model.insert(
+            "owned_by".to_string(),
+            Value::String(infer_kiro_model_owner(model_id).to_string()),
+        );
+        model.insert(
+            "display_name".to_string(),
+            Value::String(display_name.to_string()),
+        );
+        model.insert(
+            "api_formats".to_string(),
+            Value::Array(vec![Value::String("claude:messages".to_string())]),
+        );
+        model.remove("api_format");
+        models.push(Value::Object(model));
+    }
+
+    let default_model = body.get("defaultModel").and_then(|value| {
+        json_string(value.get("modelId")).map(|model_id| {
+            json!({
+                "model_id": model_id,
+                "model_name": json_string(value.get("modelName")),
+            })
+        })
+    });
+    let upstream_metadata = default_model.map(|default_model| {
+        json!({
+            "kiro": {
+                "updated_at": now_unix_secs(),
+                "default_model": default_model,
+            }
+        })
+    });
+
+    Ok((models, upstream_metadata))
+}
+
+fn infer_kiro_model_owner(model_id: &str) -> &'static str {
+    let normalized = model_id.trim().to_ascii_lowercase();
+    if normalized.starts_with("claude-") {
+        "anthropic"
+    } else if normalized.starts_with("deepseek-") {
+        "deepseek"
+    } else if normalized.starts_with("minimax-") {
+        "minimax"
+    } else if normalized.starts_with("glm-") {
+        "zhipu"
+    } else if normalized.starts_with("qwen") {
+        "alibaba"
+    } else {
+        "kiro"
+    }
 }
 
 fn build_antigravity_quota_payload(quota_info: Option<&Value>) -> serde_json::Map<String, Value> {
@@ -1298,6 +1410,31 @@ mod tests {
         transport
     }
 
+    fn sample_kiro_transport() -> GatewayProviderTransportSnapshot {
+        let mut transport = sample_custom_aiplatform_transport();
+        transport.provider.provider_type = "kiro".to_string();
+        transport.provider.name = "Kiro".to_string();
+        transport.endpoint.api_format = "claude:messages".to_string();
+        transport.endpoint.api_family = Some("claude".to_string());
+        transport.endpoint.endpoint_kind = Some("messages".to_string());
+        transport.endpoint.base_url = "https://q.{region}.amazonaws.com".to_string();
+        transport.endpoint.custom_path = None;
+        transport.key.auth_type = "oauth".to_string();
+        transport.key.api_formats = Some(vec!["claude:messages".to_string()]);
+        transport.key.decrypted_api_key = "__placeholder__".to_string();
+        transport.key.decrypted_auth_config = Some(
+            r#"{
+                "access_token":"cached-token",
+                "expires_at":4102444800,
+                "profile_arn":"arn:aws:codewhisperer:us-east-1:123456789012:profile/demo",
+                "api_region":"us-east-1",
+                "machine_id":"123e4567-e89b-12d3-a456-426614174000"
+            }"#
+            .to_string(),
+        );
+        transport
+    }
+
     #[test]
     fn strategy_selection_keeps_codex_on_standard_transport_fetch() {
         let strategy = select_model_fetch_strategy(&[sample_codex_transport()])
@@ -1317,6 +1454,15 @@ mod tests {
 
         assert_eq!(strategy.provider_id(), "claude_code");
         assert_eq!(strategy.kind(), ModelFetchStrategyKind::PresetCatalog);
+    }
+
+    #[test]
+    fn strategy_selection_uses_kiro_upstream_fetch() {
+        let strategy = select_model_fetch_strategy(&[sample_kiro_transport()])
+            .expect("strategy should select");
+
+        assert_eq!(strategy.provider_id(), "kiro");
+        assert_eq!(strategy.kind(), ModelFetchStrategyKind::Kiro);
     }
 
     #[tokio::test]
@@ -1371,5 +1517,69 @@ mod tests {
         );
         assert_eq!(outcome.fetched_model_ids, vec!["gpt-5.4-upstream"]);
         assert_eq!(outcome.cached_models.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn kiro_transport_fetches_list_available_models() {
+        let executed_urls = Arc::new(Mutex::new(Vec::new()));
+        let runtime = TestRuntime {
+            executed_urls: Arc::clone(&executed_urls),
+            response_body: json!({
+                "defaultModel": {
+                    "modelId": "auto",
+                    "modelName": "Auto"
+                },
+                "models": [
+                    {
+                        "modelId": "auto",
+                        "modelName": "Auto",
+                        "tokenLimits": {
+                            "maxInputTokens": 1000000,
+                            "maxOutputTokens": 64000
+                        }
+                    },
+                    {
+                        "modelId": "claude-opus-4.7",
+                        "modelName": "Claude Opus 4.7",
+                        "description": "Experimental preview"
+                    }
+                ]
+            }),
+        };
+        let outcome = fetch_models_from_transports(&runtime, &[sample_kiro_transport()])
+            .await
+            .expect("models fetch should succeed");
+
+        let urls = executed_urls.lock().expect("executed_urls lock");
+        assert_eq!(
+            urls.as_slice(),
+            &["https://q.us-east-1.amazonaws.com/ListAvailableModels?origin=AI_EDITOR"]
+        );
+        assert_eq!(
+            outcome.fetched_model_ids,
+            vec!["auto".to_string(), "claude-opus-4.7".to_string()]
+        );
+        assert_eq!(outcome.cached_models.len(), 2);
+        assert_eq!(
+            outcome.cached_models[1]["display_name"].as_str(),
+            Some("Claude Opus 4.7")
+        );
+        assert_eq!(
+            outcome.cached_models[1]["owned_by"].as_str(),
+            Some("anthropic")
+        );
+        assert_eq!(
+            outcome.cached_models[1]["api_formats"],
+            json!(["claude:messages"])
+        );
+        assert_eq!(
+            outcome.upstream_metadata.as_ref().and_then(|value| {
+                value
+                    .get("kiro")
+                    .and_then(|value| value.get("default_model"))
+                    .and_then(|value| value.get("model_id"))
+            }),
+            Some(&json!("auto"))
+        );
     }
 }

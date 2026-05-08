@@ -23,6 +23,7 @@ pub use strategy::{
 };
 pub use transport::{
     build_antigravity_fetch_available_models_plan, build_gemini_cli_load_code_assist_plan,
-    build_models_fetch_execution_plan, build_standard_models_fetch_execution_plan,
-    build_vertex_models_fetch_execution_plan, ModelFetchTransportRuntime,
+    build_kiro_list_available_models_plan, build_models_fetch_execution_plan,
+    build_standard_models_fetch_execution_plan, build_vertex_models_fetch_execution_plan,
+    ModelFetchTransportRuntime,
 };
