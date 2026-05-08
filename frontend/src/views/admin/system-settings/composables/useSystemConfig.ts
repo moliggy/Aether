@@ -34,6 +34,9 @@ export interface SystemConfig {
   audit_log_retention_days: number
   request_candidates_retention_days: number
   request_candidates_cleanup_batch_size: number
+  proxy_node_metrics_1m_retention_days: number
+  proxy_node_metrics_1h_retention_days: number
+  proxy_node_metrics_cleanup_batch_size: number
   // 定时任务
   enable_provider_checkin: boolean
   provider_checkin_time: string
@@ -70,6 +73,9 @@ const CONFIG_KEYS = [
   'audit_log_retention_days',
   'request_candidates_retention_days',
   'request_candidates_cleanup_batch_size',
+  'proxy_node_metrics_1m_retention_days',
+  'proxy_node_metrics_1h_retention_days',
+  'proxy_node_metrics_cleanup_batch_size',
   // 定时任务
   'enable_provider_checkin',
   'provider_checkin_time',
@@ -107,6 +113,9 @@ function createDefaultConfig(): SystemConfig {
     audit_log_retention_days: 30,
     request_candidates_retention_days: 30,
     request_candidates_cleanup_batch_size: 5000,
+    proxy_node_metrics_1m_retention_days: 30,
+    proxy_node_metrics_1h_retention_days: 180,
+    proxy_node_metrics_cleanup_batch_size: 5000,
     // 定时任务
     enable_provider_checkin: true,
     provider_checkin_time: '01:05',
@@ -181,7 +190,13 @@ export function useSystemConfig() {
       systemConfig.value.request_candidates_retention_days !==
       originalConfig.value.request_candidates_retention_days ||
       systemConfig.value.request_candidates_cleanup_batch_size !==
-      originalConfig.value.request_candidates_cleanup_batch_size
+      originalConfig.value.request_candidates_cleanup_batch_size ||
+      systemConfig.value.proxy_node_metrics_1m_retention_days !==
+      originalConfig.value.proxy_node_metrics_1m_retention_days ||
+      systemConfig.value.proxy_node_metrics_1h_retention_days !==
+      originalConfig.value.proxy_node_metrics_1h_retention_days ||
+      systemConfig.value.proxy_node_metrics_cleanup_batch_size !==
+      originalConfig.value.proxy_node_metrics_cleanup_batch_size
     )
   })
 
@@ -441,6 +456,21 @@ export function useSystemConfig() {
           value: systemConfig.value.request_candidates_cleanup_batch_size,
           description: '请求候选记录每批次清理条数',
         },
+        {
+          key: 'proxy_node_metrics_1m_retention_days',
+          value: systemConfig.value.proxy_node_metrics_1m_retention_days,
+          description: '代理节点 1m 指标保留天数',
+        },
+        {
+          key: 'proxy_node_metrics_1h_retention_days',
+          value: systemConfig.value.proxy_node_metrics_1h_retention_days,
+          description: '代理节点 1h 指标保留天数',
+        },
+        {
+          key: 'proxy_node_metrics_cleanup_batch_size',
+          value: systemConfig.value.proxy_node_metrics_cleanup_batch_size,
+          description: '代理节点指标每批次清理条数',
+        },
       ]
 
       await Promise.all(
@@ -462,6 +492,12 @@ export function useSystemConfig() {
           systemConfig.value.request_candidates_retention_days
         originalConfig.value.request_candidates_cleanup_batch_size =
           systemConfig.value.request_candidates_cleanup_batch_size
+        originalConfig.value.proxy_node_metrics_1m_retention_days =
+          systemConfig.value.proxy_node_metrics_1m_retention_days
+        originalConfig.value.proxy_node_metrics_1h_retention_days =
+          systemConfig.value.proxy_node_metrics_1h_retention_days
+        originalConfig.value.proxy_node_metrics_cleanup_batch_size =
+          systemConfig.value.proxy_node_metrics_cleanup_batch_size
       }
       success('请求记录清理配置已保存')
     } catch (err) {

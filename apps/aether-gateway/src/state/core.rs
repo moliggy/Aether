@@ -675,10 +675,15 @@ impl AppState {
         &self,
         retain_1m_from_unix_secs: u64,
         retain_1h_from_unix_secs: u64,
+        delete_limit: usize,
     ) -> Result<aether_data::repository::proxy_nodes::ProxyNodeMetricsCleanupSummary, GatewayError>
     {
         self.data
-            .cleanup_proxy_node_metrics(retain_1m_from_unix_secs, retain_1h_from_unix_secs)
+            .cleanup_proxy_node_metrics(
+                retain_1m_from_unix_secs,
+                retain_1h_from_unix_secs,
+                delete_limit,
+            )
             .await
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }

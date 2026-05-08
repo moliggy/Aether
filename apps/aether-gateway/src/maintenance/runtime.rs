@@ -132,6 +132,8 @@ struct UsageCleanupSettings {
 pub(crate) struct AdminSystemCleanupSummary {
     pub(crate) audit_logs_deleted: usize,
     pub(crate) request_candidates_deleted: usize,
+    pub(crate) proxy_node_metrics:
+        aether_data::repository::proxy_nodes::ProxyNodeMetricsCleanupSummary,
     pub(crate) pending_failed: usize,
     pub(crate) pending_recovered: usize,
     pub(crate) usage: UsageCleanupSummary,
@@ -149,12 +151,14 @@ pub(crate) async fn run_admin_system_cleanup_once(
 ) -> Result<AdminSystemCleanupSummary, aether_data::DataLayerError> {
     let audit_logs_deleted = cleanup_audit_logs_once(data).await?;
     let request_candidates_deleted = cleanup_request_candidates_once(data).await?;
+    let proxy_node_metrics = cleanup_proxy_node_metrics_once(data).await?;
     let pending = cleanup_stale_pending_requests_once(data).await?;
     let usage = perform_usage_cleanup_once(data).await?;
 
     Ok(AdminSystemCleanupSummary {
         audit_logs_deleted,
         request_candidates_deleted,
+        proxy_node_metrics,
         pending_failed: pending.failed,
         pending_recovered: pending.recovered,
         usage,

@@ -1034,22 +1034,46 @@ WHERE is_manual = 0
         &self,
         retain_1m_from_unix_secs: u64,
         retain_1h_from_unix_secs: u64,
+        delete_limit: usize,
     ) -> Result<ProxyNodeMetricsCleanupSummary, DataLayerError> {
-        let deleted_1m =
-            sqlx::query("DELETE FROM proxy_node_metrics_1m WHERE bucket_start_unix_secs < ?")
-                .bind(i64::try_from(retain_1m_from_unix_secs).unwrap_or(i64::MAX))
-                .execute(&self.pool)
-                .await
-                .map_sql_err()?
-                .rows_affected() as usize;
+        let delete_limit_i64 = i64::try_from(delete_limit.max(1)).unwrap_or(i64::MAX);
+        let deleted_1m = sqlx::query(
+            r#"
+DELETE FROM proxy_node_metrics_1m
+WHERE (node_id, bucket_start_unix_secs) IN (
+  SELECT node_id, bucket_start_unix_secs
+  FROM proxy_node_metrics_1m
+  WHERE bucket_start_unix_secs < ?
+  ORDER BY bucket_start_unix_secs ASC
+  LIMIT ?
+)
+"#,
+        )
+        .bind(i64::try_from(retain_1m_from_unix_secs).unwrap_or(i64::MAX))
+        .bind(delete_limit_i64)
+        .execute(&self.pool)
+        .await
+        .map_sql_err()?
+        .rows_affected() as usize;
 
-        let deleted_1h =
-            sqlx::query("DELETE FROM proxy_node_metrics_1h WHERE bucket_start_unix_secs < ?")
-                .bind(i64::try_from(retain_1h_from_unix_secs).unwrap_or(i64::MAX))
-                .execute(&self.pool)
-                .await
-                .map_sql_err()?
-                .rows_affected() as usize;
+        let deleted_1h = sqlx::query(
+            r#"
+DELETE FROM proxy_node_metrics_1h
+WHERE (node_id, bucket_start_unix_secs) IN (
+  SELECT node_id, bucket_start_unix_secs
+  FROM proxy_node_metrics_1h
+  WHERE bucket_start_unix_secs < ?
+  ORDER BY bucket_start_unix_secs ASC
+  LIMIT ?
+)
+"#,
+        )
+        .bind(i64::try_from(retain_1h_from_unix_secs).unwrap_or(i64::MAX))
+        .bind(delete_limit_i64)
+        .execute(&self.pool)
+        .await
+        .map_sql_err()?
+        .rows_affected() as usize;
 
         Ok(ProxyNodeMetricsCleanupSummary {
             deleted_1m_rows: deleted_1m,
@@ -1627,7 +1651,7 @@ VALUES ('node-1', 'registered', 'ok', 3)
         );
 
         let cleanup = repository
-            .cleanup_proxy_node_metrics(now.saturating_add(1), now.saturating_add(1))
+            .cleanup_proxy_node_metrics(now.saturating_add(1), now.saturating_add(1), 10)
             .await
             .expect("cleanup should run");
         assert_eq!(cleanup.deleted_1m_rows, 1);

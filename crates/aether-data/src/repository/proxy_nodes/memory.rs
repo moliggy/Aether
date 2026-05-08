@@ -840,17 +840,33 @@ impl ProxyNodeWriteRepository for InMemoryProxyNodeRepository {
         &self,
         retain_1m_from_unix_secs: u64,
         retain_1h_from_unix_secs: u64,
+        delete_limit: usize,
     ) -> Result<ProxyNodeMetricsCleanupSummary, DataLayerError> {
+        let delete_limit = delete_limit.max(1);
         let mut metrics_1m = self.metrics_1m.write().expect("proxy node repository lock");
-        let before_1m = metrics_1m.len();
-        metrics_1m.retain(|(_, bucket_start), _| *bucket_start >= retain_1m_from_unix_secs);
-        let deleted_1m_rows = before_1m.saturating_sub(metrics_1m.len());
+        let expired_1m_keys = metrics_1m
+            .keys()
+            .filter(|(_, bucket_start)| *bucket_start < retain_1m_from_unix_secs)
+            .take(delete_limit)
+            .cloned()
+            .collect::<Vec<_>>();
+        let deleted_1m_rows = expired_1m_keys
+            .iter()
+            .filter(|key| metrics_1m.remove(key).is_some())
+            .count();
         drop(metrics_1m);
 
         let mut metrics_1h = self.metrics_1h.write().expect("proxy node repository lock");
-        let before_1h = metrics_1h.len();
-        metrics_1h.retain(|(_, bucket_start), _| *bucket_start >= retain_1h_from_unix_secs);
-        let deleted_1h_rows = before_1h.saturating_sub(metrics_1h.len());
+        let expired_1h_keys = metrics_1h
+            .keys()
+            .filter(|(_, bucket_start)| *bucket_start < retain_1h_from_unix_secs)
+            .take(delete_limit)
+            .cloned()
+            .collect::<Vec<_>>();
+        let deleted_1h_rows = expired_1h_keys
+            .iter()
+            .filter(|key| metrics_1h.remove(key).is_some())
+            .count();
 
         Ok(ProxyNodeMetricsCleanupSummary {
             deleted_1m_rows,

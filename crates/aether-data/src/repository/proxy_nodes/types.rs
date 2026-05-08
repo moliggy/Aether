@@ -717,6 +717,7 @@ pub trait ProxyNodeWriteRepository: Send + Sync {
         &self,
         retain_1m_from_unix_secs: u64,
         retain_1h_from_unix_secs: u64,
+        delete_limit: usize,
     ) -> Result<ProxyNodeMetricsCleanupSummary, crate::DataLayerError>;
 }
 

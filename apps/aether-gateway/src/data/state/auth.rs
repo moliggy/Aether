@@ -1073,11 +1073,16 @@ impl GatewayDataState {
         &self,
         retain_1m_from_unix_secs: u64,
         retain_1h_from_unix_secs: u64,
+        delete_limit: usize,
     ) -> Result<super::ProxyNodeMetricsCleanupSummary, DataLayerError> {
         match &self.proxy_node_writer {
             Some(repository) => {
                 repository
-                    .cleanup_proxy_node_metrics(retain_1m_from_unix_secs, retain_1h_from_unix_secs)
+                    .cleanup_proxy_node_metrics(
+                        retain_1m_from_unix_secs,
+                        retain_1h_from_unix_secs,
+                        delete_limit,
+                    )
                     .await
             }
             None => Ok(super::ProxyNodeMetricsCleanupSummary::default()),

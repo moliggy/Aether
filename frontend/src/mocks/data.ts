@@ -908,7 +908,10 @@ export const MOCK_SYSTEM_CONFIGS = [
   { key: 'cache_enabled', value: true, description: '是否启用缓存' },
   { key: 'default_cache_ttl', value: 3600, description: '默认缓存 TTL（秒）' },
   { key: 'fallback_enabled', value: true, description: '是否启用故障转移' },
-  { key: 'max_fallback_attempts', value: 3, description: '最大故障转移次数' }
+  { key: 'max_fallback_attempts', value: 3, description: '最大故障转移次数' },
+  { key: 'proxy_node_metrics_1m_retention_days', value: 30, description: '代理节点 1m 指标保留天数' },
+  { key: 'proxy_node_metrics_1h_retention_days', value: 180, description: '代理节点 1h 指标保留天数' },
+  { key: 'proxy_node_metrics_cleanup_batch_size', value: 5000, description: '代理节点指标每批次清理条数' }
 ]
 
 // ========== API 格式 ==========

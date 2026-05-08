@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use aether_data::repository::proxy_nodes::{
-    InMemoryProxyNodeRepository, ProxyNodeHeartbeatMutation, ProxyNodeReadRepository,
-    ProxyNodeWriteRepository, StoredProxyNode,
+    bucket_start_unix_secs, InMemoryProxyNodeRepository, ProxyNodeHeartbeatMutation,
+    ProxyNodeMetricsStep, ProxyNodeReadRepository, ProxyNodeWriteRepository, StoredProxyNode,
 };
 use aether_runtime::bounded_queue;
 use axum::extract::ws::Message;
@@ -14,23 +14,25 @@ use serde_json::json;
 use tokio::sync::watch;
 
 use super::{
-    advance_proxy_upgrade_rollout_once, cleanup_audit_logs_with, cleanup_stale_proxy_nodes_once,
-    inspect_proxy_upgrade_rollout, next_daily_run_after, next_db_maintenance_run_after,
-    next_stats_aggregation_run_after, next_stats_hourly_aggregation_run_after,
-    pending_cleanup_batch_size, pending_cleanup_timeout_minutes, plan_pending_cleanup_batch,
-    provider_checkin_schedule, record_proxy_upgrade_traffic_success, run_db_maintenance_with,
-    run_proxy_upgrade_rollout_once, spawn_audit_cleanup_worker, spawn_db_maintenance_worker,
-    spawn_oauth_token_refresh_worker, spawn_pending_cleanup_worker, spawn_pool_monitor_worker,
-    spawn_pool_quota_probe_worker, spawn_provider_checkin_worker,
+    advance_proxy_upgrade_rollout_once, cleanup_audit_logs_with, cleanup_proxy_node_metrics_at,
+    cleanup_proxy_node_metrics_once, cleanup_stale_proxy_nodes_once, inspect_proxy_upgrade_rollout,
+    next_daily_run_after, next_db_maintenance_run_after, next_stats_aggregation_run_after,
+    next_stats_hourly_aggregation_run_after, pending_cleanup_batch_size,
+    pending_cleanup_timeout_minutes, plan_pending_cleanup_batch, provider_checkin_schedule,
+    proxy_node_metrics_cleanup_settings, record_proxy_upgrade_traffic_success,
+    run_db_maintenance_with, run_proxy_upgrade_rollout_once, spawn_audit_cleanup_worker,
+    spawn_db_maintenance_worker, spawn_oauth_token_refresh_worker, spawn_pending_cleanup_worker,
+    spawn_pool_monitor_worker, spawn_pool_quota_probe_worker, spawn_provider_checkin_worker,
     spawn_proxy_node_stale_cleanup_worker, spawn_proxy_upgrade_rollout_worker,
     spawn_stats_aggregation_worker, spawn_stats_hourly_aggregation_worker,
     spawn_usage_cleanup_worker, spawn_wallet_daily_usage_aggregation_worker,
     start_proxy_upgrade_rollout, stats_aggregation_target_day,
     stats_hourly_aggregation_target_hour, summarize_database_pool, usage_cleanup_settings,
     usage_cleanup_window, wallet_daily_usage_aggregation_target, AppState, DbMaintenanceRunSummary,
-    FailedPendingUsageRow, GatewayDataState, ProxyUpgradeRolloutProbeConfig, StalePendingUsageRow,
-    UsageCleanupSettings, USAGE_CLEANUP_HOUR, USAGE_CLEANUP_MINUTE,
-    WALLET_DAILY_USAGE_AGGREGATION_HOUR, WALLET_DAILY_USAGE_AGGREGATION_MINUTE,
+    FailedPendingUsageRow, GatewayDataState, ProxyNodeMetricsCleanupSettings,
+    ProxyUpgradeRolloutProbeConfig, StalePendingUsageRow, UsageCleanupSettings, USAGE_CLEANUP_HOUR,
+    USAGE_CLEANUP_MINUTE, WALLET_DAILY_USAGE_AGGREGATION_HOUR,
+    WALLET_DAILY_USAGE_AGGREGATION_MINUTE,
 };
 
 #[tokio::test]
@@ -732,6 +734,176 @@ async fn usage_cleanup_settings_resolve_batch_and_delete_toggle() {
             auto_delete_expired_keys: true,
         }
     );
+}
+
+#[tokio::test]
+async fn proxy_node_metrics_cleanup_settings_use_dedicated_retention_and_batch_limits() {
+    let data = GatewayDataState::disabled().with_system_config_values_for_tests([
+        ("cleanup_batch_size".to_string(), json!(250)),
+        ("proxy_node_metrics_1m_retention_days".to_string(), json!(0)),
+        ("proxy_node_metrics_1h_retention_days".to_string(), json!(7)),
+        (
+            "proxy_node_metrics_cleanup_batch_size".to_string(),
+            json!(100_000),
+        ),
+    ]);
+
+    let settings = proxy_node_metrics_cleanup_settings(&data)
+        .await
+        .expect("proxy metrics cleanup settings should resolve");
+
+    assert_eq!(
+        settings,
+        ProxyNodeMetricsCleanupSettings {
+            retain_1m_days: 1,
+            retain_1h_days: 7,
+            batch_size: 50_000,
+        }
+    );
+}
+
+#[tokio::test]
+async fn proxy_node_metrics_cleanup_settings_fallback_to_global_batch_size() {
+    let data = GatewayDataState::disabled().with_system_config_values_for_tests([
+        ("cleanup_batch_size".to_string(), json!(250)),
+        (
+            "proxy_node_metrics_cleanup_batch_size".to_string(),
+            json!(0),
+        ),
+    ]);
+
+    let settings = proxy_node_metrics_cleanup_settings(&data)
+        .await
+        .expect("proxy metrics cleanup settings should resolve");
+
+    assert_eq!(
+        settings,
+        ProxyNodeMetricsCleanupSettings {
+            retain_1m_days: 30,
+            retain_1h_days: 180,
+            batch_size: 250,
+        }
+    );
+}
+
+#[tokio::test]
+async fn proxy_node_metrics_cleanup_deletes_expired_buckets_in_batches() {
+    let repository = Arc::new(InMemoryProxyNodeRepository::seed(vec![
+        sample_connected_proxy_node("node-metrics-1", 30, 1),
+        sample_connected_proxy_node("node-metrics-2", 30, 1),
+        sample_connected_proxy_node("node-metrics-3", 30, 1),
+    ]));
+    let data = GatewayDataState::with_proxy_node_repository_for_tests(Arc::clone(&repository))
+        .with_system_config_values_for_tests([
+            ("enable_auto_cleanup".to_string(), json!(true)),
+            ("proxy_node_metrics_1m_retention_days".to_string(), json!(1)),
+            ("proxy_node_metrics_1h_retention_days".to_string(), json!(1)),
+            (
+                "proxy_node_metrics_cleanup_batch_size".to_string(),
+                json!(1),
+            ),
+        ]);
+
+    for (idx, node_id) in ["node-metrics-1", "node-metrics-2", "node-metrics-3"]
+        .into_iter()
+        .enumerate()
+    {
+        repository
+            .apply_heartbeat(&ProxyNodeHeartbeatMutation {
+                node_id: node_id.to_string(),
+                heartbeat_interval: Some(30),
+                active_connections: Some(i32::try_from(idx + 1).unwrap()),
+                total_requests_delta: None,
+                avg_latency_ms: None,
+                failed_requests_delta: None,
+                dns_failures_delta: None,
+                stream_errors_delta: None,
+                proxy_metadata: Some(json!({
+                    "tunnel_metrics": {
+                        "connect_errors": idx + 1,
+                        "disconnects": 0,
+                        "error_events_total": 0,
+                        "ws_in_bytes": idx + 1,
+                        "ws_out_bytes": idx + 1,
+                        "ws_in_frames": idx + 1,
+                        "ws_out_frames": idx + 1,
+                        "heartbeat_rtt_last_ms": 10
+                    }
+                })),
+                proxy_version: Some("1.0.0".to_string()),
+            })
+            .await
+            .expect("heartbeat should write metrics");
+    }
+
+    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    let old_bucket = bucket_start_unix_secs(now, ProxyNodeMetricsStep::OneMinute);
+    let cleanup = data
+        .cleanup_proxy_node_metrics(
+            old_bucket.saturating_add(60),
+            old_bucket.saturating_add(3_600),
+            1,
+        )
+        .await
+        .expect("direct cleanup should delete a limited batch");
+    assert_eq!(cleanup.deleted_1m_rows, 1);
+    assert_eq!(cleanup.deleted_1h_rows, 1);
+
+    let cleanup = cleanup_proxy_node_metrics_at(&data, now.saturating_add(2 * 86_400))
+        .await
+        .expect("runtime cleanup should loop over batches");
+    assert_eq!(cleanup.deleted_1m_rows, 2);
+    assert_eq!(cleanup.deleted_1h_rows, 2);
+}
+
+#[tokio::test]
+async fn proxy_node_metrics_cleanup_respects_auto_cleanup_toggle() {
+    let repository = Arc::new(InMemoryProxyNodeRepository::seed(vec![
+        sample_connected_proxy_node("node-metrics-disabled", 30, 1),
+    ]));
+    let data = GatewayDataState::with_proxy_node_repository_for_tests(Arc::clone(&repository))
+        .with_system_config_values_for_tests([
+            ("enable_auto_cleanup".to_string(), json!(false)),
+            ("proxy_node_metrics_1m_retention_days".to_string(), json!(1)),
+            ("proxy_node_metrics_1h_retention_days".to_string(), json!(1)),
+            (
+                "proxy_node_metrics_cleanup_batch_size".to_string(),
+                json!(1),
+            ),
+        ]);
+
+    repository
+        .apply_heartbeat(&ProxyNodeHeartbeatMutation {
+            node_id: "node-metrics-disabled".to_string(),
+            heartbeat_interval: Some(30),
+            active_connections: Some(1),
+            total_requests_delta: None,
+            avg_latency_ms: None,
+            failed_requests_delta: None,
+            dns_failures_delta: None,
+            stream_errors_delta: None,
+            proxy_metadata: Some(json!({
+                "tunnel_metrics": {
+                    "connect_errors": 1,
+                    "disconnects": 0,
+                    "error_events_total": 0,
+                    "ws_in_bytes": 1,
+                    "ws_out_bytes": 1,
+                    "ws_in_frames": 1,
+                    "ws_out_frames": 1,
+                    "heartbeat_rtt_last_ms": 10
+                }
+            })),
+            proxy_version: Some("1.0.0".to_string()),
+        })
+        .await
+        .expect("heartbeat should write metrics");
+
+    let cleanup = cleanup_proxy_node_metrics_once(&data)
+        .await
+        .expect("runtime cleanup should short-circuit");
+    assert_eq!(cleanup.deleted_1m_rows, 0);
+    assert_eq!(cleanup.deleted_1h_rows, 0);
 }
 
 #[test]
