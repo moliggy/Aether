@@ -516,6 +516,13 @@ fn imported_optional_f64(value: Option<&Value>, field_name: &str) -> Result<Opti
             .filter(|value| value.is_finite())
             .ok_or_else(|| format!("{field_name} 必须是有限数值"))
             .map(Some),
+        Some(Value::String(value)) => value
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| format!("{field_name} 必须是有限数值"))
+            .map(Some),
         _ => Err(format!("{field_name} 必须是有限数值")),
     }
 }
@@ -542,9 +549,14 @@ fn imported_rfc3339_to_unix_secs(
     let Some(value) = imported_optional_string(value)? else {
         return Ok(None);
     };
-    let parsed = chrono::DateTime::parse_from_rfc3339(&value)
+    let parsed_timestamp = chrono::DateTime::parse_from_rfc3339(&value)
+        .map(|parsed| parsed.timestamp())
+        .or_else(|_| {
+            chrono::NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S%.f")
+                .map(|parsed| parsed.and_utc().timestamp())
+        })
         .map_err(|_| format!("{field_name} 必须是 RFC3339 时间"))?;
-    Ok(Some(parsed.timestamp().max(0) as u64))
+    Ok(Some(parsed_timestamp.max(0) as u64))
 }
 
 fn imported_string_list_from_value(
@@ -609,12 +621,11 @@ fn normalize_imported_wallet_target(
         } else {
             let total_balance =
                 imported_optional_f64(map.get("balance"), "wallet.balance")?.unwrap_or(0.0);
-            (total_balance - gift_balance).max(0.0)
+            total_balance - gift_balance
         }
     } else {
         0.0
-    }
-    .max(0.0);
+    };
     let limit_mode = if let Some(map) = wallet {
         if let Some(mode) = imported_optional_string(map.get("limit_mode"))? {
             match mode.to_ascii_lowercase().as_str() {
@@ -2436,8 +2447,8 @@ mod tests {
 
     use super::{
         imported_optional_bool, imported_optional_f64, imported_optional_i32,
-        imported_optional_u64, imported_string_list_from_value,
-        validate_imported_system_users_export_version,
+        imported_optional_u64, imported_rfc3339_to_unix_secs, imported_string_list_from_value,
+        normalize_imported_wallet_target, validate_imported_system_users_export_version,
     };
 
     #[test]
@@ -2454,7 +2465,7 @@ mod tests {
     }
 
     #[test]
-    fn import_rejects_legacy_string_scalars() {
+    fn import_handles_legacy_string_scalars() {
         assert_eq!(
             imported_optional_bool(Some(&json!("true"))).unwrap_err(),
             "字段必须是布尔值"
@@ -2468,9 +2479,61 @@ mod tests {
             "total_requests 必须是非负整数"
         );
         assert_eq!(
-            imported_optional_f64(Some(&json!("1.25")), "total_cost_usd").unwrap_err(),
+            imported_optional_f64(Some(&json!("1.25000000")), "total_cost_usd").unwrap(),
+            Some(1.25)
+        );
+        assert_eq!(
+            imported_optional_f64(Some(&json!("not-a-number")), "total_cost_usd").unwrap_err(),
             "total_cost_usd 必须是有限数值"
         );
+    }
+
+    #[test]
+    fn import_handles_python_isoformat_timestamps() {
+        assert_eq!(
+            imported_rfc3339_to_unix_secs(Some(&json!("2099-01-01T00:00:00+00:00")), "expires_at")
+                .unwrap(),
+            Some(4_070_908_800)
+        );
+        assert_eq!(
+            imported_rfc3339_to_unix_secs(Some(&json!("2099-01-01T00:00:00")), "expires_at")
+                .unwrap(),
+            Some(4_070_908_800)
+        );
+        assert_eq!(
+            imported_rfc3339_to_unix_secs(Some(&json!("invalid")), "expires_at").unwrap_err(),
+            "expires_at 必须是 RFC3339 时间"
+        );
+    }
+
+    #[test]
+    fn import_preserves_python_wallet_negative_recharge_balance() {
+        let wallet = json!({
+            "balance": -4.5,
+            "recharge_balance": -5.25,
+            "gift_balance": 0.75,
+            "limit_mode": "finite"
+        });
+        let wallet = wallet.as_object().expect("wallet should be object");
+
+        let target = normalize_imported_wallet_target(Some(wallet), false).unwrap();
+        assert_eq!(target.recharge_balance, -5.25);
+        assert_eq!(target.gift_balance, 0.75);
+        assert_eq!(target.total_recharged, -5.25);
+    }
+
+    #[test]
+    fn import_preserves_python_wallet_negative_balance_fallback() {
+        let wallet = json!({
+            "balance": -4.5,
+            "gift_balance": 0.75,
+            "limit_mode": "finite"
+        });
+        let wallet = wallet.as_object().expect("wallet should be object");
+
+        let target = normalize_imported_wallet_target(Some(wallet), false).unwrap();
+        assert_eq!(target.recharge_balance, -5.25);
+        assert_eq!(target.gift_balance, 0.75);
     }
 
     #[test]

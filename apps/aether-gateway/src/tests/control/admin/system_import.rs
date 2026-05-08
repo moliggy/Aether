@@ -614,7 +614,7 @@ async fn gateway_imports_admin_system_users_locally_and_persists_data() {
                     "auto_delete_on_expiry": false,
                     "total_requests": 12,
                     "total_tokens": 3456,
-                    "total_cost_usd": 1.25
+                    "total_cost_usd": "1.25000000"
                 }]
             }],
             "standalone_keys": [{
@@ -630,7 +630,7 @@ async fn gateway_imports_admin_system_users_locally_and_persists_data() {
                 "auto_delete_on_expiry": false,
                 "total_requests": 3,
                 "total_tokens": 789,
-                "total_cost_usd": 0.75,
+                "total_cost_usd": "0.75000000",
                 "wallet": {
                     "balance": 30.0,
                     "recharge_balance": 20.0,
@@ -713,6 +713,7 @@ async fn gateway_imports_admin_system_users_locally_and_persists_data() {
     assert_eq!(user_api_keys.len(), 1);
     assert_eq!(user_api_keys[0].name.as_deref(), Some("Alice CLI"));
     assert_eq!(user_api_keys[0].total_tokens, 3456);
+    assert_eq!(user_api_keys[0].total_cost_usd, 1.25);
     assert_eq!(
         user_api_keys[0].allowed_api_formats,
         Some(vec!["openai:chat".to_string()])
@@ -739,6 +740,7 @@ async fn gateway_imports_admin_system_users_locally_and_persists_data() {
         Some("Imported Standalone")
     );
     assert_eq!(standalone_keys[0].total_tokens, 789);
+    assert_eq!(standalone_keys[0].total_cost_usd, 0.75);
     assert_eq!(
         decrypt_python_fernet_ciphertext(
             DEVELOPMENT_ENCRYPTION_KEY,
