@@ -9,10 +9,13 @@ use crate::ai_serving::{
     GatewayProviderTransportSnapshot,
 };
 
+use super::{enforce_provider_body_stream_policy, request_requires_body_stream_field};
+
 pub(crate) fn build_local_openai_responses_request_body(
     body_json: &Value,
     mapped_model: &str,
     require_streaming: bool,
+    force_body_stream_field: bool,
     provider_type: &str,
     provider_api_format: &str,
     body_rules: Option<&Value>,
@@ -44,6 +47,12 @@ pub(crate) fn build_local_openai_responses_request_body(
         &mut provider_request_body,
         provider_api_format,
     );
+    enforce_provider_body_stream_policy(
+        &mut provider_request_body,
+        provider_api_format,
+        require_streaming,
+        request_requires_body_stream_field(body_json, force_body_stream_field),
+    );
     Some(provider_request_body)
 }
 
@@ -53,6 +62,7 @@ pub(crate) fn build_cross_format_openai_responses_request_body(
     client_api_format: &str,
     provider_api_format: &str,
     upstream_is_stream: bool,
+    force_body_stream_field: bool,
     provider_type: &str,
     body_rules: Option<&Value>,
     user_api_key_id: Option<&str>,
@@ -84,6 +94,12 @@ pub(crate) fn build_cross_format_openai_responses_request_body(
     apply_openai_responses_compact_special_body_edits(
         &mut provider_request_body,
         provider_api_format,
+    );
+    enforce_provider_body_stream_policy(
+        &mut provider_request_body,
+        provider_api_format,
+        upstream_is_stream,
+        request_requires_body_stream_field(body_json, force_body_stream_field),
     );
     Some(provider_request_body)
 }

@@ -35,6 +35,7 @@ pub(super) struct PreparedSameFormatProviderCandidate {
     pub(super) mapped_model: String,
     pub(super) report_kind: &'static str,
     pub(super) upstream_is_stream: bool,
+    pub(super) force_body_stream_field: bool,
 }
 
 pub(super) async fn prepare_local_same_format_provider_candidate(
@@ -51,7 +52,11 @@ pub(super) async fn prepare_local_same_format_provider_candidate(
     let candidate = &eligible.candidate;
     let transport = Arc::clone(&eligible.transport);
     let provider_api_format = eligible.provider_api_format.as_str();
-    let behavior = classify_same_format_provider_request_behavior(&transport, spec_metadata);
+    let behavior = classify_same_format_provider_request_behavior(
+        &transport,
+        provider_api_format,
+        spec_metadata,
+    );
 
     if !same_format_provider_transport_supported(
         &behavior,
@@ -174,5 +179,6 @@ pub(super) async fn prepare_local_same_format_provider_candidate(
         mapped_model,
         report_kind: behavior.report_kind,
         upstream_is_stream: behavior.upstream_is_stream,
+        force_body_stream_field: behavior.force_body_stream_field,
     })
 }

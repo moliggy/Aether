@@ -281,8 +281,9 @@ pub fn apply_openai_responses_compact_special_body_edits(
         return;
     };
 
-    // `/v1/responses/compact` does not accept `store`.
+    // `/v1/responses/compact` does not accept `store` or body-level `stream`.
     body_object.remove("store");
+    body_object.remove("stream");
 }
 
 pub fn apply_codex_openai_responses_special_body_edits(

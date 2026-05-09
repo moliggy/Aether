@@ -13,6 +13,7 @@ use super::candidates::list_local_openai_chat_candidates;
 use super::diagnostic::{
     set_local_openai_chat_candidate_evaluation_diagnostic, set_local_openai_chat_miss_diagnostic,
 };
+use super::openai_chat_upstream_is_stream_for_candidate;
 use super::resolve::resolve_local_openai_chat_decision_input;
 use crate::ai_serving::planner::candidate_materialization::LocalExecutionAttemptSource;
 use crate::ai_serving::planner::common::OPENAI_CHAT_STREAM_PLAN_KIND;
@@ -120,6 +121,11 @@ impl LocalOpenAiChatStreamAttemptSource<'_> {
         &self,
         attempt: LocalOpenAiChatCandidateAttempt,
     ) -> Result<Option<AiStreamAttempt>, GatewayError> {
+        let upstream_is_stream = openai_chat_upstream_is_stream_for_candidate(
+            &attempt.eligible.transport,
+            attempt.eligible.provider_api_format.as_str(),
+            true,
+        );
         let Some(payload) = maybe_build_local_openai_chat_decision_payload_for_candidate(
             self.state,
             self.parts,
@@ -129,7 +135,7 @@ impl LocalOpenAiChatStreamAttemptSource<'_> {
             attempt,
             OPENAI_CHAT_STREAM_PLAN_KIND,
             "openai_chat_stream_success",
-            true,
+            upstream_is_stream,
         )
         .await
         else {
@@ -222,6 +228,11 @@ pub(crate) async fn build_local_openai_chat_stream_plan_and_reports(
 
     let mut plans = Vec::new();
     for attempt in attempts {
+        let upstream_is_stream = openai_chat_upstream_is_stream_for_candidate(
+            &attempt.eligible.transport,
+            attempt.eligible.provider_api_format.as_str(),
+            true,
+        );
         let Some(payload) = maybe_build_local_openai_chat_decision_payload_for_candidate(
             state,
             parts,
@@ -231,7 +242,7 @@ pub(crate) async fn build_local_openai_chat_stream_plan_and_reports(
             attempt,
             OPENAI_CHAT_STREAM_PLAN_KIND,
             "openai_chat_stream_success",
-            true,
+            upstream_is_stream,
         )
         .await
         else {

@@ -40,6 +40,7 @@ pub struct StandardProviderRequestHeaders {
 pub enum StandardPlanFallbackAcceptPolicy {
     None,
     TextEventStreamIfStreaming,
+    TextEventStreamIfStreamingOrWildcard,
     TextEventStreamRequired,
     ProviderEventStreamIfMissing,
 }
@@ -132,17 +133,53 @@ pub fn build_standard_plan_fallback_headers(
                     .or_insert_with(|| "text/event-stream".to_string());
             }
         }
+        StandardPlanFallbackAcceptPolicy::TextEventStreamIfStreamingOrWildcard => {
+            if input.upstream_is_stream {
+                set_accept_if_missing_or_wildcard(&mut headers, "text/event-stream");
+            }
+        }
         StandardPlanFallbackAcceptPolicy::TextEventStreamRequired => {
             headers.insert("accept".to_string(), "text/event-stream".to_string());
         }
         StandardPlanFallbackAcceptPolicy::ProviderEventStreamIfMissing => {
-            headers
-                .entry("accept".to_string())
-                .or_insert_with(|| "application/vnd.amazon.eventstream".to_string());
+            set_accept_if_missing_or_wildcard(&mut headers, "application/vnd.amazon.eventstream");
         }
     }
 
     headers
+}
+
+fn set_accept_if_missing_or_wildcard(headers: &mut BTreeMap<String, String>, value: &str) {
+    let Some(existing_key) = headers
+        .keys()
+        .find(|key| key.eq_ignore_ascii_case("accept"))
+        .cloned()
+    else {
+        headers.insert("accept".to_string(), value.to_string());
+        return;
+    };
+
+    if headers
+        .get(&existing_key)
+        .is_some_and(|existing_value| accept_is_wildcard_only(existing_value))
+    {
+        headers.insert(existing_key, value.to_string());
+    }
+}
+
+fn accept_is_wildcard_only(value: &str) -> bool {
+    let mut saw_value = false;
+    for raw_part in value.split(',') {
+        let media_type = raw_part.trim().split(';').next().unwrap_or_default().trim();
+        if media_type.is_empty() {
+            continue;
+        }
+        saw_value = true;
+        if media_type != "*/*" {
+            return false;
+        }
+    }
+    saw_value
 }
 
 pub fn apply_standard_provider_request_body_rules(
@@ -429,6 +466,75 @@ mod tests {
             headers.get("accept"),
             Some(&"text/event-stream".to_string())
         );
+    }
+
+    #[test]
+    fn stream_fallback_headers_treat_wildcard_accept_as_absent() {
+        let mut request_headers = HeaderMap::new();
+        request_headers.insert(http::header::ACCEPT, "*/*".parse().expect("header"));
+
+        let headers = build_standard_plan_fallback_headers(StandardPlanFallbackHeadersInput {
+            request_headers: &request_headers,
+            existing_provider_request_headers: BTreeMap::new(),
+            auth_header: Some("authorization"),
+            auth_value: Some("Bearer secret"),
+            extra_headers: &BTreeMap::new(),
+            content_type: Some("application/json"),
+            provider_api_format: "openai:chat",
+            client_api_format: "openai:chat",
+            upstream_is_stream: true,
+            build_from_request_when_empty: true,
+            accept_policy: StandardPlanFallbackAcceptPolicy::TextEventStreamIfStreamingOrWildcard,
+        });
+
+        assert_eq!(
+            headers.get("accept"),
+            Some(&"text/event-stream".to_string())
+        );
+    }
+
+    #[test]
+    fn stream_fallback_headers_preserve_wildcard_in_missing_only_mode() {
+        let mut request_headers = HeaderMap::new();
+        request_headers.insert(http::header::ACCEPT, "*/*".parse().expect("header"));
+
+        let headers = build_standard_plan_fallback_headers(StandardPlanFallbackHeadersInput {
+            request_headers: &request_headers,
+            existing_provider_request_headers: BTreeMap::new(),
+            auth_header: Some("authorization"),
+            auth_value: Some("Bearer secret"),
+            extra_headers: &BTreeMap::new(),
+            content_type: Some("application/json"),
+            provider_api_format: "gemini:generate_content",
+            client_api_format: "openai:responses",
+            upstream_is_stream: true,
+            build_from_request_when_empty: true,
+            accept_policy: StandardPlanFallbackAcceptPolicy::TextEventStreamIfStreaming,
+        });
+
+        assert_eq!(headers.get("accept"), Some(&"*/*".to_string()));
+    }
+
+    #[test]
+    fn stream_fallback_headers_preserve_explicit_accept() {
+        let mut existing_headers = BTreeMap::new();
+        existing_headers.insert("accept".to_string(), "application/json".to_string());
+
+        let headers = build_standard_plan_fallback_headers(StandardPlanFallbackHeadersInput {
+            request_headers: &HeaderMap::new(),
+            existing_provider_request_headers: existing_headers,
+            auth_header: Some("authorization"),
+            auth_value: Some("Bearer secret"),
+            extra_headers: &BTreeMap::new(),
+            content_type: Some("application/json"),
+            provider_api_format: "openai:chat",
+            client_api_format: "openai:chat",
+            upstream_is_stream: true,
+            build_from_request_when_empty: false,
+            accept_policy: StandardPlanFallbackAcceptPolicy::TextEventStreamIfStreamingOrWildcard,
+        });
+
+        assert_eq!(headers.get("accept"), Some(&"application/json".to_string()));
     }
 
     #[test]

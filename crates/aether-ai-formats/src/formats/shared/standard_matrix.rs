@@ -128,6 +128,18 @@ pub fn build_standard_request_body_with_model_directives_and_request_headers(
         &mut provider_request_body,
         provider_api_format,
     );
+    let require_body_stream_field = body_json
+        .as_object()
+        .is_some_and(|object| object.contains_key("stream"))
+        || provider_request_body
+            .as_object()
+            .is_some_and(|object| object.contains_key("stream"));
+    crate::formats::shared::request::enforce_request_body_stream_field(
+        &mut provider_request_body,
+        provider_api_format,
+        upstream_is_stream,
+        require_body_stream_field,
+    );
     Some(provider_request_body)
 }
 
@@ -302,13 +314,23 @@ mod tests {
     fn assert_stream_flag(provider_api_format: &str, upstream_is_stream: bool, converted: &Value) {
         match provider_api_format {
             "openai:chat" | "openai:responses" | "claude:messages" => {
-                assert_eq!(
-                    converted
-                        .get("stream")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                    upstream_is_stream,
-                    "{provider_api_format} stream flag should follow upstream_is_stream"
+                if upstream_is_stream {
+                    assert_eq!(
+                        converted.get("stream").and_then(Value::as_bool),
+                        Some(true),
+                        "{provider_api_format} stream flag should be true for upstream streaming"
+                    );
+                } else {
+                    assert!(
+                        converted.get("stream").is_none(),
+                        "{provider_api_format} should not gain stream:false for ordinary sync requests"
+                    );
+                }
+            }
+            "openai:responses:compact" => {
+                assert!(
+                    converted.get("stream").is_none(),
+                    "openai responses compact keeps stream out of the request body"
                 );
             }
             "gemini:generate_content" => {
@@ -318,6 +340,93 @@ mod tests {
                 );
             }
             other => panic!("unexpected provider api format: {other}"),
+        }
+    }
+
+    fn assert_explicit_stream_flag(
+        provider_api_format: &str,
+        upstream_is_stream: bool,
+        converted: &Value,
+    ) {
+        match provider_api_format {
+            "openai:chat" | "openai:responses" | "claude:messages" => {
+                assert_eq!(
+                    converted.get("stream").and_then(Value::as_bool),
+                    Some(upstream_is_stream),
+                    "{provider_api_format} stream flag should follow upstream_is_stream"
+                );
+            }
+            "openai:responses:compact" | "gemini:generate_content" => {
+                assert!(converted.get("stream").is_none());
+            }
+            other => panic!("unexpected provider api format: {other}"),
+        }
+    }
+
+    #[test]
+    fn standard_request_body_overrides_client_stream_true_for_non_stream_upstream() {
+        let request = json!({
+            "model": "source-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": true
+        });
+
+        for provider_api_format in [
+            "openai:chat",
+            "openai:responses",
+            "openai:responses:compact",
+            "claude:messages",
+            "gemini:generate_content",
+        ] {
+            let converted = build_standard_request_body(
+                &request,
+                "openai:chat",
+                "mapped-model",
+                "custom",
+                provider_api_format,
+                "/v1/chat/completions",
+                false,
+                None,
+                None,
+            )
+            .unwrap_or_else(|| panic!("openai:chat -> {provider_api_format} should build"));
+
+            assert_explicit_stream_flag(provider_api_format, false, &converted);
+        }
+    }
+
+    #[test]
+    fn standard_request_body_stream_policy_wins_after_body_rules() {
+        let request = json!({
+            "model": "source-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": true
+        });
+        let body_rules = json!([
+            {"action":"set","path":"stream","value":true}
+        ]);
+
+        for provider_api_format in [
+            "openai:chat",
+            "openai:responses",
+            "openai:responses:compact",
+            "claude:messages",
+            "gemini:generate_content",
+        ] {
+            let converted = build_standard_request_body(
+                &request,
+                "openai:chat",
+                "mapped-model",
+                "custom",
+                provider_api_format,
+                "/v1/chat/completions",
+                false,
+                Some(&body_rules),
+                None,
+            )
+            .unwrap_or_else(|| panic!("openai:chat -> {provider_api_format} should build"));
+
+            assert_explicit_stream_flag(provider_api_format, false, &converted);
         }
     }
 

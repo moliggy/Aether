@@ -13,11 +13,10 @@ use super::candidates::list_local_openai_chat_candidates;
 use super::diagnostic::{
     set_local_openai_chat_candidate_evaluation_diagnostic, set_local_openai_chat_miss_diagnostic,
 };
+use super::openai_chat_upstream_is_stream_for_candidate;
 use super::resolve::resolve_local_openai_chat_decision_input;
 use crate::ai_serving::planner::candidate_materialization::LocalExecutionAttemptSource;
-use crate::ai_serving::planner::common::{
-    force_upstream_streaming_for_provider, OPENAI_CHAT_SYNC_PLAN_KIND,
-};
+use crate::ai_serving::planner::common::OPENAI_CHAT_SYNC_PLAN_KIND;
 use crate::ai_serving::planner::plan_builders::{
     build_openai_chat_sync_plan_from_decision, AiSyncAttempt,
 };
@@ -30,13 +29,6 @@ pub(crate) struct LocalOpenAiChatSyncAttemptSource<'a> {
     body_json: &'a serde_json::Value,
     input: LocalOpenAiChatDecisionInput,
     candidates: LocalOpenAiChatCandidateAttemptSource<'a>,
-}
-
-fn openai_chat_sync_upstream_is_stream_for_candidate(
-    provider_type: &str,
-    provider_api_format: &str,
-) -> bool {
-    force_upstream_streaming_for_provider(provider_type, provider_api_format)
 }
 
 pub(crate) async fn build_local_openai_chat_sync_attempt_source<'a>(
@@ -129,9 +121,10 @@ impl LocalOpenAiChatSyncAttemptSource<'_> {
         &self,
         attempt: LocalOpenAiChatCandidateAttempt,
     ) -> Result<Option<AiSyncAttempt>, GatewayError> {
-        let upstream_is_stream = openai_chat_sync_upstream_is_stream_for_candidate(
-            attempt.eligible.transport.provider.provider_type.as_str(),
+        let upstream_is_stream = openai_chat_upstream_is_stream_for_candidate(
+            &attempt.eligible.transport,
             attempt.eligible.provider_api_format.as_str(),
+            false,
         );
         let Some(payload) = maybe_build_local_openai_chat_decision_payload_for_candidate(
             self.state,
@@ -235,9 +228,10 @@ pub(crate) async fn build_local_openai_chat_sync_plan_and_reports(
 
     let mut plans = Vec::new();
     for attempt in attempts {
-        let upstream_is_stream = openai_chat_sync_upstream_is_stream_for_candidate(
-            attempt.eligible.transport.provider.provider_type.as_str(),
+        let upstream_is_stream = openai_chat_upstream_is_stream_for_candidate(
+            &attempt.eligible.transport,
             attempt.eligible.provider_api_format.as_str(),
+            false,
         );
         let Some(payload) = maybe_build_local_openai_chat_decision_payload_for_candidate(
             state,
@@ -271,29 +265,4 @@ pub(crate) async fn build_local_openai_chat_sync_plan_and_reports(
     apply_local_runtime_candidate_terminal_reason(state, trace_id, "no_local_sync_plans");
 
     Ok(plans)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::openai_chat_sync_upstream_is_stream_for_candidate;
-
-    #[test]
-    fn openai_chat_sync_forces_streaming_for_codex_openai_responses_candidates() {
-        assert!(openai_chat_sync_upstream_is_stream_for_candidate(
-            "codex",
-            "openai:responses"
-        ));
-        assert!(!openai_chat_sync_upstream_is_stream_for_candidate(
-            "codex",
-            "openai:responses:compact"
-        ));
-        assert!(!openai_chat_sync_upstream_is_stream_for_candidate(
-            "openai",
-            "openai:responses"
-        ));
-        assert!(!openai_chat_sync_upstream_is_stream_for_candidate(
-            "codex",
-            "openai:chat"
-        ));
-    }
 }

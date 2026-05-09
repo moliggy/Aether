@@ -8,9 +8,9 @@ pub mod provider_compat;
 
 pub use formats::context::{FormatContext, FormatError};
 pub use formats::id::{
-    api_format_alias_matches, api_format_storage_aliases, is_openai_responses_compact_format,
-    is_openai_responses_family_format, is_openai_responses_format, normalize_api_format_alias,
-    FormatFamily, FormatId, FormatProfile,
+    api_format_alias_matches, api_format_storage_aliases, api_format_uses_body_stream_field,
+    is_openai_responses_compact_format, is_openai_responses_family_format,
+    is_openai_responses_format, normalize_api_format_alias, FormatFamily, FormatId, FormatProfile,
 };
 pub use formats::matrix::{
     is_embedding_api_format, is_rerank_api_format, request_candidate_api_format_preference,
@@ -26,6 +26,10 @@ pub use formats::shared::model_directives::{
     extract_gemini_model_from_path, gemini_model_uses_thinking_level, model_directive_base_model,
     normalize_model_directive_model, parse_model_directive, ModelDirective, ModelOverride,
     ReasoningEffort,
+};
+pub use formats::shared::request::{
+    endpoint_config_forces_upstream_stream_policy, enforce_request_body_stream_field,
+    resolve_upstream_is_stream_from_endpoint_config,
 };
 pub use protocol::canonical::{
     canonical_request_unknown_block_count, canonical_response_unknown_block_count,

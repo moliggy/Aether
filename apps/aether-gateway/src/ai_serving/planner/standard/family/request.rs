@@ -7,7 +7,10 @@ use crate::ai_serving::planner::candidate_preparation::{
     prepare_header_authenticated_candidate, prepare_header_authenticated_candidate_from_auth,
     OauthPreparationContext,
 };
-use crate::ai_serving::planner::common::force_upstream_streaming_for_provider;
+use crate::ai_serving::planner::common::{
+    endpoint_config_forces_body_stream_field, enforce_provider_body_stream_policy,
+    request_requires_body_stream_field, resolve_upstream_is_stream_for_provider,
+};
 use crate::ai_serving::planner::spec_metadata::local_standard_spec_metadata;
 use crate::ai_serving::planner::standard::{
     apply_codex_openai_responses_special_headers, request_body_build_failure_extra_data,
@@ -175,11 +178,15 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
         }
     };
 
-    let upstream_is_stream = spec_metadata.require_streaming
-        || force_upstream_streaming_for_provider(
-            transport.provider.provider_type.as_str(),
-            provider_api_format,
-        );
+    let upstream_is_stream = resolve_upstream_is_stream_for_provider(
+        transport.endpoint.config.as_ref(),
+        transport.provider.provider_type.as_str(),
+        provider_api_format,
+        spec_metadata.require_streaming,
+        is_kiro_claude_cli,
+    );
+    let force_body_stream_field =
+        endpoint_config_forces_body_stream_field(transport.endpoint.config.as_ref());
     let enable_model_directives =
         crate::system_features::reasoning_model_directive_enabled_for_api_format_and_model(
             state,
@@ -225,6 +232,12 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
                 return None;
             }
         };
+    enforce_provider_body_stream_policy(
+        &mut provider_request_body,
+        provider_api_format,
+        upstream_is_stream,
+        request_requires_body_stream_field(body_json, force_body_stream_field),
+    );
     if let Some(mapping) =
         crate::system_features::reasoning_model_directive_mapping_for_api_format_and_model(
             state,
@@ -236,6 +249,14 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
         crate::ai_serving::apply_model_directive_mapping_patch(
             &mut provider_request_body,
             &mapping,
+        );
+        // Directive mapping is a deep-merge patch and may overwrite/add `stream`;
+        // re-enforce stream-field policy afterward.
+        enforce_provider_body_stream_policy(
+            &mut provider_request_body,
+            provider_api_format,
+            upstream_is_stream,
+            request_requires_body_stream_field(body_json, force_body_stream_field),
         );
     }
 

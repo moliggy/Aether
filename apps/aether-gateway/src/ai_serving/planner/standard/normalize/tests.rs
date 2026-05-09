@@ -87,6 +87,7 @@ fn builds_openai_chat_cross_format_request_body_from_openai_responses_source() {
         "openai:responses",
         "openai:chat",
         false,
+        false,
         "openai",
         None,
         None,
@@ -121,6 +122,7 @@ fn local_openai_responses_wrapper_preserves_body_order_after_edits() {
         &body_json,
         "gpt-5.4",
         true,
+        false,
         "codex",
         "openai:responses",
         None,
@@ -160,6 +162,7 @@ fn local_openai_responses_compact_wrapper_strips_store_for_same_format_requests(
         &body_json,
         "gpt-5.4",
         false,
+        false,
         "openai",
         "openai:responses:compact",
         None,
@@ -170,6 +173,7 @@ fn local_openai_responses_compact_wrapper_strips_store_for_same_format_requests(
     .expect("local openai compact body should build");
 
     assert!(provider_request_body.get("store").is_none());
+    assert!(provider_request_body.get("stream").is_none());
 }
 
 #[test]
@@ -186,6 +190,7 @@ fn local_openai_responses_wrapper_applies_model_directive_before_body_rules() {
     let provider_request_body = build_local_openai_responses_request_body(
         &body_json,
         "gpt-5.4",
+        false,
         false,
         "openai",
         "openai:responses",
@@ -237,6 +242,7 @@ fn strips_metadata_for_codex_openai_responses_requests() {
         "claude:messages",
         "openai:responses",
         true,
+        false,
         "codex",
         None,
         None,
@@ -271,6 +277,7 @@ fn applies_codex_defaults_unless_body_rules_handle_the_field() {
         "claude:messages",
         "openai:responses",
         true,
+        false,
         "codex",
         Some(&body_rules),
         None,
@@ -300,6 +307,7 @@ fn injects_codex_prompt_cache_key_for_openai_responses_cross_format_requests() {
         "claude:messages",
         "openai:responses",
         true,
+        false,
         "codex",
         None,
         Some("key-123"),
@@ -329,6 +337,7 @@ fn injects_codex_prompt_cache_key_for_openai_chat_cross_format_requests() {
         "gpt-5-upstream",
         "codex",
         "openai:responses",
+        false,
         false,
         None,
         Some("key-123"),

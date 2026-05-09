@@ -3,6 +3,9 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::ai_serving::planner::common::{
+    enforce_provider_body_stream_policy, request_requires_body_stream_field,
+};
 use crate::ai_serving::transport::antigravity::{
     build_antigravity_safe_v1internal_request, build_antigravity_static_identity_headers,
     classify_local_antigravity_request_support, AntigravityEnvelopeRequestType,
@@ -50,6 +53,7 @@ pub(crate) fn resolve_same_format_provider_transport_unsupported_reason_for_trac
         };
     let behavior = policy::classify_same_format_provider_request_behavior(
         transport,
+        provider_api_format,
         crate::ai_serving::planner::spec_metadata::LocalExecutionSurfaceSpecMetadata {
             api_format: provider_api_format,
             require_streaming: false,
@@ -131,6 +135,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
             prepared.transport.endpoint.body_rules.as_ref(),
             Some(&parts.headers),
             prepared.upstream_is_stream,
+            prepared.force_body_stream_field,
             prepared.kiro_auth.as_ref(),
             prepared.is_claude_code,
             enable_model_directives,
@@ -170,6 +175,18 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
             &mut base_provider_request_body,
             &mapping,
         );
+        // Directive mapping is a deep-merge patch and may overwrite/add `stream`;
+        // re-enforce stream-field policy afterward.
+        // Kiro behavior classification already hard-requires upstream streaming,
+        // and the Kiro envelope does not use a top-level body stream field.
+        if prepared.kiro_auth.is_none() {
+            enforce_provider_body_stream_policy(
+                &mut base_provider_request_body,
+                prepared.provider_api_format.as_str(),
+                prepared.upstream_is_stream,
+                request_requires_body_stream_field(body_json, prepared.force_body_stream_field),
+            );
+        }
     }
 
     let antigravity_auth = if prepared.is_antigravity {

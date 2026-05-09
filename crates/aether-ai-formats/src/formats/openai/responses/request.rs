@@ -188,6 +188,9 @@ pub fn to_raw(
         OPENAI_RESPONSES_LEGACY_EXTENSION_NAMESPACE,
         &output,
     ));
+    if compact {
+        output.remove("stream");
+    }
     output.remove("verbosity");
     Some(Value::Object(output))
 }

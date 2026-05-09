@@ -13,12 +13,14 @@ use super::super::LocalSameFormatProviderFamily;
 
 pub(super) fn classify_same_format_provider_request_behavior(
     transport: &GatewayProviderTransportSnapshot,
+    provider_api_format: &str,
     spec_metadata: LocalExecutionSurfaceSpecMetadata,
 ) -> SameFormatProviderRequestBehavior {
     classify_same_format_provider_request_behavior_impl(
         transport,
         SameFormatProviderRequestBehaviorParams {
             require_streaming: spec_metadata.require_streaming,
+            provider_api_format,
             report_kind: spec_metadata
                 .report_kind
                 .expect("same-format provider specs should declare report kind"),

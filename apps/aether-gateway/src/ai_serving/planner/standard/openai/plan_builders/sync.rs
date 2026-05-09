@@ -9,6 +9,7 @@ use super::super::{
     take_ai_upstream_auth_pair, take_non_empty_string, AiExecutionPlanFromDecisionParts,
     AiSyncAttempt,
 };
+use crate::ai_serving::planner::common::enforce_provider_body_stream_policy;
 use crate::ai_serving::transport::{
     build_standard_plan_fallback_headers, build_standard_plan_fallback_openai_chat_url,
     build_standard_plan_fallback_openai_responses_url, StandardPlanFallbackAcceptPolicy,
@@ -51,23 +52,31 @@ pub(crate) fn build_openai_chat_sync_plan_from_decision(
             provider_request_body
                 .insert("model".to_string(), serde_json::Value::String(mapped_model));
         }
-        if payload.upstream_is_stream {
-            provider_request_body.insert("stream".to_string(), serde_json::Value::Bool(true));
-        }
+        let require_body_stream_field = provider_request_body.contains_key("stream");
+        let mut provider_request_body = serde_json::Value::Object(provider_request_body);
+        enforce_provider_body_stream_policy(
+            &mut provider_request_body,
+            core.provider_api_format.as_str(),
+            payload.upstream_is_stream,
+            require_body_stream_field,
+        );
+        let Some(provider_request_object) = provider_request_body.as_object_mut() else {
+            return Ok(None);
+        };
         if let Some(prompt_cache_key) = take_non_empty_string(&mut payload.prompt_cache_key) {
-            let existing = provider_request_body
+            let existing = provider_request_object
                 .get("prompt_cache_key")
                 .and_then(|value| value.as_str())
                 .map(str::trim)
                 .unwrap_or_default();
             if existing.is_empty() {
-                provider_request_body.insert(
+                provider_request_object.insert(
                     "prompt_cache_key".to_string(),
                     serde_json::Value::String(prompt_cache_key),
                 );
             }
         }
-        serde_json::Value::Object(provider_request_body)
+        provider_request_body
     };
     let extra_headers = std::mem::take(&mut payload.extra_headers);
     let mut provider_request_headers =

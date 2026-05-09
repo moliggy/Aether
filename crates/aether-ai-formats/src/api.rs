@@ -82,7 +82,9 @@ pub use crate::formats::shared::passthrough::{
     LocalSameFormatProviderSpec,
 };
 pub use crate::formats::shared::request::{
+    endpoint_config_forces_upstream_stream_policy, enforce_request_body_stream_field,
     force_upstream_streaming_for_provider, parse_direct_request_body,
+    resolve_upstream_is_stream_from_endpoint_config,
 };
 pub use crate::formats::shared::request_matrix::{
     build_standard_request_body_from_canonical,

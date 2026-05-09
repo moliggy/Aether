@@ -35,8 +35,9 @@ pub enum SameFormatProviderFamily {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct SameFormatProviderRequestBehaviorParams {
+pub struct SameFormatProviderRequestBehaviorParams<'a> {
     pub require_streaming: bool,
+    pub provider_api_format: &'a str,
     pub report_kind: &'static str,
 }
 
@@ -47,6 +48,7 @@ pub struct SameFormatProviderRequestBehavior {
     pub is_vertex: bool,
     pub is_kiro: bool,
     pub upstream_is_stream: bool,
+    pub force_body_stream_field: bool,
     pub report_kind: &'static str,
 }
 
@@ -61,6 +63,7 @@ pub struct SameFormatProviderRequestBodyInput<'a> {
     pub body_rules: Option<&'a Value>,
     pub request_headers: Option<&'a http::HeaderMap>,
     pub upstream_is_stream: bool,
+    pub force_body_stream_field: bool,
     pub kiro_auth_config: Option<&'a KiroAuthConfig>,
     pub is_claude_code: bool,
     pub enable_model_directives: bool,
@@ -92,7 +95,7 @@ pub struct SameFormatProviderHeadersInput<'a> {
 
 pub fn classify_same_format_provider_request_behavior(
     transport: &GatewayProviderTransportSnapshot,
-    params: SameFormatProviderRequestBehaviorParams,
+    params: SameFormatProviderRequestBehaviorParams<'_>,
 ) -> SameFormatProviderRequestBehavior {
     let is_antigravity = is_antigravity_provider_transport(transport);
     let is_claude_code = transport
@@ -102,7 +105,19 @@ pub fn classify_same_format_provider_request_behavior(
         .eq_ignore_ascii_case("claude_code");
     let is_vertex = is_vertex_api_key_transport_context(transport);
     let is_kiro = is_kiro_provider_transport(transport);
-    let upstream_is_stream = is_kiro || is_antigravity || params.require_streaming;
+    let upstream_is_stream = aether_ai_formats::resolve_upstream_is_stream_from_endpoint_config(
+        transport.endpoint.config.as_ref(),
+        params.require_streaming,
+        is_kiro
+            || is_antigravity
+            || aether_ai_formats::api::force_upstream_streaming_for_provider(
+                transport.provider.provider_type.as_str(),
+                params.provider_api_format,
+            ),
+    );
+    let force_body_stream_field = aether_ai_formats::endpoint_config_forces_upstream_stream_policy(
+        transport.endpoint.config.as_ref(),
+    );
     let report_kind = if is_kiro && !params.require_streaming {
         "claude_cli_sync_finalize"
     } else if is_antigravity && !params.require_streaming {
@@ -121,6 +136,7 @@ pub fn classify_same_format_provider_request_behavior(
         is_vertex,
         is_kiro,
         upstream_is_stream,
+        force_body_stream_field,
         report_kind,
     }
 }
@@ -165,9 +181,6 @@ pub fn build_same_format_provider_request_body(
                 "model".to_string(),
                 Value::String(input.mapped_model.to_string()),
             );
-            if input.upstream_is_stream {
-                provider_request_body.insert("stream".to_string(), Value::Bool(true));
-            }
         }
         SameFormatProviderFamily::Gemini => {
             provider_request_body.remove("model");
@@ -195,6 +208,17 @@ pub fn build_same_format_provider_request_body(
     ) {
         return None;
     }
+    let require_body_stream_field = input.force_body_stream_field
+        || input
+            .body_json
+            .as_object()
+            .is_some_and(|object| object.contains_key("stream"));
+    aether_ai_formats::enforce_request_body_stream_field(
+        &mut provider_request_body,
+        input.provider_api_format,
+        input.upstream_is_stream,
+        require_body_stream_field,
+    );
     Some(provider_request_body)
 }
 
@@ -334,6 +358,7 @@ pub fn same_format_provider_transport_unsupported_reason_for_trace(
         transport,
         SameFormatProviderRequestBehaviorParams {
             require_streaming: false,
+            provider_api_format: normalized_api_format,
             report_kind: "trace_candidate_metadata",
         },
     );
@@ -459,6 +484,7 @@ mod tests {
             &kiro,
             SameFormatProviderRequestBehaviorParams {
                 require_streaming: false,
+                provider_api_format: "claude:messages",
                 report_kind: "claude_chat_sync_success",
             },
         );
@@ -472,6 +498,7 @@ mod tests {
             &antigravity,
             SameFormatProviderRequestBehaviorParams {
                 require_streaming: false,
+                provider_api_format: "gemini:generate_content",
                 report_kind: "gemini_chat_sync_success",
             },
         );
@@ -482,12 +509,138 @@ mod tests {
     }
 
     #[test]
+    fn same_format_behavior_resolves_endpoint_stream_policy() {
+        let mut force_stream = sample_transport("openai");
+        force_stream.endpoint.config = Some(json!({
+            "upstream_stream_policy": "force_stream"
+        }));
+        let behavior = classify_same_format_provider_request_behavior(
+            &force_stream,
+            SameFormatProviderRequestBehaviorParams {
+                require_streaming: false,
+                provider_api_format: "openai:chat",
+                report_kind: "openai_chat_sync_success",
+            },
+        );
+        assert!(behavior.upstream_is_stream);
+
+        let mut force_non_stream = sample_transport("openai");
+        force_non_stream.endpoint.config = Some(json!({
+            "upstreamStreamPolicy": "force_non_stream"
+        }));
+        let behavior = classify_same_format_provider_request_behavior(
+            &force_non_stream,
+            SameFormatProviderRequestBehaviorParams {
+                require_streaming: true,
+                provider_api_format: "openai:chat",
+                report_kind: "openai_chat_stream_success",
+            },
+        );
+        assert!(!behavior.upstream_is_stream);
+
+        let mut auto = sample_transport("openai");
+        auto.endpoint.config = Some(json!({
+            "upstream_stream": "auto"
+        }));
+        let stream_behavior = classify_same_format_provider_request_behavior(
+            &auto,
+            SameFormatProviderRequestBehaviorParams {
+                require_streaming: true,
+                provider_api_format: "openai:chat",
+                report_kind: "openai_chat_stream_success",
+            },
+        );
+        assert!(stream_behavior.upstream_is_stream);
+        let sync_behavior = classify_same_format_provider_request_behavior(
+            &auto,
+            SameFormatProviderRequestBehaviorParams {
+                require_streaming: false,
+                provider_api_format: "openai:chat",
+                report_kind: "openai_chat_sync_success",
+            },
+        );
+        assert!(!sync_behavior.upstream_is_stream);
+    }
+
+    #[test]
+    fn same_format_behavior_preserves_hard_streaming_constraint() {
+        let mut kiro = sample_transport("kiro");
+        kiro.endpoint.config = Some(json!({
+            "upstream_stream_policy": "force_non_stream"
+        }));
+
+        let behavior = classify_same_format_provider_request_behavior(
+            &kiro,
+            SameFormatProviderRequestBehaviorParams {
+                require_streaming: true,
+                provider_api_format: "claude:messages",
+                report_kind: "claude_chat_stream_success",
+            },
+        );
+
+        assert!(behavior.upstream_is_stream);
+    }
+
+    #[test]
+    fn same_format_policy_resolution_drives_standard_body_stream_field() {
+        for (endpoint_config, client_is_stream, expected_stream) in [
+            (
+                json!({"upstream_stream_policy": "force_stream"}),
+                false,
+                true,
+            ),
+            (
+                json!({"upstreamStreamPolicy": "force_non_stream"}),
+                true,
+                false,
+            ),
+            (json!({"upstream_stream": "auto"}), true, true),
+            (json!({"upstream_stream": "auto"}), false, false),
+        ] {
+            let mut transport = sample_transport("openai");
+            transport.endpoint.config = Some(endpoint_config);
+            let behavior = classify_same_format_provider_request_behavior(
+                &transport,
+                SameFormatProviderRequestBehaviorParams {
+                    require_streaming: client_is_stream,
+                    provider_api_format: "openai:chat",
+                    report_kind: "openai_chat_policy_test",
+                },
+            );
+            let body =
+                build_same_format_provider_request_body(SameFormatProviderRequestBodyInput {
+                    body_json: &json!({
+                        "model": "client-model",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": client_is_stream
+                    }),
+                    mapped_model: "upstream-model",
+                    client_api_format: "openai:chat",
+                    provider_api_format: "openai:chat",
+                    source_model: Some("client-model"),
+                    family: SameFormatProviderFamily::Standard,
+                    body_rules: None,
+                    request_headers: None,
+                    upstream_is_stream: behavior.upstream_is_stream,
+                    force_body_stream_field: behavior.force_body_stream_field,
+                    kiro_auth_config: None,
+                    is_claude_code: false,
+                    enable_model_directives: false,
+                })
+                .expect("body should build");
+
+            assert_eq!(body.get("stream"), Some(&json!(expected_stream)));
+        }
+    }
+
+    #[test]
     fn resolves_direct_auth_except_vertex() {
         let transport = sample_transport("openai");
         let behavior = classify_same_format_provider_request_behavior(
             &transport,
             SameFormatProviderRequestBehaviorParams {
                 require_streaming: false,
+                provider_api_format: "openai:chat",
                 report_kind: "openai_chat_sync_success",
             },
         );
@@ -517,6 +670,7 @@ mod tests {
             body_rules: None,
             request_headers: None,
             upstream_is_stream: true,
+            force_body_stream_field: false,
             kiro_auth_config: None,
             is_claude_code: false,
             enable_model_directives: false,
@@ -525,6 +679,170 @@ mod tests {
 
         assert_eq!(body.get("model"), Some(&json!("upstream-model")));
         assert_eq!(body.get("stream"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn same_format_standard_body_overrides_client_stream_for_non_stream_upstream() {
+        let body = build_same_format_provider_request_body(SameFormatProviderRequestBodyInput {
+            body_json: &json!({
+                "model": "client-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": true
+            }),
+            mapped_model: "upstream-model",
+            client_api_format: "openai:chat",
+            provider_api_format: "openai:chat",
+            source_model: Some("client-model"),
+            family: SameFormatProviderFamily::Standard,
+            body_rules: None,
+            request_headers: None,
+            upstream_is_stream: false,
+            force_body_stream_field: false,
+            kiro_auth_config: None,
+            is_claude_code: false,
+            enable_model_directives: false,
+        })
+        .expect("body should build");
+
+        assert_eq!(body.get("model"), Some(&json!("upstream-model")));
+        assert_eq!(body.get("stream"), Some(&json!(false)));
+    }
+
+    #[test]
+    fn same_format_standard_body_does_not_add_stream_false_for_plain_sync_body() {
+        let body = build_same_format_provider_request_body(SameFormatProviderRequestBodyInput {
+            body_json: &json!({
+                "model": "client-model",
+                "messages": [{"role": "user", "content": "hello"}]
+            }),
+            mapped_model: "upstream-model",
+            client_api_format: "openai:chat",
+            provider_api_format: "openai:chat",
+            source_model: Some("client-model"),
+            family: SameFormatProviderFamily::Standard,
+            body_rules: None,
+            request_headers: None,
+            upstream_is_stream: false,
+            force_body_stream_field: false,
+            kiro_auth_config: None,
+            is_claude_code: false,
+            enable_model_directives: false,
+        })
+        .expect("body should build");
+
+        assert_eq!(body.get("model"), Some(&json!("upstream-model")));
+        assert!(body.get("stream").is_none());
+    }
+
+    #[test]
+    fn same_format_standard_body_forced_policy_adds_stream_false() {
+        let body = build_same_format_provider_request_body(SameFormatProviderRequestBodyInput {
+            body_json: &json!({
+                "model": "client-model",
+                "messages": [{"role": "user", "content": "hello"}]
+            }),
+            mapped_model: "upstream-model",
+            client_api_format: "openai:chat",
+            provider_api_format: "openai:chat",
+            source_model: Some("client-model"),
+            family: SameFormatProviderFamily::Standard,
+            body_rules: None,
+            request_headers: None,
+            upstream_is_stream: false,
+            force_body_stream_field: true,
+            kiro_auth_config: None,
+            is_claude_code: false,
+            enable_model_directives: false,
+        })
+        .expect("body should build");
+
+        assert_eq!(body.get("model"), Some(&json!("upstream-model")));
+        assert_eq!(body.get("stream"), Some(&json!(false)));
+    }
+
+    #[test]
+    fn same_format_gemini_body_removes_leaked_client_stream_field() {
+        let body = build_same_format_provider_request_body(SameFormatProviderRequestBodyInput {
+            body_json: &json!({
+                "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+                "stream": true
+            }),
+            mapped_model: "gemini-upstream",
+            client_api_format: "gemini:generate_content",
+            provider_api_format: "gemini:generate_content",
+            source_model: None,
+            family: SameFormatProviderFamily::Gemini,
+            body_rules: None,
+            request_headers: None,
+            upstream_is_stream: false,
+            force_body_stream_field: false,
+            kiro_auth_config: None,
+            is_claude_code: false,
+            enable_model_directives: false,
+        })
+        .expect("body should build");
+
+        assert!(body.get("stream").is_none());
+    }
+
+    #[test]
+    fn same_format_stream_policy_wins_after_body_rules() {
+        let body_rules = json!([
+            {"action":"set","path":"stream","value":true}
+        ]);
+
+        let body = build_same_format_provider_request_body(SameFormatProviderRequestBodyInput {
+            body_json: &json!({
+                "model": "client-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": true
+            }),
+            mapped_model: "upstream-model",
+            client_api_format: "openai:chat",
+            provider_api_format: "openai:chat",
+            source_model: Some("client-model"),
+            family: SameFormatProviderFamily::Standard,
+            body_rules: Some(&body_rules),
+            request_headers: None,
+            upstream_is_stream: false,
+            force_body_stream_field: false,
+            kiro_auth_config: None,
+            is_claude_code: false,
+            enable_model_directives: false,
+        })
+        .expect("body should build");
+
+        assert_eq!(body.get("stream"), Some(&json!(false)));
+    }
+
+    #[test]
+    fn same_format_compact_stream_policy_wins_after_body_rules() {
+        let body_rules = json!([
+            {"action":"set","path":"stream","value":true}
+        ]);
+
+        let body = build_same_format_provider_request_body(SameFormatProviderRequestBodyInput {
+            body_json: &json!({
+                "model": "client-model",
+                "input": "hello",
+                "stream": true
+            }),
+            mapped_model: "upstream-model",
+            client_api_format: "openai:responses:compact",
+            provider_api_format: "openai:responses:compact",
+            source_model: Some("client-model"),
+            family: SameFormatProviderFamily::Standard,
+            body_rules: Some(&body_rules),
+            request_headers: None,
+            upstream_is_stream: false,
+            force_body_stream_field: false,
+            kiro_auth_config: None,
+            is_claude_code: false,
+            enable_model_directives: false,
+        })
+        .expect("body should build");
+
+        assert!(body.get("stream").is_none());
     }
 
     #[test]
@@ -545,6 +863,7 @@ mod tests {
             ])),
             request_headers: None,
             upstream_is_stream: false,
+            force_body_stream_field: false,
             kiro_auth_config: None,
             is_claude_code: false,
             enable_model_directives: true,
@@ -571,6 +890,7 @@ mod tests {
                 is_vertex: false,
                 is_kiro: false,
                 upstream_is_stream: true,
+                force_body_stream_field: false,
                 report_kind: "openai_chat_stream_success",
             },
             auth_header: Some("x-api-key"),

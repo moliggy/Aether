@@ -116,9 +116,9 @@ pub(crate) fn build_gemini_stream_plan_from_decision(
             content_type: payload.content_type.as_deref(),
             provider_api_format: core.provider_api_format.as_str(),
             client_api_format: core.client_api_format.as_str(),
-            upstream_is_stream: true,
+            upstream_is_stream: payload.upstream_is_stream,
             build_from_request_when_empty: false,
-            accept_policy: StandardPlanFallbackAcceptPolicy::TextEventStreamRequired,
+            accept_policy: StandardPlanFallbackAcceptPolicy::TextEventStreamIfStreaming,
         });
     let content_type = payload
         .content_type

@@ -9,10 +9,13 @@ use crate::ai_serving::{
     GatewayProviderTransportSnapshot,
 };
 
+use super::{enforce_provider_body_stream_policy, request_requires_body_stream_field};
+
 pub(crate) fn build_local_openai_chat_request_body(
     body_json: &Value,
     mapped_model: &str,
     upstream_is_stream: bool,
+    force_body_stream_field: bool,
     body_rules: Option<&Value>,
     request_headers: &http::HeaderMap,
     enable_model_directives: bool,
@@ -23,12 +26,20 @@ pub(crate) fn build_local_openai_chat_request_body(
         upstream_is_stream,
         enable_model_directives,
     )?;
-    apply_standard_provider_request_body_rules_with_request_headers(
-        provider_request_body,
-        body_rules,
-        body_json,
-        request_headers,
-    )
+    let mut provider_request_body =
+        apply_standard_provider_request_body_rules_with_request_headers(
+            provider_request_body,
+            body_rules,
+            body_json,
+            request_headers,
+        )?;
+    enforce_provider_body_stream_policy(
+        &mut provider_request_body,
+        "openai:chat",
+        upstream_is_stream,
+        request_requires_body_stream_field(body_json, force_body_stream_field),
+    );
+    Some(provider_request_body)
 }
 
 pub(crate) fn build_local_openai_chat_upstream_url(
@@ -44,6 +55,7 @@ pub(crate) fn build_cross_format_openai_chat_request_body(
     provider_type: &str,
     provider_api_format: &str,
     upstream_is_stream: bool,
+    force_body_stream_field: bool,
     body_rules: Option<&Value>,
     user_api_key_id: Option<&str>,
     request_headers: &http::HeaderMap,
@@ -73,6 +85,12 @@ pub(crate) fn build_cross_format_openai_chat_request_body(
     apply_openai_responses_compact_special_body_edits(
         &mut provider_request_body,
         provider_api_format,
+    );
+    enforce_provider_body_stream_policy(
+        &mut provider_request_body,
+        provider_api_format,
+        upstream_is_stream,
+        request_requires_body_stream_field(body_json, force_body_stream_field),
     );
     Some(provider_request_body)
 }

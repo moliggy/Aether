@@ -112,13 +112,14 @@ pub(crate) fn build_standard_stream_plan_from_decision(
         .as_ref()
         .and_then(|context| context.get("envelope_name"))
         .and_then(serde_json::Value::as_str);
-    let accept_policy = if provider_adaptation_requires_eventstream_accept(
-        envelope_name,
-        core.provider_api_format.as_str(),
-    ) {
+    let accept_policy = if payload.upstream_is_stream
+        && provider_adaptation_requires_eventstream_accept(
+            envelope_name,
+            core.provider_api_format.as_str(),
+        ) {
         StandardPlanFallbackAcceptPolicy::ProviderEventStreamIfMissing
     } else {
-        StandardPlanFallbackAcceptPolicy::TextEventStreamRequired
+        StandardPlanFallbackAcceptPolicy::TextEventStreamIfStreaming
     };
     let mut provider_request_headers =
         build_standard_plan_fallback_headers(StandardPlanFallbackHeadersInput {
@@ -132,7 +133,7 @@ pub(crate) fn build_standard_stream_plan_from_decision(
             content_type: payload.content_type.as_deref(),
             provider_api_format: core.provider_api_format.as_str(),
             client_api_format: core.client_api_format.as_str(),
-            upstream_is_stream: true,
+            upstream_is_stream: payload.upstream_is_stream,
             build_from_request_when_empty: false,
             accept_policy,
         });

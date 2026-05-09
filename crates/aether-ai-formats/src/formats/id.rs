@@ -135,10 +135,18 @@ pub fn is_openai_responses_family_format(value: &str) -> bool {
     )
 }
 
+pub fn api_format_uses_body_stream_field(value: &str) -> bool {
+    matches!(
+        FormatId::parse(value).map(FormatId::canonical),
+        Some(FormatId::OpenAiChat | FormatId::OpenAiResponses | FormatId::ClaudeMessages)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        api_format_alias_matches, api_format_storage_aliases, normalize_api_format_alias, FormatId,
+        api_format_alias_matches, api_format_storage_aliases, api_format_uses_body_stream_field,
+        normalize_api_format_alias, FormatId,
     };
 
     #[test]
@@ -303,5 +311,23 @@ mod tests {
             api_format_storage_aliases("doubao:embedding"),
             vec!["doubao:embedding".to_string()]
         );
+    }
+
+    #[test]
+    fn body_stream_field_support_matches_provider_wire_formats() {
+        assert!(api_format_uses_body_stream_field("openai:chat"));
+        assert!(api_format_uses_body_stream_field("/v1/chat/completions"));
+        assert!(api_format_uses_body_stream_field("openai:responses"));
+        assert!(api_format_uses_body_stream_field("/v1/responses"));
+        assert!(api_format_uses_body_stream_field("claude:messages"));
+        assert!(api_format_uses_body_stream_field("/v1/messages"));
+        assert!(!api_format_uses_body_stream_field(
+            "openai:responses:compact"
+        ));
+        assert!(!api_format_uses_body_stream_field("/v1/responses/compact"));
+        assert!(!api_format_uses_body_stream_field(
+            "gemini:generate_content"
+        ));
+        assert!(!api_format_uses_body_stream_field("openai:embedding"));
     }
 }

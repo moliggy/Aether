@@ -15,3 +15,6 @@ pub(crate) use self::responses::{
     build_cross_format_openai_responses_upstream_url, build_local_openai_responses_request_body,
     build_local_openai_responses_upstream_url,
 };
+pub(super) use crate::ai_serving::planner::common::{
+    enforce_provider_body_stream_policy, request_requires_body_stream_field,
+};

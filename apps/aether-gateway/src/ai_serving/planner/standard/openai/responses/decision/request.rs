@@ -9,7 +9,10 @@ use crate::ai_serving::planner::candidate_preparation::{
     OauthPreparationContext,
 };
 use crate::ai_serving::planner::candidate_resolution::EligibleLocalExecutionCandidate;
-use crate::ai_serving::planner::common::force_upstream_streaming_for_provider;
+use crate::ai_serving::planner::common::{
+    endpoint_config_forces_body_stream_field, enforce_provider_body_stream_policy,
+    request_requires_body_stream_field, resolve_upstream_is_stream_for_provider,
+};
 use crate::ai_serving::planner::spec_metadata::local_openai_responses_spec_metadata;
 use crate::ai_serving::planner::standard::{
     apply_codex_openai_responses_special_headers, build_cross_format_openai_responses_request_body,
@@ -224,12 +227,15 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
         .await;
 
     let needs_bidirectional_conversion = !same_format && conversion_kind.is_some();
-    let upstream_is_stream = spec_metadata.require_streaming
-        || is_antigravity
-        || force_upstream_streaming_for_provider(
-            transport.provider.provider_type.as_str(),
-            provider_api_format,
-        );
+    let upstream_is_stream = resolve_upstream_is_stream_for_provider(
+        transport.endpoint.config.as_ref(),
+        transport.provider.provider_type.as_str(),
+        provider_api_format,
+        spec_metadata.require_streaming,
+        is_antigravity || is_kiro_claude_cli,
+    );
+    let force_body_stream_field =
+        endpoint_config_forces_body_stream_field(transport.endpoint.config.as_ref());
     let Some(mut base_provider_request_body) = (if needs_bidirectional_conversion {
         build_cross_format_openai_responses_request_body(
             body_json,
@@ -237,6 +243,7 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
             spec_metadata.api_format,
             provider_api_format,
             upstream_is_stream,
+            force_body_stream_field,
             transport.provider.provider_type.as_str(),
             if is_kiro_claude_cli {
                 None
@@ -252,6 +259,7 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
             body_json,
             &mapped_model,
             upstream_is_stream,
+            force_body_stream_field,
             transport.provider.provider_type.as_str(),
             provider_api_format,
             if is_kiro_claude_cli {
@@ -292,6 +300,14 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
         crate::ai_serving::apply_model_directive_mapping_patch(
             &mut base_provider_request_body,
             &mapping,
+        );
+        // Directive mapping is a deep-merge patch and may overwrite/add `stream`;
+        // re-enforce stream-field policy afterward.
+        enforce_provider_body_stream_policy(
+            &mut base_provider_request_body,
+            provider_api_format,
+            upstream_is_stream,
+            request_requires_body_stream_field(body_json, force_body_stream_field),
         );
     }
     let antigravity_auth = if is_antigravity {

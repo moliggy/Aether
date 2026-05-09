@@ -8,7 +8,10 @@ use crate::ai_serving::planner::candidate_preparation::{
     OauthPreparationContext,
 };
 use crate::ai_serving::planner::candidate_resolution::EligibleLocalExecutionCandidate;
-use crate::ai_serving::planner::common::OPENAI_CHAT_STREAM_PLAN_KIND;
+use crate::ai_serving::planner::common::{
+    endpoint_config_forces_body_stream_field, enforce_provider_body_stream_policy,
+    request_requires_body_stream_field, OPENAI_CHAT_STREAM_PLAN_KIND,
+};
 use crate::ai_serving::planner::standard::{
     apply_codex_openai_responses_special_headers, build_cross_format_openai_chat_request_body,
     build_cross_format_openai_chat_upstream_url, build_local_openai_chat_request_body,
@@ -72,6 +75,8 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
     let candidate = &eligible.candidate;
     let provider_api_format = eligible.provider_api_format.as_str();
     let transport = &eligible.transport;
+    let force_body_stream_field =
+        endpoint_config_forces_body_stream_field(transport.endpoint.config.as_ref());
     let enable_model_directives =
         crate::system_features::reasoning_model_directive_enabled_for_api_format_and_model(
             state,
@@ -128,6 +133,7 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
             body_json,
             &prepared_candidate.mapped_model,
             upstream_is_stream,
+            force_body_stream_field,
             transport.endpoint.body_rules.as_ref(),
             &parts.headers,
             enable_model_directives,
@@ -214,6 +220,13 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
 
         let (execution_strategy, conversion_mode) =
             ai_local_execution_contract_for_formats("openai:chat", "openai:chat");
+        let resolved_report_kind =
+            if decision_kind == OPENAI_CHAT_STREAM_PLAN_KIND || !upstream_is_stream {
+                report_kind.to_string()
+            } else {
+                "openai_chat_sync_finalize".to_string()
+            };
+
         return Some(LocalOpenAiChatCandidatePayloadParts {
             auth_header: resolved_headers.auth_header,
             auth_value: resolved_headers.auth_value,
@@ -224,7 +237,7 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
             upstream_url,
             execution_strategy,
             conversion_mode,
-            report_kind: report_kind.to_string(),
+            report_kind: resolved_report_kind,
             envelope_name: None,
             transport: Arc::clone(transport),
         });
@@ -349,6 +362,7 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
         transport.provider.provider_type.as_str(),
         provider_api_format.as_str(),
         upstream_is_stream,
+        force_body_stream_field,
         if is_kiro_claude_cli {
             None
         } else {
@@ -386,6 +400,14 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
         crate::ai_serving::apply_model_directive_mapping_patch(
             &mut provider_request_body,
             &mapping,
+        );
+        // Directive mapping is a deep-merge patch and may overwrite/add `stream`;
+        // re-enforce stream-field policy afterward.
+        enforce_provider_body_stream_policy(
+            &mut provider_request_body,
+            provider_api_format.as_str(),
+            upstream_is_stream,
+            request_requires_body_stream_field(body_json, force_body_stream_field),
         );
     }
 

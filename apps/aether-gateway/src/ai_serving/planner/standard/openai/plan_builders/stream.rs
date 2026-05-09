@@ -9,6 +9,7 @@ use super::super::{
     take_ai_upstream_auth_pair, take_non_empty_string, AiExecutionPlanFromDecisionParts,
     AiStreamAttempt,
 };
+use crate::ai_serving::planner::common::enforce_provider_body_stream_policy;
 use crate::ai_serving::provider_adaptation_requires_eventstream_accept;
 use crate::ai_serving::transport::{
     build_standard_plan_fallback_headers, build_standard_plan_fallback_openai_chat_url,
@@ -16,6 +17,18 @@ use crate::ai_serving::transport::{
     StandardPlanFallbackHeadersInput,
 };
 use crate::{AiExecutionDecision, GatewayError};
+
+fn effective_stream_accept_mode(
+    payload_upstream_is_stream: bool,
+    provider_request_body: &serde_json::Value,
+) -> bool {
+    payload_upstream_is_stream
+        || provider_request_body
+            .as_object()
+            .and_then(|body| body.get("stream"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+}
 
 pub(crate) fn build_openai_chat_stream_plan_from_decision(
     parts: &http::request::Parts,
@@ -53,22 +66,34 @@ pub(crate) fn build_openai_chat_stream_plan_from_decision(
             provider_request_body
                 .insert("model".to_string(), serde_json::Value::String(mapped_model));
         }
-        provider_request_body.insert("stream".to_string(), serde_json::Value::Bool(true));
+        let require_body_stream_field = provider_request_body.contains_key("stream");
+        let mut provider_request_body = serde_json::Value::Object(provider_request_body);
+        enforce_provider_body_stream_policy(
+            &mut provider_request_body,
+            core.provider_api_format.as_str(),
+            payload.upstream_is_stream,
+            require_body_stream_field,
+        );
+        let Some(provider_request_object) = provider_request_body.as_object_mut() else {
+            return Ok(None);
+        };
         if let Some(prompt_cache_key) = take_non_empty_string(&mut payload.prompt_cache_key) {
-            let existing = provider_request_body
+            let existing = provider_request_object
                 .get("prompt_cache_key")
                 .and_then(|value| value.as_str())
                 .map(str::trim)
                 .unwrap_or_default();
             if existing.is_empty() {
-                provider_request_body.insert(
+                provider_request_object.insert(
                     "prompt_cache_key".to_string(),
                     serde_json::Value::String(prompt_cache_key),
                 );
             }
         }
-        serde_json::Value::Object(provider_request_body)
+        provider_request_body
     };
+    let effective_upstream_is_stream =
+        effective_stream_accept_mode(payload.upstream_is_stream, &provider_request_body_value);
     let extra_headers = std::mem::take(&mut payload.extra_headers);
     let mut provider_request_headers =
         build_standard_plan_fallback_headers(StandardPlanFallbackHeadersInput {
@@ -82,9 +107,9 @@ pub(crate) fn build_openai_chat_stream_plan_from_decision(
             content_type: payload.content_type.as_deref(),
             provider_api_format: core.provider_api_format.as_str(),
             client_api_format: core.client_api_format.as_str(),
-            upstream_is_stream: true,
+            upstream_is_stream: effective_upstream_is_stream,
             build_from_request_when_empty: true,
-            accept_policy: StandardPlanFallbackAcceptPolicy::TextEventStreamRequired,
+            accept_policy: StandardPlanFallbackAcceptPolicy::TextEventStreamIfStreamingOrWildcard,
         });
     let content_type = payload
         .content_type
@@ -157,13 +182,18 @@ pub(crate) fn build_openai_responses_stream_plan_from_decision(
         .as_ref()
         .and_then(|context| context.get("envelope_name"))
         .and_then(serde_json::Value::as_str);
-    let accept_policy = if provider_adaptation_requires_eventstream_accept(
-        envelope_name,
-        core.provider_api_format.as_str(),
-    ) {
+    let effective_upstream_is_stream =
+        effective_stream_accept_mode(payload.upstream_is_stream, &provider_request_body_value);
+    let accept_policy = if effective_upstream_is_stream
+        && provider_adaptation_requires_eventstream_accept(
+            envelope_name,
+            core.provider_api_format.as_str(),
+        ) {
         StandardPlanFallbackAcceptPolicy::ProviderEventStreamIfMissing
+    } else if envelope_name.is_some() {
+        StandardPlanFallbackAcceptPolicy::TextEventStreamIfStreaming
     } else {
-        StandardPlanFallbackAcceptPolicy::TextEventStreamRequired
+        StandardPlanFallbackAcceptPolicy::TextEventStreamIfStreamingOrWildcard
     };
     let mut provider_request_headers =
         build_standard_plan_fallback_headers(StandardPlanFallbackHeadersInput {
@@ -177,7 +207,7 @@ pub(crate) fn build_openai_responses_stream_plan_from_decision(
             content_type: payload.content_type.as_deref(),
             provider_api_format: core.provider_api_format.as_str(),
             client_api_format: core.client_api_format.as_str(),
-            upstream_is_stream: true,
+            upstream_is_stream: effective_upstream_is_stream,
             build_from_request_when_empty: false,
             accept_policy,
         });
@@ -219,7 +249,7 @@ pub(crate) fn build_openai_responses_stream_plan_from_decision(
         plan_url = %plan.url,
         client_api_format = %plan.client_api_format,
         provider_api_format = %plan.provider_api_format,
-        upstream_is_stream = payload.upstream_is_stream,
+        upstream_is_stream = effective_upstream_is_stream,
         compact,
         "gateway built local openai responses stream execution plan"
     );
@@ -424,6 +454,104 @@ mod tests {
         assert_eq!(
             built.plan.headers.get("accept").map(String::as_str),
             Some("text/event-stream")
+        );
+    }
+
+    #[test]
+    fn build_openai_chat_stream_plan_keeps_downstream_stream_for_force_non_stream_upstream() {
+        fn force_non_stream_payload(provider_request_body: Option<Value>) -> AiExecutionDecision {
+            AiExecutionDecision {
+                action: "stream".to_string(),
+                decision_kind: Some("openai_chat_stream".to_string()),
+                execution_strategy: None,
+                conversion_mode: None,
+                request_id: Some("req_force_non_stream".to_string()),
+                candidate_id: Some("cand_force_non_stream".to_string()),
+                provider_name: Some("OpenAI".to_string()),
+                provider_id: Some("prov_force_non_stream".to_string()),
+                endpoint_id: Some("ep_force_non_stream".to_string()),
+                key_id: Some("key_force_non_stream".to_string()),
+                upstream_base_url: Some("https://example.com".to_string()),
+                upstream_url: Some("https://example.com/v1/chat/completions".to_string()),
+                provider_request_method: None,
+                auth_header: Some("authorization".to_string()),
+                auth_value: Some("Bearer upstream-token".to_string()),
+                provider_api_format: Some("openai:chat".to_string()),
+                client_api_format: Some("openai:chat".to_string()),
+                provider_contract: Some("openai:chat".to_string()),
+                client_contract: Some("openai:chat".to_string()),
+                model_name: Some("gpt-5.4".to_string()),
+                mapped_model: Some("gpt-5.4".to_string()),
+                prompt_cache_key: None,
+                extra_headers: BTreeMap::new(),
+                provider_request_headers: BTreeMap::new(),
+                provider_request_body,
+                provider_request_body_base64: None,
+                content_type: Some("application/json".to_string()),
+                proxy: None,
+                transport_profile: None,
+                timeouts: None,
+                upstream_is_stream: false,
+                report_kind: Some("openai_chat_stream_success".to_string()),
+                report_context: Some(json!({})),
+                auth_context: None,
+            }
+        }
+
+        let parts = http::Request::builder()
+            .uri("http://localhost/v1/chat/completions")
+            .body(())
+            .expect("request should build")
+            .into_parts()
+            .0;
+
+        let built = build_openai_chat_stream_plan_from_decision(
+            &parts,
+            &json!({}),
+            force_non_stream_payload(Some(json!({
+                "model": "gpt-5.4",
+                "messages": [],
+                "stream": false
+            }))),
+        )
+        .expect("plan build should succeed")
+        .expect("plan should be produced");
+
+        assert!(built.plan.stream);
+        assert_eq!(
+            built
+                .plan
+                .body
+                .json_body
+                .as_ref()
+                .and_then(|body| body.get("stream"))
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+
+        let fallback_body = json!({
+            "model": "client-model",
+            "messages": [],
+            "stream": true
+        });
+        let built = build_openai_chat_stream_plan_from_decision(
+            &parts,
+            &fallback_body,
+            force_non_stream_payload(None),
+        )
+        .expect("fallback plan build should succeed")
+        .expect("fallback plan should be produced");
+
+        assert!(built.plan.stream);
+        assert_eq!(
+            built
+                .plan
+                .body
+                .json_body
+                .as_ref()
+                .and_then(|body| body.get("stream"))
+                .and_then(Value::as_bool),
+            Some(false)
         );
     }
 

@@ -1,4 +1,5 @@
 use crate::ai_serving::build_request_trace_proxy_value;
+use crate::ai_serving::planner::common::OPENAI_CHAT_STREAM_PLAN_KIND;
 use crate::ai_serving::planner::report_context::{
     build_local_execution_report_context, insert_provider_stream_event_api_format,
     LocalExecutionReportContextParts,
@@ -29,6 +30,7 @@ pub(crate) async fn maybe_build_local_openai_chat_decision_payload_for_candidate
     report_kind: &str,
     upstream_is_stream: bool,
 ) -> Option<AiExecutionDecision> {
+    let decision_is_stream = decision_kind == OPENAI_CHAT_STREAM_PLAN_KIND;
     let attempt_identity = attempt.attempt_identity();
     let LocalOpenAiChatCandidateAttempt {
         eligible,
@@ -149,7 +151,7 @@ pub(crate) async fn maybe_build_local_openai_chat_decision_payload_for_candidate
 
     Some(build_ai_execution_decision_response(
         AiExecutionDecisionResponseParts {
-            decision_is_stream: upstream_is_stream,
+            decision_is_stream,
             decision_kind: decision_kind.to_string(),
             execution_strategy,
             conversion_mode,
