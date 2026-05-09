@@ -627,7 +627,7 @@ mod tests {
         assert!(policy.fixed_provider);
         assert!(policy.enable_format_conversion_by_default);
         assert!(policy.oauth_is_bearer_like);
-        assert!(!policy.supports_model_fetch);
+        assert!(policy.supports_model_fetch);
         assert!(!policy.supports_local_openai_chat_transport);
         assert!(!policy.supports_local_same_format_transport);
         assert!(policy.key_inherits_api_formats("oauth", None));

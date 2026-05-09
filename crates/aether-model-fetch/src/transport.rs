@@ -9,6 +9,10 @@ use aether_provider_transport::auth::{
     ensure_upstream_auth_header, resolve_local_gemini_auth, resolve_local_openai_bearer_auth,
     resolve_local_standard_auth,
 };
+use aether_provider_transport::kiro::{
+    build_kiro_list_available_models_url, build_list_available_models_headers,
+    resolve_local_kiro_request_auth,
+};
 use aether_provider_transport::vertex::resolve_local_vertex_api_key_query_auth;
 use aether_provider_transport::{
     apply_local_header_rules, resolve_transport_execution_timeouts, resolve_transport_profile,
@@ -25,6 +29,7 @@ const GEMINI_CLI_USER_AGENT: &str = "GeminiCLI/0.1.5 (Windows; AMD64)";
 const CLAUDE_VERSION_HEADER: &str = "2023-06-01";
 const ANTIGRAVITY_FETCH_PROVIDER_API_FORMAT: &str = "antigravity:fetch_available_models";
 const GEMINI_CLI_LOAD_CODE_ASSIST_PROVIDER_API_FORMAT: &str = "gemini_cli:load_code_assist";
+const KIRO_LIST_AVAILABLE_MODELS_PROVIDER_API_FORMAT: &str = "kiro:list_available_models";
 
 const BROWSER_FINGERPRINT_HEADERS: &[(&str, &str)] = &[
     (
@@ -236,6 +241,55 @@ pub async fn build_gemini_cli_load_code_assist_plan(
             client_api_format: "gemini:generate_content".to_string(),
             provider_api_format: GEMINI_CLI_LOAD_CODE_ASSIST_PROVIDER_API_FORMAT.to_string(),
             model_name: Some("loadCodeAssist".to_string()),
+        },
+    )
+    .await
+}
+
+pub async fn build_kiro_list_available_models_plan(
+    runtime: &(impl ModelFetchTransportRuntime + ?Sized),
+    transport: &GatewayProviderTransportSnapshot,
+) -> Result<ExecutionPlan, String> {
+    let kiro_auth = match runtime.resolve_local_oauth_request_auth(transport).await? {
+        Some(LocalResolvedOAuthRequestAuth::Kiro(auth)) => Some(auth),
+        _ => resolve_local_kiro_request_auth(transport),
+    }
+    .ok_or_else(|| "Kiro models fetch requires Kiro request auth".to_string())?;
+    let url = build_kiro_list_available_models_url(
+        &transport.endpoint.base_url,
+        Some(kiro_auth.auth_config.effective_api_region()),
+    )
+    .ok_or_else(|| "Kiro models fetch URL is unavailable".to_string())?;
+
+    let mut headers =
+        build_list_available_models_headers(&kiro_auth.auth_config, &kiro_auth.machine_id);
+    let mut protected_headers = Vec::new();
+    insert_non_empty_auth_header(
+        &mut headers,
+        &mut protected_headers,
+        kiro_auth.name,
+        &kiro_auth.value,
+    );
+    protected_headers.extend(["host".to_string(), "x-amz-user-agent".to_string()]);
+    headers = apply_fetch_header_rules(transport, headers, &protected_headers)?;
+    ensure_upstream_auth_header(&mut headers, kiro_auth.name, &kiro_auth.value);
+
+    build_execution_plan(
+        runtime,
+        transport,
+        ModelFetchExecutionPlanRequest {
+            method: "GET".to_string(),
+            url,
+            headers,
+            content_type: None,
+            body: RequestBody {
+                json_body: None,
+                body_bytes_b64: None,
+                body_ref: None,
+            },
+            client_api_format: "claude:messages".to_string(),
+            provider_api_format: KIRO_LIST_AVAILABLE_MODELS_PROVIDER_API_FORMAT.to_string(),
+            model_name: Some("ListAvailableModels".to_string()),
         },
     )
     .await
@@ -544,8 +598,9 @@ mod tests {
 
     use super::{
         build_antigravity_fetch_available_models_plan, build_gemini_cli_load_code_assist_plan,
-        build_models_fetch_execution_plan, build_standard_models_fetch_execution_plan,
-        build_vertex_models_fetch_execution_plan, ModelFetchTransportRuntime,
+        build_kiro_list_available_models_plan, build_models_fetch_execution_plan,
+        build_standard_models_fetch_execution_plan, build_vertex_models_fetch_execution_plan,
+        ModelFetchTransportRuntime,
     };
 
     struct TestRuntime {
@@ -831,6 +886,50 @@ mod tests {
             plan.headers.get("user-agent").map(String::as_str),
             Some("GeminiCLI/0.1.5 (Windows; AMD64)")
         );
+    }
+
+    #[tokio::test]
+    async fn builds_kiro_list_available_models_plan() {
+        let runtime = TestRuntime {
+            oauth_auth: None,
+            proxy: None,
+        };
+        let mut transport = sample_transport("kiro", "claude:messages", "oauth");
+        transport.endpoint.base_url = "https://q.{region}.amazonaws.com".to_string();
+        transport.key.decrypted_api_key = "__placeholder__".to_string();
+        transport.key.decrypted_auth_config = Some(
+            r#"{
+                "access_token":"cached-token",
+                "expires_at":4102444800,
+                "api_region":"us-west-2",
+                "machine_id":"123e4567-e89b-12d3-a456-426614174000",
+                "kiro_version":"0.12.155"
+            }"#
+            .to_string(),
+        );
+
+        let plan = build_kiro_list_available_models_plan(&runtime, &transport)
+            .await
+            .expect("plan");
+
+        assert_eq!(plan.method, "GET");
+        assert_eq!(
+            plan.url,
+            "https://q.us-west-2.amazonaws.com/ListAvailableModels?origin=AI_EDITOR"
+        );
+        assert_eq!(plan.provider_api_format, "kiro:list_available_models");
+        assert_eq!(
+            plan.headers.get("authorization").map(String::as_str),
+            Some("Bearer cached-token")
+        );
+        assert_eq!(
+            plan.headers.get("host").map(String::as_str),
+            Some("q.us-west-2.amazonaws.com")
+        );
+        assert!(plan
+            .headers
+            .get("x-amz-user-agent")
+            .is_some_and(|value| value.starts_with("aws-sdk-js/1.0.0 KiroIDE-0.12.155-")));
     }
 
     #[tokio::test]

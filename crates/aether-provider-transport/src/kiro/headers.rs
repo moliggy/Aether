@@ -9,6 +9,7 @@ pub const KIRO_PROFILE_ARN_HEADER: &str = "x-amzn-kiro-profile-arn";
 pub const KIRO_TOKEN_TYPE_HEADER: &str = "TokenType";
 pub const KIRO_EXTERNAL_IDP_TOKEN_TYPE: &str = "EXTERNAL_IDP";
 const AWS_SDK_JS_MAIN_VERSION: &str = "1.0.27";
+const AWS_SDK_JS_LIST_MODELS_VERSION: &str = "1.0.0";
 const CODEWHISPERER_OPTOUT: &str = "true";
 const KIRO_AGENT_MODE: &str = "vibe";
 
@@ -126,12 +127,48 @@ pub fn build_mcp_headers(
     headers
 }
 
+pub fn build_list_available_models_headers(
+    auth_config: &KiroAuthConfig,
+    machine_id: &str,
+) -> BTreeMap<String, String> {
+    let kiro_version = auth_config.effective_kiro_version();
+    let system_version = auth_config.effective_system_version();
+    let node_version = auth_config.effective_node_version();
+    let region = auth_config.effective_api_region();
+    let host = format!("q.{region}.amazonaws.com");
+    let ide_tag = build_kiro_ide_tag(kiro_version, machine_id);
+
+    BTreeMap::from([
+        ("accept".to_string(), "application/json".to_string()),
+        (
+            "amz-sdk-invocation-id".to_string(),
+            Uuid::new_v4().to_string(),
+        ),
+        (
+            "amz-sdk-request".to_string(),
+            "attempt=1; max=1".to_string(),
+        ),
+        ("connection".to_string(), "close".to_string()),
+        ("host".to_string(), host),
+        (
+            "user-agent".to_string(),
+            format!(
+                "aws-sdk-js/{AWS_SDK_JS_LIST_MODELS_VERSION} ua/2.1 os/{system_version} lang/js md/nodejs#{node_version} api/codewhispererruntime#1.0.0 m/N,E {ide_tag}"
+            ),
+        ),
+        (
+            "x-amz-user-agent".to_string(),
+            format!("aws-sdk-js/{AWS_SDK_JS_LIST_MODELS_VERSION} {ide_tag}"),
+        ),
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::credentials::KiroAuthConfig;
     use super::{
-        build_generate_assistant_headers, build_mcp_headers, AWS_EVENTSTREAM_CONTENT_TYPE,
-        KIRO_PROFILE_ARN_HEADER, KIRO_TOKEN_TYPE_HEADER,
+        build_generate_assistant_headers, build_list_available_models_headers, build_mcp_headers,
+        AWS_EVENTSTREAM_CONTENT_TYPE, KIRO_PROFILE_ARN_HEADER, KIRO_TOKEN_TYPE_HEADER,
     };
 
     #[test]
@@ -165,6 +202,42 @@ mod tests {
         assert_eq!(
             headers.get("x-amzn-kiro-agent-mode").map(String::as_str),
             Some("vibe")
+        );
+        assert!(!headers.contains_key(KIRO_TOKEN_TYPE_HEADER));
+    }
+
+    #[test]
+    fn builds_list_available_models_headers() {
+        let auth_config = KiroAuthConfig {
+            auth_method: Some("social".to_string()),
+            refresh_token: None,
+            expires_at: None,
+            profile_arn: Some("arn:aws:codewhisperer:us-east-1:123456789012:profile/demo".into()),
+            region: None,
+            auth_region: None,
+            api_region: Some("us-east-1".to_string()),
+            client_id: None,
+            client_secret: None,
+            machine_id: None,
+            kiro_version: Some("0.12.155".to_string()),
+            system_version: Some("darwin#24.6.0".to_string()),
+            node_version: Some("22.21.1".to_string()),
+            access_token: None,
+        };
+
+        let headers = build_list_available_models_headers(&auth_config, "machine-123");
+
+        assert_eq!(
+            headers.get("host").map(String::as_str),
+            Some("q.us-east-1.amazonaws.com")
+        );
+        assert_eq!(
+            headers.get("amz-sdk-request").map(String::as_str),
+            Some("attempt=1; max=1")
+        );
+        assert_eq!(
+            headers.get("x-amz-user-agent").map(String::as_str),
+            Some("aws-sdk-js/1.0.0 KiroIDE-0.12.155-machine-123")
         );
         assert!(!headers.contains_key(KIRO_TOKEN_TYPE_HEADER));
     }
