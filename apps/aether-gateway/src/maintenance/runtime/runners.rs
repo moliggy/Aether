@@ -10,7 +10,7 @@ use super::{
     advance_proxy_upgrade_rollout_once, cleanup_audit_logs_once,
     cleanup_expired_gemini_file_mappings_once, cleanup_proxy_node_metrics_once,
     cleanup_request_candidates_once, cleanup_stale_pending_requests_once,
-    cleanup_stale_proxy_nodes_once, collect_proxy_upgrade_rollout_probes,
+    cleanup_stale_proxy_nodes_once, collect_proxy_upgrade_rollout_probes, now_unix_secs,
     perform_db_maintenance_once, perform_provider_checkin_once, perform_stats_aggregation_once,
     perform_stats_hourly_aggregation_once, perform_usage_cleanup_once,
     perform_wallet_daily_usage_aggregation_once, record_completed_cleanup_run,

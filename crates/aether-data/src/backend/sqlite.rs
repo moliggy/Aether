@@ -434,6 +434,99 @@ VALUES
         assert_eq!(admin_exists, 1);
     }
 
+    #[tokio::test]
+    async fn admin_system_request_bodies_purge_clears_inline_usage_body_fields() {
+        let config = SqlDatabaseConfig {
+            driver: DatabaseDriver::Sqlite,
+            url: "sqlite::memory:".to_string(),
+            pool: SqlPoolConfig {
+                max_connections: 1,
+                ..SqlPoolConfig::default()
+            },
+        };
+        let backend = SqliteBackend::from_config(config).expect("backend should build");
+        run_sqlite_migrations(backend.pool())
+            .await
+            .expect("sqlite migrations should run");
+
+        for (column, ty) in [
+            ("request_body", "TEXT"),
+            ("response_body", "TEXT"),
+            ("provider_request_body", "TEXT"),
+            ("client_response_body", "TEXT"),
+            ("request_body_compressed", "BLOB"),
+            ("response_body_compressed", "BLOB"),
+            ("provider_request_body_compressed", "BLOB"),
+            ("client_response_body_compressed", "BLOB"),
+        ] {
+            sqlx::query(&format!(r#"ALTER TABLE "usage" ADD COLUMN {column} {ty}"#))
+                .execute(backend.pool())
+                .await
+                .expect("legacy body column should be added");
+        }
+
+        sqlx::query(
+            r#"
+INSERT INTO "usage" (
+    request_id,
+    provider_name,
+    model,
+    request_body,
+    response_body,
+    provider_request_body,
+    client_response_body,
+    request_body_compressed,
+    response_body_compressed,
+    provider_request_body_compressed,
+    client_response_body_compressed,
+    created_at_unix_ms
+)
+VALUES (
+    'request-1',
+    'openai',
+    'gpt-4.1',
+    'client request',
+    'provider response',
+    'provider request',
+    'client response',
+    X'01',
+    X'02',
+    X'03',
+    X'04',
+    1
+)
+"#,
+        )
+        .execute(backend.pool())
+        .await
+        .expect("usage row should insert");
+
+        let summary = backend
+            .purge_admin_system_data(AdminSystemPurgeTarget::RequestBodies)
+            .await
+            .expect("request body purge should run");
+
+        assert_eq!(summary.affected.get("usage_body_fields_cleaned"), Some(&1));
+        let remaining: i64 = sqlx::query_scalar(
+            r#"
+SELECT COUNT(*)
+FROM "usage"
+WHERE request_body IS NOT NULL
+   OR response_body IS NOT NULL
+   OR provider_request_body IS NOT NULL
+   OR client_response_body IS NOT NULL
+   OR request_body_compressed IS NOT NULL
+   OR response_body_compressed IS NOT NULL
+   OR provider_request_body_compressed IS NOT NULL
+   OR client_response_body_compressed IS NOT NULL
+"#,
+        )
+        .fetch_one(backend.pool())
+        .await
+        .expect("remaining body count should load");
+        assert_eq!(remaining, 0);
+    }
+
     async fn sqlite_count(pool: &sqlx::SqlitePool, table: &str) -> i64 {
         let sql = format!("SELECT COUNT(*) FROM \"{table}\"");
         sqlx::query_scalar::<_, i64>(&sql)

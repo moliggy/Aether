@@ -53,7 +53,8 @@ pub(crate) use aether_data_contracts::repository::usage::{
 use audit_cleanup::*;
 pub(crate) use cleanup_runs::{
     list_admin_cleanup_run_records, record_completed_cleanup_run, record_failed_cleanup_run,
-    start_admin_request_body_cleanup_task, AdminCleanupRunRecord,
+    start_admin_request_body_cleanup_task, start_admin_system_purge_task, AdminCleanupRunRecord,
+    AdminCleanupTaskKind,
 };
 use config::*;
 use db_maintenance::*;

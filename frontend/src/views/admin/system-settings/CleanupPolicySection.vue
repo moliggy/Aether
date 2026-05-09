@@ -432,6 +432,11 @@ function cleanupKindLabel(kind: string): string {
     audit_cleanup: '审计日志',
     request_candidate_cleanup: '候选记录',
     request_bodies: '请求体',
+    config_purge: '配置清空',
+    users_purge: '用户清空',
+    usage_purge: '使用记录清空',
+    audit_logs_purge: '审计日志清空',
+    stats_purge: '统计聚合清空',
     system_cleanup: '系统清理',
   }
   return labels[kind] || kind

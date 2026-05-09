@@ -253,7 +253,7 @@ export interface CleanupRunListResponse {
   items: CleanupRunRecord[]
 }
 
-export interface RequestBodyCleanupTaskResponse {
+export interface CleanupTaskResponse {
   message: string
   task: CleanupRunRecord
 }
@@ -1073,16 +1073,25 @@ export const adminApi = {
   },
 
   // 数据清空
-  purgeConfig: () => purge<{ message: string; deleted: Record<string, number> }>('config'),
-  purgeUsers: () => purge<{ message: string; deleted: Record<string, number> }>('users'),
-  purgeUsage: () => purge<{ message: string; deleted: Record<string, number> }>('usage'),
-  purgeAuditLogs: () => purge<{ message: string; deleted: Record<string, number> }>('audit-logs'),
-  purgeRequestBodies: () => purge<{ message: string; cleaned: Record<string, number> }>('request-bodies'),
-  async purgeRequestBodiesAsync(): Promise<RequestBodyCleanupTaskResponse> {
-    const response = await apiClient.post<RequestBodyCleanupTaskResponse>('/api/admin/system/purge/request-bodies/task')
+  purgeConfig: () => purge<CleanupTaskResponse>('config'),
+  purgeUsers: () => purge<CleanupTaskResponse>('users'),
+  async purgeUsage(): Promise<CleanupTaskResponse> {
+    const response = await apiClient.post<CleanupTaskResponse>('/api/admin/system/purge/usage')
     return response.data
   },
-  purgeStats: () => purge<{ message: string }>('stats'),
+  async purgeAuditLogs(): Promise<CleanupTaskResponse> {
+    const response = await apiClient.post<CleanupTaskResponse>('/api/admin/system/purge/audit-logs')
+    return response.data
+  },
+  purgeRequestBodies: () => purge<CleanupTaskResponse>('request-bodies'),
+  async purgeRequestBodiesAsync(): Promise<CleanupTaskResponse> {
+    const response = await apiClient.post<CleanupTaskResponse>('/api/admin/system/purge/request-bodies/task')
+    return response.data
+  },
+  async purgeStats(): Promise<CleanupTaskResponse> {
+    const response = await apiClient.post<CleanupTaskResponse>('/api/admin/system/purge/stats')
+    return response.data
+  },
   async getCleanupRuns(): Promise<CleanupRunListResponse> {
     const response = await apiClient.get<CleanupRunListResponse>('/api/admin/system/cleanup/runs')
     return response.data
