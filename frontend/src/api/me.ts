@@ -171,6 +171,21 @@ export interface ApiKey {
   force_capabilities?: Record<string, boolean> | null  // 强制能力配置
 }
 
+export type InstallTargetCli = 'claude_code' | 'codex_cli' | 'gemini_cli'
+export type InstallTargetSystem = 'macos' | 'linux' | 'windows' | 'auto'
+
+export interface ApiKeyInstallSession {
+  install_code: string
+  expires_at_unix_secs: number
+  expires_in_seconds: number
+  target_cli: InstallTargetCli
+  target_cli_label: string
+  target_system: InstallTargetSystem
+  target_system_label: string
+  unix_command: string
+  powershell_command: string
+}
+
 // 不再需要 ProviderBinding 接口
 
 export interface ChangePasswordRequest {
@@ -265,6 +280,17 @@ export const meApi = {
   ): Promise<ApiKey & { message: string }> {
     const response = await apiClient.put<ApiKey & { message: string }>(
       `/api/users/me/api-keys/${keyId}`,
+      data
+    )
+    return response.data
+  },
+
+  async createApiKeyInstallSession(
+    keyId: string,
+    data: { target_cli: InstallTargetCli; target_system: InstallTargetSystem }
+  ): Promise<ApiKeyInstallSession> {
+    const response = await apiClient.post<ApiKeyInstallSession>(
+      `/api/users/me/api-keys/${keyId}/install-sessions`,
       data
     )
     return response.data

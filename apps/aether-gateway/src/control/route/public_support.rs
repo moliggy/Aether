@@ -469,6 +469,20 @@ pub(super) fn classify_public_support_route(
             false,
         ))
     } else if method == http::Method::POST
+        && has_single_nested_suffix_after_prefix(
+            normalized_path,
+            "/api/users/me/api-keys/",
+            "install-sessions",
+        )
+    {
+        Some(classified(
+            "public_support",
+            "users_me",
+            "api_key_install_session_create",
+            "user:self",
+            false,
+        ))
+    } else if method == http::Method::POST
         && normalized_path.starts_with("/api/me/management-tokens/")
         && normalized_path.ends_with("/regenerate")
     {
@@ -657,6 +671,17 @@ pub(super) fn classify_public_support_route(
             "system_catalog",
             "provider_detail",
             "public:system_catalog",
+            false,
+        ))
+    } else if method == http::Method::GET
+        && (has_single_segment_after_prefix(normalized_path, "/install/")
+            || has_single_segment_after_prefix(normalized_path, "/i/"))
+    {
+        Some(classified(
+            "public_support",
+            "install",
+            "script",
+            "public:install",
             false,
         ))
     } else if method == http::Method::GET && normalized_path == "/test-connection" {

@@ -195,6 +195,15 @@
                     variant="ghost"
                     size="icon"
                     class="h-8 w-8"
+                    title="一键安装并配置 CLI"
+                    @click="openInstallDialog(apiKey)"
+                  >
+                    <Terminal class="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class="h-8 w-8"
                     :title="apiKey.is_locked ? '已锁定' : '编辑'"
                     :disabled="apiKey.is_locked"
                     @click="openEditApiKeyDialog(apiKey)"
@@ -273,6 +282,15 @@
                 </Badge>
               </div>
               <div class="flex items-center gap-0.5 flex-shrink-0">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-7 w-7"
+                  title="一键安装并配置 CLI"
+                  @click="openInstallDialog(apiKey)"
+                >
+                  <Terminal class="h-3.5 w-3.5" />
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -503,9 +521,106 @@
       <template #footer>
         <Button
           class="h-10 px-5"
-          @click="showKeyDialog = false"
+          @click="closeCreatedKeyDialog"
         >
           确定
+        </Button>
+      </template>
+    </Dialog>
+
+    <!-- 一键安装并配置 CLI 对话框 -->
+    <Dialog
+      v-model="showInstallDialog"
+      size="lg"
+    >
+      <template #header>
+        <div class="border-b border-border px-6 py-4">
+          <div class="flex items-center gap-3">
+            <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
+              <Terminal class="h-5 w-5 text-primary" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="text-lg font-semibold text-foreground leading-tight">
+                一键安装并配置 CLI
+              </h3>
+              <p class="text-xs text-muted-foreground truncate">
+                当前密钥：{{ selectedInstallApiKey?.name || '未选择' }}
+              </p>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <div class="space-y-5">
+        <div class="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
+          选择要配置的 CLI 和目标系统，Aether 会生成 15 分钟内有效的一次性 install code。页面命令不会包含原始 API Key。
+        </div>
+
+        <div class="space-y-2">
+          <Label class="text-sm font-semibold">目标 CLI</Label>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <Button
+              v-for="option in installCliOptions"
+              :key="option.value"
+              :variant="installCli === option.value ? 'default' : 'outline'"
+              class="justify-start h-auto py-3"
+              @click="selectInstallCli(option.value)"
+            >
+              {{ option.label }}
+            </Button>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <Label class="text-sm font-semibold">目标系统</Label>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <Button
+              v-for="option in installSystemOptions"
+              :key="option.value"
+              :variant="installSystem === option.value ? 'default' : 'outline'"
+              class="justify-start h-auto py-3"
+              @click="selectInstallSystem(option.value)"
+            >
+              {{ option.label }}
+            </Button>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <Label class="text-sm font-semibold">复制到目标机器执行</Label>
+            <Button
+              variant="ghost"
+              size="sm"
+              :disabled="installLoading || !selectedInstallApiKey"
+              @click="refreshInstallCommand"
+            >
+              {{ installLoading ? '生成中...' : '重新生成' }}
+            </Button>
+          </div>
+          <div class="rounded-lg border border-border/60 bg-background overflow-hidden">
+            <pre class="max-h-32 overflow-x-auto whitespace-pre-wrap break-all p-3 text-xs font-mono">{{ installCommand || '正在生成短命令...' }}</pre>
+          </div>
+          <p class="text-xs text-muted-foreground">
+            {{ installCommandHint }}
+          </p>
+        </div>
+      </div>
+
+      <template #footer>
+        <Button
+          variant="outline"
+          class="h-10 px-5"
+          @click="showInstallDialog = false"
+        >
+          关闭
+        </Button>
+        <Button
+          class="h-10 px-5 shadow-lg shadow-primary/20"
+          :disabled="!installCommand || installLoading"
+          @click="copyTextToClipboard(installCommand)"
+        >
+          复制命令
         </Button>
       </template>
     </Dialog>
@@ -525,8 +640,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { meApi, type ApiKey } from '@/api/me'
+import { ref, onMounted, computed, watch } from 'vue'
+import { meApi, type ApiKey, type InstallTargetCli, type InstallTargetSystem, type ApiKeyInstallSession } from '@/api/me'
 import Card from '@/components/ui/card.vue'
 import Button from '@/components/ui/button.vue'
 import Input from '@/components/ui/input.vue'
@@ -543,16 +658,27 @@ import {
   TableRow
 } from '@/components/ui'
 import RefreshButton from '@/components/ui/refresh-button.vue'
-import { Plus, Key, Copy, Trash2, Loader2, Activity, CheckCircle, Power, SquarePen } from 'lucide-vue-next'
+import { Plus, Key, Copy, Trash2, Loader2, Activity, CheckCircle, Power, SquarePen, Terminal } from 'lucide-vue-next'
 import { useToast } from '@/composables/useToast'
 import { log } from '@/utils/logger'
 import { parseApiError } from '@/utils/errorParser'
 import { formatRateLimitSimple } from '@/utils/format'
 import { parseNumberInput } from '@/utils/form'
 import { getErrorStatus } from '@/types/api-error'
-import { computed } from 'vue'
 
 const { success, error: showError } = useToast()
+
+const installCliOptions: Array<{ value: InstallTargetCli; label: string }> = [
+  { value: 'claude_code', label: 'Claude Code' },
+  { value: 'codex_cli', label: 'Codex CLI' },
+  { value: 'gemini_cli', label: 'Gemini CLI' }
+]
+
+const installSystemOptions: Array<{ value: Exclude<InstallTargetSystem, 'auto'>; label: string }> = [
+  { value: 'macos', label: 'macOS' },
+  { value: 'linux', label: 'Linux' },
+  { value: 'windows', label: 'Windows' }
+]
 
 const apiKeys = ref<ApiKey[]>([])
 const loading = ref(false)
@@ -571,6 +697,7 @@ const paginatedApiKeys = computed(() => {
 const showCreateDialog = ref(false)
 const showKeyDialog = ref(false)
 const showDeleteDialog = ref(false)
+const showInstallDialog = ref(false)
 
 const newKeyName = ref('')
 const newKeyRateLimit = ref<number | undefined>(undefined)
@@ -578,9 +705,36 @@ const newKeyConcurrentLimit = ref<number | undefined>(undefined)
 const newKeyValue = ref('')
 const keyToDelete = ref<ApiKey | null>(null)
 const editingApiKey = ref<ApiKey | null>(null)
+const selectedInstallApiKey = ref<ApiKey | null>(null)
+const pendingFirstInstallApiKey = ref<ApiKey | null>(null)
+const installCli = ref<InstallTargetCli>('claude_code')
+const installSystem = ref<Exclude<InstallTargetSystem, 'auto'>>('linux')
+const installSession = ref<ApiKeyInstallSession | null>(null)
+const installLoading = ref(false)
+
+const installCommand = computed(() => {
+  if (!installSession.value) return ''
+  return installSystem.value === 'windows'
+    ? installSession.value.powershell_command
+    : installSession.value.unix_command
+})
+
+const installCommandHint = computed(() => {
+  if (installSystem.value === 'windows') {
+    return 'Windows 请在 PowerShell 中执行。install code 使用后立即失效，如需再次执行请重新生成。'
+  }
+  return 'macOS / Linux 请在 sh 兼容终端中执行。install code 使用后立即失效，如需再次执行请重新生成。'
+})
 
 onMounted(() => {
+  installSystem.value = detectCurrentSystem()
   loadApiKeys()
+})
+
+watch(showKeyDialog, (isOpen) => {
+  if (!isOpen && pendingFirstInstallApiKey.value) {
+    closeCreatedKeyDialog()
+  }
 })
 
 async function loadApiKeys() {
@@ -618,6 +772,57 @@ function openCreateApiKeyDialog() {
   showCreateDialog.value = true
 }
 
+function detectCurrentSystem(): Exclude<InstallTargetSystem, 'auto'> {
+  const platform = window.navigator.platform.toLowerCase()
+  const userAgent = window.navigator.userAgent.toLowerCase()
+  if (platform.includes('mac')) return 'macos'
+  if (platform.includes('win') || userAgent.includes('windows')) return 'windows'
+  return 'linux'
+}
+
+async function openInstallDialog(apiKey: ApiKey) {
+  selectedInstallApiKey.value = apiKey
+  installSession.value = null
+  showInstallDialog.value = true
+  await refreshInstallCommand()
+}
+
+async function selectInstallCli(value: InstallTargetCli) {
+  installCli.value = value
+  await refreshInstallCommand()
+}
+
+async function selectInstallSystem(value: Exclude<InstallTargetSystem, 'auto'>) {
+  installSystem.value = value
+  await refreshInstallCommand()
+}
+
+async function refreshInstallCommand() {
+  if (!selectedInstallApiKey.value) return
+  installLoading.value = true
+  installSession.value = null
+  try {
+    installSession.value = await meApi.createApiKeyInstallSession(selectedInstallApiKey.value.id, {
+      target_cli: installCli.value,
+      target_system: installSystem.value,
+    })
+  } catch (error) {
+    log.error('生成 CLI 安装命令失败:', error)
+    showError(parseApiError(error, '生成 CLI 安装命令失败'))
+  } finally {
+    installLoading.value = false
+  }
+}
+
+function closeCreatedKeyDialog() {
+  showKeyDialog.value = false
+  const pending = pendingFirstInstallApiKey.value
+  pendingFirstInstallApiKey.value = null
+  if (pending) {
+    void openInstallDialog(pending)
+  }
+}
+
 function closeApiKeyDialog() {
   showCreateDialog.value = false
   editingApiKey.value = null
@@ -634,6 +839,7 @@ async function saveApiKey() {
 
   creating.value = true
   try {
+    const isCreatingFirstApiKey = !editingApiKey.value && apiKeys.value.length === 0
     if (editingApiKey.value) {
       await meApi.updateApiKey(editingApiKey.value.id, {
         name: newKeyName.value,
@@ -648,6 +854,9 @@ async function saveApiKey() {
         concurrent_limit: newKeyConcurrentLimit.value,
       })
       newKeyValue.value = newKey.key || ''
+      if (isCreatingFirstApiKey) {
+        pendingFirstInstallApiKey.value = newKey
+      }
       showKeyDialog.value = true
       success('API 密钥创建成功')
     }

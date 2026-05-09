@@ -4,8 +4,9 @@ use axum::{body::Body, http, response::Response};
 use super::{
     handle_auth_me, handle_users_me_api_key_capabilities_put, handle_users_me_api_key_create,
     handle_users_me_api_key_delete, handle_users_me_api_key_detail_get,
-    handle_users_me_api_key_patch, handle_users_me_api_key_providers_put,
-    handle_users_me_api_key_update, handle_users_me_api_keys_get, handle_users_me_available_models,
+    handle_users_me_api_key_install_session_create, handle_users_me_api_key_patch,
+    handle_users_me_api_key_providers_put, handle_users_me_api_key_update,
+    handle_users_me_api_keys_get, handle_users_me_available_models,
     handle_users_me_delete_other_sessions, handle_users_me_delete_session,
     handle_users_me_detail_put, handle_users_me_endpoint_status_get,
     handle_users_me_management_token_create, handle_users_me_management_token_delete,
@@ -17,8 +18,8 @@ use super::{
     handle_users_me_providers_get, handle_users_me_sessions_get, handle_users_me_update_session,
     handle_users_me_usage_active_get, handle_users_me_usage_get, handle_users_me_usage_heatmap_get,
     handle_users_me_usage_interval_timeline_get, users_me_api_key_capabilities_path_matches,
-    users_me_api_key_detail_path_matches, users_me_api_key_providers_path_matches,
-    users_me_management_token_detail_path_matches,
+    users_me_api_key_detail_path_matches, users_me_api_key_install_sessions_path_matches,
+    users_me_api_key_providers_path_matches, users_me_management_token_detail_path_matches,
     users_me_management_token_regenerate_path_matches,
     users_me_management_token_toggle_path_matches, users_me_management_tokens_root,
     users_me_session_detail_path_matches, AppState, GatewayPublicRequestContext,
@@ -159,6 +160,19 @@ pub(crate) async fn maybe_build_local_users_me_response(
         {
             Some(
                 handle_users_me_api_key_capabilities_put(
+                    state,
+                    request_context,
+                    headers,
+                    request_body,
+                )
+                .await,
+            )
+        }
+        Some("api_key_install_session_create")
+            if users_me_api_key_install_sessions_path_matches(&request_context.request_path) =>
+        {
+            Some(
+                handle_users_me_api_key_install_session_create(
                     state,
                     request_context,
                     headers,

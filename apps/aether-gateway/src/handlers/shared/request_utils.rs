@@ -443,7 +443,11 @@ pub(crate) fn public_support_local_requires_buffered_body(
                 ) | (
                     Some("users_me"),
                     http::Method::POST,
-                    Some("api_keys_create" | "management_tokens_create"),
+                    Some(
+                        "api_keys_create"
+                            | "api_key_install_session_create"
+                            | "management_tokens_create",
+                    ),
                 ) | (
                     Some("wallet"),
                     http::Method::POST,

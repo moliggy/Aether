@@ -28,6 +28,8 @@ mod support_announcements;
 mod support_auth;
 #[path = "support/dashboard.rs"]
 mod support_dashboard;
+#[path = "support/install.rs"]
+mod support_install;
 #[path = "support/models.rs"]
 mod support_models;
 #[path = "support/monitoring.rs"]
@@ -61,6 +63,10 @@ use self::support_auth::{
     build_auth_settings_payload, extract_client_device_id, maybe_build_local_auth_response,
 };
 use self::support_dashboard::maybe_build_local_dashboard_response;
+use self::support_install::{
+    handle_users_me_api_key_install_session_create, maybe_build_local_install_response,
+    users_me_api_key_install_sessions_path_matches,
+};
 use self::support_models::{
     build_models_auth_error_response, maybe_build_local_models_response, models_api_format,
 };
@@ -144,6 +150,10 @@ pub(crate) async fn maybe_build_local_public_support_response(
     if decision.route_family.as_deref() == Some("users_me") {
         return maybe_build_local_users_me_response(state, request_context, headers, request_body)
             .await;
+    }
+
+    if decision.route_family.as_deref() == Some("install") {
+        return maybe_build_local_install_response(state, request_context).await;
     }
 
     if decision.route_family.as_deref() == Some("payment_callback") {
