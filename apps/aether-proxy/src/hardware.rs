@@ -1,5 +1,8 @@
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use serde::Serialize;
-use sysinfo::System;
+use sysinfo::{get_current_pid, Pid, ProcessesToUpdate, System};
 use tracing::info;
 
 /// Hardware information collected at startup.
@@ -15,6 +18,102 @@ pub struct HardwareInfo {
     pub fd_limit: u64,
     #[serde(skip)]
     pub estimated_max_concurrency: u64,
+}
+
+/// Runtime resource usage sampled during heartbeat reporting.
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeResourceSnapshot {
+    pub sampled_at_unix_secs: u64,
+    pub system_cpu_usage_percent: f64,
+    pub process_cpu_usage_percent: f64,
+    pub memory_total_bytes: u64,
+    pub memory_used_bytes: u64,
+    pub memory_available_bytes: u64,
+    pub memory_used_percent: f64,
+    pub process_memory_bytes: u64,
+    pub process_virtual_memory_bytes: u64,
+    pub process_memory_percent: f64,
+    pub load_average_1m: f64,
+    pub load_average_5m: f64,
+    pub load_average_15m: f64,
+    pub system_uptime_secs: u64,
+    pub process_uptime_secs: Option<u64>,
+}
+
+/// Small, reusable sysinfo monitor. Keeping it alive between samples makes CPU
+/// usage deltas meaningful without re-enumerating the whole machine every time.
+pub struct RuntimeResourceMonitor {
+    system: Mutex<System>,
+    current_pid: Option<Pid>,
+}
+
+impl RuntimeResourceMonitor {
+    pub fn new() -> Self {
+        let mut system = System::new_all();
+        let current_pid = get_current_pid().ok();
+        if let Some(pid) = current_pid {
+            system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+        }
+        system.refresh_cpu_usage();
+        system.refresh_memory();
+        Self {
+            system: Mutex::new(system),
+            current_pid,
+        }
+    }
+
+    pub fn snapshot(&self) -> RuntimeResourceSnapshot {
+        let mut system = match self.system.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        system.refresh_cpu_usage();
+        system.refresh_memory();
+        if let Some(pid) = self.current_pid {
+            system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+        }
+
+        let memory_total_bytes = system.total_memory();
+        let memory_used_bytes = system.used_memory();
+        let memory_available_bytes = system.available_memory();
+        let (
+            process_cpu_usage_percent,
+            process_memory_bytes,
+            process_virtual_memory_bytes,
+            process_uptime_secs,
+        ) = self
+            .current_pid
+            .and_then(|pid| system.process(pid))
+            .map(|process| {
+                (
+                    process.cpu_usage() as f64,
+                    process.memory(),
+                    process.virtual_memory(),
+                    Some(process.run_time()),
+                )
+            })
+            .unwrap_or((0.0, 0, 0, None));
+        let load = System::load_average();
+
+        RuntimeResourceSnapshot {
+            sampled_at_unix_secs: current_unix_secs(),
+            system_cpu_usage_percent: system.global_cpu_usage() as f64,
+            process_cpu_usage_percent,
+            memory_total_bytes,
+            memory_used_bytes,
+            memory_available_bytes,
+            memory_used_percent: ratio_percent(memory_used_bytes, memory_total_bytes),
+            process_memory_bytes,
+            process_virtual_memory_bytes,
+            process_memory_percent: ratio_percent(process_memory_bytes, memory_total_bytes),
+            load_average_1m: load.one,
+            load_average_5m: load.five,
+            load_average_15m: load.fifteen,
+            system_uptime_secs: System::uptime(),
+            process_uptime_secs,
+        }
+    }
 }
 
 /// Collect hardware information and estimate max concurrency.
@@ -76,4 +175,19 @@ fn get_fd_limit() -> u64 {
     }
     // Fallback for non-unix or error
     1024
+}
+
+fn ratio_percent(value: u64, total: u64) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        value as f64 * 100.0 / total as f64
+    }
+}
+
+fn current_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }

@@ -2284,6 +2284,7 @@ mod tests {
             dns_cache,
             upstream_client_pool,
             tunnel_tls_config: Arc::new(build_tls_config()),
+            resource_monitor: Arc::new(crate::hardware::RuntimeResourceMonitor::new()),
             stream_gate,
             distributed_stream_gate,
         })
@@ -2314,6 +2315,7 @@ mod tests {
             dns_cache,
             upstream_client_pool,
             tunnel_tls_config: Arc::new(build_tls_config()),
+            resource_monitor: Arc::new(crate::hardware::RuntimeResourceMonitor::new()),
             stream_gate: None,
             distributed_stream_gate: None,
         })

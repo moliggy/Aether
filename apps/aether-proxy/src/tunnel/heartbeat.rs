@@ -240,6 +240,7 @@ async fn build_heartbeat_payload(
     let node_id = server.node_id.read().unwrap().clone();
     let tunnel_snapshot = server.tunnel_metrics.snapshot();
     let recent_errors = server.tunnel_metrics.recent_errors(8);
+    let resource_usage = state.resource_monitor.snapshot();
 
     let avg_latency_ms = if snapshot.requests > 0 {
         Some(snapshot.latency_ns as f64 / snapshot.requests as f64 / 1_000_000.0)
@@ -291,6 +292,7 @@ async fn build_heartbeat_payload(
         "proxy_metadata": {
             "version": CURRENT_VERSION,
             "admission": admission,
+            "resource_usage": resource_usage,
             "tunnel_metrics": {
                 "connect_attempts": tunnel_snapshot.connect_attempts,
                 "connect_successes": tunnel_snapshot.connect_successes,
@@ -419,13 +421,13 @@ mod tests {
     use arc_swap::ArcSwap;
     use clap::Parser;
 
-    use super::{handle_ack, AckDecision};
+    use super::{build_heartbeat_payload, handle_ack, AckDecision, HeartbeatSnapshot};
     use crate::registration::client::AetherClient;
     use crate::runtime::DynamicConfig;
-    use crate::state::{ProxyMetrics, ServerContext, TunnelMetrics};
+    use crate::state::{AppState, ProxyMetrics, ServerContext, TunnelMetrics};
 
-    fn sample_server() -> Arc<ServerContext> {
-        let config = Arc::new(crate::config::Config::parse_from([
+    fn sample_config() -> Arc<crate::config::Config> {
+        Arc::new(crate::config::Config::parse_from([
             "aether-proxy",
             "--aether-url",
             "https://example.com",
@@ -433,7 +435,11 @@ mod tests {
             "ae_test",
             "--node-name",
             "proxy-test",
-        ]));
+        ]))
+    }
+
+    fn sample_server() -> Arc<ServerContext> {
+        let config = sample_config();
         Arc::new(ServerContext {
             server_label: "heartbeat-test".to_string(),
             aether_url: config.aether_url.clone(),
@@ -450,6 +456,24 @@ mod tests {
             metrics: Arc::new(ProxyMetrics::new()),
             tunnel_metrics: Arc::new(TunnelMetrics::new()),
         })
+    }
+
+    fn sample_state(config: Arc<crate::config::Config>) -> AppState {
+        let dns_cache = Arc::new(crate::target_filter::DnsCache::new(
+            std::time::Duration::from_secs(config.dns_cache_ttl_secs),
+            config.dns_cache_capacity,
+        ));
+        AppState {
+            config: Arc::clone(&config),
+            dns_cache: Arc::clone(&dns_cache),
+            upstream_client_pool: crate::upstream_client::UpstreamClientPool::new(
+                config, dns_cache,
+            ),
+            tunnel_tls_config: Arc::new(crate::tunnel::client::build_tls_config()),
+            resource_monitor: Arc::new(crate::hardware::RuntimeResourceMonitor::new()),
+            stream_gate: None,
+            distributed_stream_gate: None,
+        }
     }
 
     #[test]
@@ -480,5 +504,49 @@ mod tests {
             }
         ));
         assert_eq!(server.dynamic.load().heartbeat_interval, 9);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_payload_reports_resource_usage_and_tunnel_error_diagnostics() {
+        let config = sample_config();
+        let server = sample_server();
+        server
+            .tunnel_metrics
+            .record_error("ws_write_error", "IO error: Connection reset by peer");
+        let state = sample_state(config);
+
+        let payload = build_heartbeat_payload(
+            &state,
+            &server,
+            "session-1",
+            42,
+            HeartbeatSnapshot::default(),
+        )
+        .await;
+        let payload: serde_json::Value =
+            serde_json::from_slice(&payload).expect("heartbeat payload should be JSON");
+        let resource_usage = payload
+            .pointer("/proxy_metadata/resource_usage")
+            .and_then(serde_json::Value::as_object)
+            .expect("resource usage should be reported");
+        assert!(resource_usage.contains_key("system_cpu_usage_percent"));
+        assert!(resource_usage.contains_key("process_memory_bytes"));
+
+        let recent_error = payload
+            .pointer("/proxy_metadata/recent_tunnel_errors/0")
+            .and_then(serde_json::Value::as_object)
+            .expect("recent tunnel error should be reported");
+        assert_eq!(
+            recent_error
+                .get("component")
+                .and_then(serde_json::Value::as_str),
+            Some("tunnel_write")
+        );
+        assert_eq!(
+            recent_error
+                .get("severity")
+                .and_then(serde_json::Value::as_str),
+            Some("error")
+        );
     }
 }

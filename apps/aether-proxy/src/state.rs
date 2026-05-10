@@ -10,6 +10,7 @@ use aether_runtime::{AdmissionPermit, ConcurrencyError, ConcurrencyGate, Concurr
 use aether_runtime_state::{RuntimeSemaphore, RuntimeSemaphoreError, RuntimeSemaphoreSnapshot};
 
 use crate::config::Config;
+use crate::hardware::RuntimeResourceMonitor;
 use crate::registration::client::AetherClient;
 use crate::runtime::SharedDynamicConfig;
 use crate::target_filter::DnsCache;
@@ -24,6 +25,8 @@ pub struct AppState {
     pub upstream_client_pool: UpstreamClientPool,
     /// Shared TLS config for tunnel WebSocket connections (avoids re-parsing root CAs on each reconnect).
     pub tunnel_tls_config: Arc<rustls::ClientConfig>,
+    /// Runtime CPU/memory monitor sampled by heartbeat payloads.
+    pub resource_monitor: Arc<RuntimeResourceMonitor>,
     /// Optional per-process stream admission gate.
     pub stream_gate: Option<Arc<ConcurrencyGate>>,
     /// Optional cross-instance stream admission gate.
@@ -96,6 +99,10 @@ pub struct TunnelErrorEvent {
     pub timestamp_unix_secs: u64,
     pub category: String,
     pub message: String,
+    pub severity: String,
+    pub component: String,
+    pub summary: String,
+    pub operator_action: String,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -229,11 +236,18 @@ impl TunnelMetrics {
 
     pub fn record_error(&self, category: &str, message: &str) {
         self.error_events_total.fetch_add(1, Ordering::Release);
+        let category = normalize_error_field(category, TUNNEL_ERROR_CATEGORY_MAX_CHARS, "unknown");
+        let message = normalize_error_field(message, TUNNEL_ERROR_MESSAGE_MAX_CHARS, "n/a");
+        let diagnostic = classify_tunnel_error(category.as_str(), message.as_str());
 
         let event = TunnelErrorEvent {
             timestamp_unix_secs: now_unix_secs(),
-            category: normalize_error_field(category, TUNNEL_ERROR_CATEGORY_MAX_CHARS, "unknown"),
-            message: normalize_error_field(message, TUNNEL_ERROR_MESSAGE_MAX_CHARS, "n/a"),
+            category,
+            message,
+            severity: diagnostic.severity.to_string(),
+            component: diagnostic.component.to_string(),
+            summary: diagnostic.summary.to_string(),
+            operator_action: diagnostic.operator_action.to_string(),
         };
 
         let mut recent_errors = match self.recent_errors.lock() {
@@ -300,6 +314,95 @@ fn normalize_error_field(value: &str, max_chars: usize, fallback: &str) -> Strin
         return fallback.to_string();
     }
     normalized.chars().take(max_chars).collect()
+}
+
+struct TunnelErrorDiagnostic {
+    severity: &'static str,
+    component: &'static str,
+    summary: &'static str,
+    operator_action: &'static str,
+}
+
+fn classify_tunnel_error(category: &str, _message: &str) -> TunnelErrorDiagnostic {
+    match category {
+        "stale_timeout" => TunnelErrorDiagnostic {
+            severity: "warning",
+            component: "tunnel_read",
+            summary: "No inbound tunnel frames before stale timeout",
+            operator_action:
+                "Check gateway or reverse-proxy idle timeouts, packet loss, and WebSocket ping/pong reachability. Increase AETHER_PROXY_TUNNEL_STALE_TIMEOUT_MS if the network is high-latency.",
+        },
+        "ws_write_error" => TunnelErrorDiagnostic {
+            severity: "error",
+            component: "tunnel_write",
+            summary: "WebSocket write failed because the peer closed or reset the connection",
+            operator_action:
+                "Check gateway restarts, load balancer resets, NAT/firewall connection tracking, and whether the proxy is reconnecting successfully.",
+        },
+        "ws_ping_error" => TunnelErrorDiagnostic {
+            severity: "error",
+            component: "tunnel_write",
+            summary: "WebSocket keepalive ping could not be sent",
+            operator_action:
+                "Check whether the peer closed the socket or an intermediary is dropping idle WebSocket connections.",
+        },
+        "ws_read_error" => TunnelErrorDiagnostic {
+            severity: "error",
+            component: "tunnel_read",
+            summary: "WebSocket read failed",
+            operator_action:
+                "Check gateway logs and network stability around the same timestamp; compare with reconnect and heartbeat ACK counters.",
+        },
+        "tunnel_connect_error" => TunnelErrorDiagnostic {
+            severity: "critical",
+            component: "tunnel_connect",
+            summary: "Tunnel connection attempt failed",
+            operator_action:
+                "Check Aether URL reachability, DNS, TLS, management token validity, and any configured AETHER_PROXY_AETHER_PROXY_URL.",
+        },
+        "frame_decode_error" => TunnelErrorDiagnostic {
+            severity: "error",
+            component: "tunnel_protocol",
+            summary: "Received tunnel frame could not be decoded",
+            operator_action:
+                "Check proxy and gateway version compatibility and whether traffic is being modified by an intermediary.",
+        },
+        "stream_dispatch_timeout" => TunnelErrorDiagnostic {
+            severity: "warning",
+            component: "stream_dispatch",
+            summary: "Request body frame could not be delivered to its stream handler in time",
+            operator_action:
+                "Check proxy CPU, memory, stream concurrency saturation, and slow upstream provider requests.",
+        },
+        "heartbeat_ack_empty" | "heartbeat_ack_parse" => TunnelErrorDiagnostic {
+            severity: "warning",
+            component: "heartbeat",
+            summary: "Heartbeat ACK from gateway was missing or invalid",
+            operator_action:
+                "Check gateway heartbeat handler logs and proxy/gateway version compatibility.",
+        },
+        "writer_task_panic" | "writer_task_cancelled" => TunnelErrorDiagnostic {
+            severity: "error",
+            component: "tunnel_writer",
+            summary: "Tunnel writer task exited unexpectedly",
+            operator_action:
+                "Check proxy logs for the preceding write or ping error and confirm the tunnel reconnect loop is active.",
+        },
+        "dispatcher_error" => TunnelErrorDiagnostic {
+            severity: "error",
+            component: "tunnel_dispatcher",
+            summary: "Tunnel dispatcher exited with an error",
+            operator_action:
+                "Check the proxied request stream and gateway tunnel logs around the same timestamp.",
+        },
+        _ => TunnelErrorDiagnostic {
+            severity: "info",
+            component: "tunnel",
+            summary: "Tunnel reported an unclassified error",
+            operator_action:
+                "Inspect the raw message and compare it with proxy, gateway, and network logs at the same time.",
+        },
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]

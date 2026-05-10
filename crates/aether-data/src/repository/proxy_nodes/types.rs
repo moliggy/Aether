@@ -324,6 +324,10 @@ pub struct TunnelErrorEventRecord {
     pub timestamp_unix_secs: u64,
     pub category: String,
     pub message: String,
+    pub severity: Option<String>,
+    pub component: Option<String>,
+    pub summary: Option<String>,
+    pub operator_action: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -417,7 +421,11 @@ pub fn build_tunnel_metrics_sample(
 }
 
 pub fn build_tunnel_error_event_detail(event: &TunnelErrorEventRecord) -> String {
-    format!("[{}] {}", event.category, event.message)
+    format!(
+        "[{}] {}",
+        event.category,
+        event.summary.as_deref().unwrap_or(event.message.as_str())
+    )
 }
 
 pub fn normalize_proxy_metadata(
@@ -497,6 +505,10 @@ fn extract_recent_tunnel_errors(proxy_metadata: Option<&Value>) -> Vec<TunnelErr
                             .and_then(Value::as_str)
                             .unwrap_or("n/a")
                             .to_string(),
+                        severity: json_string(item.get("severity")),
+                        component: json_string(item.get("component")),
+                        summary: json_string(item.get("summary")),
+                        operator_action: json_string(item.get("operator_action")),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -510,6 +522,14 @@ fn json_u64(value: Option<&Value>) -> Option<u64> {
             .as_u64()
             .or_else(|| value.as_i64().and_then(|n| (n >= 0).then_some(n as u64)))
     })
+}
+
+fn json_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 fn counter_delta_u64(previous: Option<u64>, current: u64) -> u64 {
@@ -726,10 +746,11 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        bucket_start_unix_secs, build_tunnel_metrics_sample, normalize_proxy_node_scheduling_state,
-        proxy_node_accepts_new_tunnels, proxy_reported_version,
-        reconcile_remote_config_after_heartbeat, remote_config_scheduling_state,
-        remote_config_upgrade_target, ProxyNodeMetricsStep, StoredProxyNode,
+        bucket_start_unix_secs, build_tunnel_error_event_detail, build_tunnel_metrics_sample,
+        normalize_proxy_node_scheduling_state, proxy_node_accepts_new_tunnels,
+        proxy_reported_version, reconcile_remote_config_after_heartbeat,
+        remote_config_scheduling_state, remote_config_upgrade_target, ProxyNodeMetricsStep,
+        StoredProxyNode,
     };
 
     #[test]
@@ -842,7 +863,15 @@ mod tests {
             },
             "recent_tunnel_errors": [
                 {"timestamp_unix_secs": 100, "category": "older", "message": "old"},
-                {"timestamp_unix_secs": 101, "category": "newer", "message": "new"}
+                {
+                    "timestamp_unix_secs": 101,
+                    "category": "newer",
+                    "message": "new",
+                    "severity": "error",
+                    "component": "tunnel_write",
+                    "summary": "WebSocket write failed because the peer closed or reset the connection",
+                    "operator_action": "Check gateway restarts and network resets."
+                }
             ]
         });
 
@@ -860,6 +889,19 @@ mod tests {
         assert_eq!(sample.ws_out_frames_delta, 3);
         assert_eq!(sample.recent_error_events.len(), 2);
         assert_eq!(sample.recent_error_events[0].category, "older");
+        assert_eq!(sample.recent_error_events[0].summary, None);
+        assert_eq!(
+            sample.recent_error_events[1].severity.as_deref(),
+            Some("error")
+        );
+        assert_eq!(
+            sample.recent_error_events[1].component.as_deref(),
+            Some("tunnel_write")
+        );
+        assert_eq!(
+            build_tunnel_error_event_detail(&sample.recent_error_events[1]),
+            "[newer] WebSocket write failed because the peer closed or reset the connection"
+        );
     }
 
     #[test]

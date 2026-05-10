@@ -158,6 +158,7 @@ pub async fn run(mut config: Config, servers: Vec<ServerEntry>) -> anyhow::Resul
     // Build a profile-keyed Hyper client pool for tunnel upstream requests.
     let upstream_client_pool =
         upstream_client::UpstreamClientPool::new(Arc::clone(&config), Arc::clone(&dns_cache));
+    let resource_monitor = Arc::new(hardware::RuntimeResourceMonitor::new());
 
     // Register with each Aether server and build per-server contexts.
     // Wrapped in Arc<Mutex> so retry_failed_registrations can append later.
@@ -218,6 +219,7 @@ pub async fn run(mut config: Config, servers: Vec<ServerEntry>) -> anyhow::Resul
         dns_cache,
         upstream_client_pool,
         tunnel_tls_config,
+        resource_monitor,
         stream_gate: None,
         distributed_stream_gate: None,
     };
@@ -947,6 +949,7 @@ mod tests {
             dns_cache,
             upstream_client_pool,
             tunnel_tls_config: Arc::new(crate::tunnel::client::build_tls_config()),
+            resource_monitor: Arc::new(crate::hardware::RuntimeResourceMonitor::new()),
             stream_gate: None,
             distributed_stream_gate: None,
         })

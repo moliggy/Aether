@@ -1224,6 +1224,10 @@ impl ProxyNodeWriteRepository for SqlxProxyNodeRepository {
                     "source": "heartbeat",
                     "category": error.category,
                     "message": error.message,
+                    "severity": error.severity.as_deref(),
+                    "component": error.component.as_deref(),
+                    "summary": error.summary.as_deref(),
+                    "operator_action": error.operator_action.as_deref(),
                     "timestamp_unix_secs": error.timestamp_unix_secs,
                 });
                 self.insert_event(
