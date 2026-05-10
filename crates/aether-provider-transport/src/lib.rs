@@ -103,7 +103,10 @@ pub use standard::{
     StandardPlanFallbackAcceptPolicy, StandardPlanFallbackHeadersInput,
     StandardProviderRequestHeaders, StandardProviderRequestHeadersInput,
 };
-pub use vertex::{is_vertex_api_key_transport_context, uses_vertex_api_key_query_auth};
+pub use vertex::{
+    is_vertex_api_key_transport_context, is_vertex_service_account_transport_context,
+    is_vertex_transport_context, uses_vertex_api_key_query_auth,
+};
 pub use video::{
     build_video_create_headers, build_video_create_request_body, build_video_create_upstream_url,
     reconstruct_local_video_task_snapshot, resolve_local_video_task_transport,

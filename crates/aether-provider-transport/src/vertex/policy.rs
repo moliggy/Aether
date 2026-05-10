@@ -1,10 +1,13 @@
 use super::super::snapshot::GatewayProviderTransportSnapshot;
 use super::super::{
     body_rules_are_locally_supported, header_rules_are_locally_supported,
+    supports_local_oauth_request_auth_resolution,
     resolve_transport_profile, transport_profile_is_configured,
     transport_proxy_is_locally_supported,
 };
-use super::auth::resolve_local_vertex_api_key_query_auth;
+use super::auth::{
+    resolve_local_vertex_api_key_query_auth, supports_local_vertex_service_account_auth_resolution,
+};
 
 fn is_vertex_transport_family(transport: &GatewayProviderTransportSnapshot) -> bool {
     transport
@@ -17,6 +20,19 @@ fn is_vertex_transport_family(transport: &GatewayProviderTransportSnapshot) -> b
 
 pub fn local_vertex_api_key_gemini_transport_unsupported_reason_with_network(
     transport: &GatewayProviderTransportSnapshot,
+) -> Option<&'static str> {
+    local_vertex_gemini_transport_unsupported_reason_with_network_impl(transport, true)
+}
+
+pub fn local_vertex_gemini_transport_unsupported_reason_with_network(
+    transport: &GatewayProviderTransportSnapshot,
+) -> Option<&'static str> {
+    local_vertex_gemini_transport_unsupported_reason_with_network_impl(transport, false)
+}
+
+fn local_vertex_gemini_transport_unsupported_reason_with_network_impl(
+    transport: &GatewayProviderTransportSnapshot,
+    require_api_key: bool,
 ) -> Option<&'static str> {
     if !transport.provider.is_active || !transport.endpoint.is_active || !transport.key.is_active {
         return if !transport.provider.is_active {
@@ -41,7 +57,15 @@ pub fn local_vertex_api_key_gemini_transport_unsupported_reason_with_network(
     if !body_rules_are_locally_supported(transport.endpoint.body_rules.as_ref()) {
         return Some("transport_body_rules_unsupported");
     }
-    if resolve_local_vertex_api_key_query_auth(transport).is_none() {
+    let has_api_key_auth = resolve_local_vertex_api_key_query_auth(transport).is_some();
+    let has_service_account_auth =
+        supports_local_vertex_service_account_auth_resolution(transport)
+            && supports_local_oauth_request_auth_resolution(transport);
+    if require_api_key {
+        if !has_api_key_auth {
+            return Some("transport_auth_unavailable");
+        }
+    } else if !has_api_key_auth && !has_service_account_auth {
         return Some("transport_auth_unavailable");
     }
     if !transport_proxy_is_locally_supported(transport) {
@@ -69,6 +93,12 @@ pub fn supports_local_vertex_api_key_gemini_transport_with_network(
     transport: &GatewayProviderTransportSnapshot,
 ) -> bool {
     local_vertex_api_key_gemini_transport_unsupported_reason_with_network(transport).is_none()
+}
+
+pub fn supports_local_vertex_gemini_transport_with_network(
+    transport: &GatewayProviderTransportSnapshot,
+) -> bool {
+    local_vertex_gemini_transport_unsupported_reason_with_network(transport).is_none()
 }
 
 pub fn supports_local_vertex_api_key_imagen_transport(
@@ -159,8 +189,10 @@ mod tests {
 
     use super::{
         local_vertex_api_key_gemini_transport_unsupported_reason_with_network,
+        local_vertex_gemini_transport_unsupported_reason_with_network,
         supports_local_vertex_api_key_gemini_transport,
         supports_local_vertex_api_key_gemini_transport_with_network,
+        supports_local_vertex_gemini_transport_with_network,
     };
 
     fn sample_transport() -> GatewayProviderTransportSnapshot {
@@ -242,11 +274,33 @@ mod tests {
     }
 
     #[test]
-    fn rejects_vertex_service_account_subset() {
+    fn rejects_vertex_service_account_from_api_key_subset() {
         let mut transport = sample_transport();
         transport.key.auth_type = "service_account".to_string();
         transport.key.decrypted_auth_config = Some("{\"project_id\":\"demo-project\"}".to_string());
         assert!(!supports_local_vertex_api_key_gemini_transport(&transport));
+    }
+
+    #[test]
+    fn supports_vertex_service_account_gemini_transport_with_network() {
+        let mut transport = sample_transport();
+        transport.key.auth_type = "service_account".to_string();
+        transport.key.decrypted_api_key = "__placeholder__".to_string();
+        transport.key.decrypted_auth_config = Some(
+            r#"{
+                "client_email":"svc@example.iam.gserviceaccount.com",
+                "private_key":"TEST-PRIVATE-KEY",
+                "project_id":"demo-project"
+            }"#
+            .to_string(),
+        );
+
+        assert!(!supports_local_vertex_api_key_gemini_transport_with_network(
+            &transport
+        ));
+        assert!(supports_local_vertex_gemini_transport_with_network(
+            &transport
+        ));
     }
 
     #[test]
@@ -270,6 +324,10 @@ mod tests {
 
         assert_eq!(
             local_vertex_api_key_gemini_transport_unsupported_reason_with_network(&transport),
+            Some("transport_auth_unavailable")
+        );
+        assert_eq!(
+            local_vertex_gemini_transport_unsupported_reason_with_network(&transport),
             Some("transport_auth_unavailable")
         );
     }

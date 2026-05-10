@@ -57,6 +57,17 @@ fn oauth_access_token_expired(expires_at_unix_secs: Option<u64>, now_unix_secs: 
     expires_at_unix_secs.is_none_or(|expires_at| expires_at == 0 || expires_at <= now_unix_secs)
 }
 
+fn local_oauth_refresh_entry_should_stay_memory_only(
+    transport: &provider_transport::GatewayProviderTransportSnapshot,
+    entry: &provider_transport::CachedOAuthEntry,
+) -> bool {
+    entry
+        .provider_type
+        .trim()
+        .eq_ignore_ascii_case(provider_transport::vertex::VERTEX_SERVICE_ACCOUNT_PROVIDER_TYPE)
+        && provider_transport::is_vertex_service_account_transport_context(transport)
+}
+
 fn oauth_auth_config_refresh_token_fingerprint(auth_config: Option<&str>) -> Option<String> {
     let parsed = auth_config
         .map(str::trim)
@@ -1094,6 +1105,17 @@ impl AppState {
             return Ok(());
         }
 
+        if local_oauth_refresh_entry_should_stay_memory_only(transport, entry) {
+            tracing::info!(
+                key_id = %key_id,
+                provider_id = %transport.provider.id,
+                provider_type = %transport.provider.provider_type,
+                expires_at_unix_secs = ?entry.expires_at_unix_secs,
+                "gateway local oauth refresh entry kept in memory only"
+            );
+            return Ok(());
+        }
+
         let Some(encryption_key) = self.data.encryption_key() else {
             return Ok(());
         };
@@ -1702,5 +1724,72 @@ mod tests {
             ),
             Some("[OAUTH_EXPIRED] access token invalid".to_string()),
         );
+    }
+
+    #[test]
+    fn vertex_service_account_refresh_entry_stays_memory_only() {
+        let transport = crate::provider_transport::GatewayProviderTransportSnapshot {
+            provider: crate::provider_transport::snapshot::GatewayProviderTransportProvider {
+                id: "provider-1".to_string(),
+                name: "Vertex".to_string(),
+                provider_type: "vertex_ai".to_string(),
+                website: None,
+                is_active: true,
+                keep_priority_on_conversion: false,
+                enable_format_conversion: false,
+                concurrent_limit: None,
+                max_retries: None,
+                proxy: None,
+                request_timeout_secs: None,
+                stream_first_byte_timeout_secs: None,
+                config: None,
+            },
+            endpoint: crate::provider_transport::snapshot::GatewayProviderTransportEndpoint {
+                id: "endpoint-1".to_string(),
+                provider_id: "provider-1".to_string(),
+                api_format: "gemini:generate_content".to_string(),
+                api_family: Some("gemini".to_string()),
+                endpoint_kind: Some("chat".to_string()),
+                is_active: true,
+                base_url: "https://aiplatform.googleapis.com".to_string(),
+                header_rules: None,
+                body_rules: None,
+                max_retries: None,
+                custom_path: None,
+                config: None,
+                format_acceptance_config: None,
+                proxy: None,
+            },
+            key: crate::provider_transport::snapshot::GatewayProviderTransportKey {
+                id: "key-1".to_string(),
+                provider_id: "provider-1".to_string(),
+                name: "Gemini".to_string(),
+                auth_type: "service_account".to_string(),
+                is_active: true,
+                api_formats: Some(vec!["gemini:generate_content".to_string()]),
+                auth_type_by_format: None,
+                allow_auth_channel_mismatch_formats: None,
+                allowed_models: None,
+                capabilities: None,
+                rate_multipliers: None,
+                global_priority_by_format: None,
+                expires_at_unix_secs: None,
+                proxy: None,
+                fingerprint: None,
+                decrypted_api_key: "__placeholder__".to_string(),
+                decrypted_auth_config: Some("{\"project_id\":\"demo\"}".to_string()),
+            },
+        };
+        let entry = crate::provider_transport::CachedOAuthEntry {
+            provider_type: "vertex_ai".to_string(),
+            auth_header_name: "authorization".to_string(),
+            auth_header_value: "Bearer access-token".to_string(),
+            expires_at_unix_secs: Some(4_102_444_800),
+            metadata: None,
+        };
+
+        assert!(super::local_oauth_refresh_entry_should_stay_memory_only(
+            &transport, &entry
+        ));
     }
 }

@@ -15,8 +15,8 @@ use crate::policy::{
     local_standard_transport_unsupported_reason_with_network,
 };
 use crate::vertex::{
-    is_vertex_api_key_transport_context,
-    local_vertex_api_key_gemini_transport_unsupported_reason_with_network,
+    is_vertex_api_key_transport_context, is_vertex_transport_context,
+    local_vertex_gemini_transport_unsupported_reason_with_network,
     resolve_local_vertex_api_key_query_auth, VERTEX_API_KEY_QUERY_PARAM,
 };
 use crate::GatewayProviderTransportSnapshot;
@@ -106,8 +106,8 @@ pub fn request_conversion_transport_unsupported_reason(
         "claude:messages" => {
             local_standard_transport_unsupported_reason_with_network(transport, "claude:messages")
         }
-        "gemini:generate_content" if is_vertex_api_key_transport_context(transport) => {
-            local_vertex_api_key_gemini_transport_unsupported_reason_with_network(transport)
+        "gemini:generate_content" if is_vertex_transport_context(transport) => {
+            local_vertex_gemini_transport_unsupported_reason_with_network(transport)
         }
         "gemini:generate_content" => local_gemini_transport_unsupported_reason_with_network(
             transport,
