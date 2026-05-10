@@ -150,6 +150,27 @@
           </div>
         </div>
       </div>
+
+      <div class="flex items-center h-full">
+        <div class="flex items-center space-x-2">
+          <Checkbox
+            id="enable-openai-image-sync-heartbeat"
+            :checked="enableOpenaiImageSyncHeartbeat"
+            @update:checked="$emit('update:enableOpenaiImageSyncHeartbeat', $event)"
+          />
+          <div>
+            <Label
+              for="enable-openai-image-sync-heartbeat"
+              class="cursor-pointer"
+            >
+              同步生图心跳
+            </Label>
+            <p class="text-xs text-muted-foreground">
+              开启后同步生图外层 HTTP 状态固定为 200，上游失败需读取响应体 error.upstream_status
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   </CardSection>
 </template>
@@ -173,6 +194,7 @@ defineProps<{
   passwordPolicyLevel: string
   autoDeleteExpiredKeys: boolean
   enableFormatConversion: boolean
+  enableOpenaiImageSyncHeartbeat: boolean
   loading: boolean
   hasChanges: boolean
 }>()
@@ -185,5 +207,6 @@ defineEmits<{
   'update:passwordPolicyLevel': [value: string]
   'update:autoDeleteExpiredKeys': [value: boolean]
   'update:enableFormatConversion': [value: boolean]
+  'update:enableOpenaiImageSyncHeartbeat': [value: boolean]
 }>()
 </script>

@@ -899,6 +899,12 @@ fn build_json_whitespace_heartbeat_stream(
     }
 }
 
+pub(crate) fn build_openai_image_sync_json_whitespace_heartbeat_stream(
+    rx: mpsc::Receiver<Result<Bytes, IoError>>,
+) -> impl futures_util::Stream<Item = Result<Bytes, IoError>> + Send + 'static {
+    build_json_whitespace_heartbeat_stream(rx, OPENAI_IMAGE_SYNC_JSON_HEARTBEAT_INTERVAL, None)
+}
+
 async fn openai_image_sync_json_heartbeat_final_bytes(
     result: Result<Option<Response<Body>>, GatewayError>,
 ) -> Vec<u8> {
