@@ -19,6 +19,9 @@ use super::kiro::{
     supports_local_kiro_request_auth_resolution, KiroOAuthRefreshAdapter, KiroRequestAuth,
 };
 use super::snapshot::GatewayProviderTransportSnapshot;
+use super::vertex::{
+    supports_local_vertex_service_account_auth_resolution, VertexServiceAccountRefreshAdapter,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
@@ -339,6 +342,7 @@ impl LocalOAuthRefreshCoordinator {
         Self {
             adapters: vec![
                 Arc::new(KiroOAuthRefreshAdapter::default()),
+                Arc::new(VertexServiceAccountRefreshAdapter),
                 Arc::new(GenericOAuthRefreshAdapter::default()),
             ],
             cache: Mutex::new(BTreeMap::new()),
@@ -547,6 +551,7 @@ pub fn supports_local_oauth_request_auth_resolution(
     transport: &GatewayProviderTransportSnapshot,
 ) -> bool {
     supports_local_kiro_request_auth_resolution(transport)
+        || supports_local_vertex_service_account_auth_resolution(transport)
         || supports_local_generic_oauth_request_auth_resolution(transport)
 }
 

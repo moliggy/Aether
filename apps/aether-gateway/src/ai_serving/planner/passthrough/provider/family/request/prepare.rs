@@ -6,7 +6,9 @@ use crate::ai_serving::planner::candidate_preparation::{
 use crate::ai_serving::planner::candidate_resolution::EligibleLocalExecutionCandidate;
 use crate::ai_serving::planner::spec_metadata::local_same_format_provider_spec_metadata;
 use crate::ai_serving::transport::kiro::KiroRequestAuth;
-use crate::ai_serving::transport::vertex::resolve_local_vertex_api_key_query_auth;
+use crate::ai_serving::transport::vertex::{
+    is_vertex_api_key_transport_context, resolve_local_vertex_api_key_query_auth,
+};
 use crate::ai_serving::transport::SameFormatProviderRequestBehavior;
 use crate::ai_serving::{
     GatewayProviderTransportSnapshot, LocalResolvedOAuthRequestAuth, PlannerAppState,
@@ -134,7 +136,10 @@ pub(super) async fn prepare_local_same_format_provider_candidate(
             return None;
         }
     };
-    if behavior.is_vertex && vertex_query_auth.is_none() {
+    if behavior.is_vertex
+        && is_vertex_api_key_transport_context(&transport)
+        && vertex_query_auth.is_none()
+    {
         super::super::payload::mark_skipped_local_same_format_provider_candidate(
             state,
             input,

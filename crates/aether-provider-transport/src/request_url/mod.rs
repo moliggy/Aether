@@ -15,7 +15,8 @@ use crate::url::{
     build_openai_responses_url, build_passthrough_path_url, normalize_gemini_content_action_path,
 };
 use crate::vertex::{
-    build_vertex_api_key_gemini_content_url, resolve_local_vertex_api_key_query_auth,
+    build_vertex_api_key_gemini_content_url, build_vertex_service_account_gemini_content_url,
+    resolve_local_vertex_api_key_query_auth, resolve_local_vertex_service_account_auth_config,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -253,6 +254,14 @@ fn build_transport_hook_url(
                 params.mapped_model?,
                 params.upstream_is_stream,
                 &auth.value,
+                params.request_query,
+            );
+        }
+        if let Some(auth_config) = resolve_local_vertex_service_account_auth_config(transport) {
+            return build_vertex_service_account_gemini_content_url(
+                params.mapped_model?,
+                params.upstream_is_stream,
+                &auth_config,
                 params.request_query,
             );
         }
@@ -523,6 +532,43 @@ mod tests {
         assert_eq!(
             url,
             "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse&foo=bar&key=vertex-secret"
+        );
+    }
+
+    #[test]
+    fn uses_vertex_service_account_hook_before_default_gemini_url() {
+        let mut transport = sample_transport(
+            "vertex_ai",
+            "gemini:generate_content",
+            "https://aiplatform.googleapis.com",
+            None,
+        );
+        transport.key.auth_type = "service_account".to_string();
+        transport.key.decrypted_api_key = "__placeholder__".to_string();
+        transport.key.decrypted_auth_config = Some(
+            r#"{
+                "client_email":"svc@example.iam.gserviceaccount.com",
+                "private_key":"TEST-PRIVATE-KEY",
+                "project_id":"demo-project"
+            }"#
+            .to_string(),
+        );
+
+        let url = build_transport_request_url(
+            &transport,
+            TransportRequestUrlParams {
+                provider_api_format: "gemini:generate_content",
+                mapped_model: Some("gemini-3.1-pro-preview"),
+                upstream_is_stream: false,
+                request_query: Some("foo=bar&beta=1"),
+                kiro_api_region: None,
+            },
+        )
+        .expect("vertex service account hook url");
+
+        assert_eq!(
+            url,
+            "https://aiplatform.googleapis.com/v1/projects/demo-project/locations/global/publishers/google/models/gemini-3.1-pro-preview:generateContent?foo=bar"
         );
     }
 

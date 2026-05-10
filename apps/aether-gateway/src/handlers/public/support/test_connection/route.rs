@@ -194,7 +194,7 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
     }
 
     let oauth_auth = match format_value.as_str() {
-        "openai:chat" | "claude:messages" => {
+        "openai:chat" | "claude:messages" | "gemini:generate_content" => {
             match state.resolve_local_oauth_request_auth(&transport).await {
                 Ok(Some(crate::provider_transport::LocalResolvedOAuthRequestAuth::Header {
                     name,
@@ -217,16 +217,26 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
         }
         "gemini:generate_content" => {
             crate::provider_transport::auth::resolve_local_gemini_auth(&transport)
+                .or(oauth_auth.clone())
         }
         _ => None,
-    };
-    let Some((auth_header, auth_value)) = auth else {
-        return None;
     };
     let uses_vertex_query_auth = crate::provider_transport::uses_vertex_api_key_query_auth(
         &transport,
         format_value.as_str(),
     );
+    let vertex_query_auth = if uses_vertex_query_auth {
+        crate::provider_transport::vertex::resolve_local_vertex_api_key_query_auth(&transport)
+    } else {
+        None
+    };
+    let (auth_header, auth_value) = match auth {
+        Some((auth_header, auth_value)) => (auth_header, auth_value),
+        None if uses_vertex_query_auth && vertex_query_auth.is_some() => {
+            (String::new(), String::new())
+        }
+        None => return None,
+    };
 
     let upstream_url = crate::provider_transport::build_transport_request_url(
         &transport,

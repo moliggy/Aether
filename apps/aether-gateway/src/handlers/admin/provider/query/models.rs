@@ -362,8 +362,8 @@ fn provider_query_transport_supports_standard_test_execution(
             )
         }
         "gemini:generate_content" => {
-            if crate::provider_transport::is_vertex_api_key_transport_context(transport) {
-                aether_provider_transport::vertex::supports_local_vertex_api_key_gemini_transport_with_network(transport)
+            if crate::provider_transport::is_vertex_transport_context(transport) {
+                aether_provider_transport::vertex::supports_local_vertex_gemini_transport_with_network(transport)
             } else {
                 state.supports_local_gemini_transport_with_network(transport, api_format)
             }

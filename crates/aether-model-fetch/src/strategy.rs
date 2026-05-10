@@ -8,6 +8,7 @@ use aether_provider_transport::{
 };
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine as _;
+use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::DecodePrivateKey;
 use rsa::signature::{SignatureEncoding, Signer};
@@ -675,14 +676,26 @@ fn build_vertex_service_account_assertion(
         .map_err(|err| format!("vertex_ai(service_account): jwt payload encode failed: {err}"))?,
     );
     let message = format!("{header}.{payload}");
-    let private_key = RsaPrivateKey::from_pkcs8_pem(private_key_pem)
-        .map_err(|err| format!("vertex_ai(service_account): private_key parse failed: {err}"))?;
+    let private_key = decode_vertex_service_account_private_key(private_key_pem)?;
     let signing_key = SigningKey::<Sha256>::new(private_key);
     let signature = signing_key.sign(message.as_bytes());
     Ok(format!(
         "{message}.{}",
         URL_SAFE_NO_PAD.encode(signature.to_bytes())
     ))
+}
+
+fn decode_vertex_service_account_private_key(
+    private_key_pem: &str,
+) -> Result<RsaPrivateKey, String> {
+    match RsaPrivateKey::from_pkcs8_pem(private_key_pem) {
+        Ok(private_key) => Ok(private_key),
+        Err(pkcs8_err) => RsaPrivateKey::from_pkcs1_pem(private_key_pem).map_err(|pkcs1_err| {
+            format!(
+                "vertex_ai(service_account): private_key parse failed: pkcs8: {pkcs8_err}; pkcs1: {pkcs1_err}"
+            )
+        }),
+    }
 }
 
 fn execution_result_json_body(result: &ExecutionResult) -> Result<Value, String> {

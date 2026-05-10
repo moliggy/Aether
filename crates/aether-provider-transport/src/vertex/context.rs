@@ -27,26 +27,34 @@ pub fn looks_like_vertex_ai_host(base_url: &str) -> bool {
 }
 
 pub fn is_vertex_api_key_transport_context(transport: &GatewayProviderTransportSnapshot) -> bool {
-    if transport
-        .provider
-        .provider_type
-        .trim()
-        .eq_ignore_ascii_case(super::PROVIDER_TYPE)
-    {
+    if is_vertex_provider_type(transport) {
         return resolve_local_auth_type_for_transport_format(transport)
             .eq_ignore_ascii_case("api_key");
     }
 
-    if !looks_like_vertex_ai_host(&transport.endpoint.base_url) {
-        return false;
-    }
-
-    let endpoint_api_format = transport.endpoint.api_format.trim().to_ascii_lowercase();
-    if !endpoint_api_format.starts_with("gemini:") && !endpoint_api_format.starts_with("claude:") {
+    if !is_vertex_host_format_context(transport) {
         return false;
     }
 
     resolve_local_auth_type_for_transport_format(transport).eq_ignore_ascii_case("api_key")
+}
+
+pub fn is_vertex_service_account_transport_context(
+    transport: &GatewayProviderTransportSnapshot,
+) -> bool {
+    if !is_vertex_provider_type(transport) && !is_vertex_host_format_context(transport) {
+        return false;
+    }
+
+    matches!(
+        resolve_local_auth_type_for_transport_format(transport).as_str(),
+        "service_account" | "vertex_ai"
+    )
+}
+
+pub fn is_vertex_transport_context(transport: &GatewayProviderTransportSnapshot) -> bool {
+    is_vertex_api_key_transport_context(transport)
+        || is_vertex_service_account_transport_context(transport)
 }
 
 pub fn uses_vertex_api_key_query_auth(
@@ -60,11 +68,28 @@ pub fn uses_vertex_api_key_query_auth(
             .starts_with("gemini:")
 }
 
+fn is_vertex_provider_type(transport: &GatewayProviderTransportSnapshot) -> bool {
+    transport
+        .provider
+        .provider_type
+        .trim()
+        .eq_ignore_ascii_case(super::PROVIDER_TYPE)
+}
+
+fn is_vertex_host_format_context(transport: &GatewayProviderTransportSnapshot) -> bool {
+    if !looks_like_vertex_ai_host(&transport.endpoint.base_url) {
+        return false;
+    }
+
+    let endpoint_api_format = transport.endpoint.api_format.trim().to_ascii_lowercase();
+    endpoint_api_format.starts_with("gemini:") || endpoint_api_format.starts_with("claude:")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        is_vertex_api_key_transport_context, looks_like_vertex_ai_host,
-        uses_vertex_api_key_query_auth,
+        is_vertex_api_key_transport_context, is_vertex_service_account_transport_context,
+        is_vertex_transport_context, looks_like_vertex_ai_host, uses_vertex_api_key_query_auth,
     };
     use crate::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
@@ -147,6 +172,17 @@ mod tests {
     fn rejects_non_api_key_custom_aiplatform_transport() {
         let mut transport = sample_transport();
         transport.key.auth_type = "bearer".to_string();
+        assert!(!is_vertex_api_key_transport_context(&transport));
+    }
+
+    #[test]
+    fn infers_vertex_service_account_context_for_fixed_provider() {
+        let mut transport = sample_transport();
+        transport.provider.provider_type = "vertex_ai".to_string();
+        transport.key.auth_type = "service_account".to_string();
+
+        assert!(is_vertex_service_account_transport_context(&transport));
+        assert!(is_vertex_transport_context(&transport));
         assert!(!is_vertex_api_key_transport_context(&transport));
     }
 

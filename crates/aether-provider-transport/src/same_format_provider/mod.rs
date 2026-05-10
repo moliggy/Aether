@@ -23,8 +23,8 @@ use crate::rules::{
 };
 use crate::snapshot::GatewayProviderTransportSnapshot;
 use crate::vertex::{
-    is_vertex_api_key_transport_context,
-    local_vertex_api_key_gemini_transport_unsupported_reason_with_network,
+    is_vertex_service_account_transport_context, is_vertex_transport_context,
+    local_vertex_gemini_transport_unsupported_reason_with_network,
 };
 use crate::{build_transport_request_url, ensure_upstream_auth_header, TransportRequestUrlParams};
 
@@ -103,7 +103,7 @@ pub fn classify_same_format_provider_request_behavior(
         .provider_type
         .trim()
         .eq_ignore_ascii_case("claude_code");
-    let is_vertex = is_vertex_api_key_transport_context(transport);
+    let is_vertex = is_vertex_transport_context(transport);
     let is_kiro = is_kiro_provider_transport(transport);
     let upstream_is_stream = aether_ai_formats::resolve_upstream_is_stream_from_endpoint_config(
         transport.endpoint.config.as_ref(),
@@ -328,7 +328,7 @@ pub fn same_format_provider_transport_unsupported_reason(
     } else if behavior.is_claude_code {
         local_claude_code_transport_unsupported_reason_with_network(transport, api_format)
     } else if behavior.is_vertex {
-        local_vertex_api_key_gemini_transport_unsupported_reason_with_network(transport)
+        local_vertex_gemini_transport_unsupported_reason_with_network(transport)
     } else {
         match family {
             SameFormatProviderFamily::Standard => {
@@ -391,6 +391,9 @@ pub fn should_try_same_format_provider_oauth_auth(
     behavior.is_kiro
         || matches!(family, SameFormatProviderFamily::Standard)
             && resolve_local_standard_auth(transport).is_none()
+        || matches!(family, SameFormatProviderFamily::Gemini)
+            && behavior.is_vertex
+            && is_vertex_service_account_transport_context(transport)
         || matches!(family, SameFormatProviderFamily::Gemini)
             && !behavior.is_vertex
             && resolve_local_gemini_auth(transport).is_none()

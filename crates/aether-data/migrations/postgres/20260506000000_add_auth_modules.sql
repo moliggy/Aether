@@ -1,0 +1,3 @@
+-- Historical compatibility no-op.
+-- The auth module tables are already present in the squashed baseline and
+-- 20260505000000_sync_core_export_columns for existing Postgres deployments.

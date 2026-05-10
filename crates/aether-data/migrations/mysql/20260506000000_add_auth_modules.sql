@@ -1,0 +1,2 @@
+-- Historical compatibility no-op.
+-- The auth module tables are already present in the MySQL baseline.
