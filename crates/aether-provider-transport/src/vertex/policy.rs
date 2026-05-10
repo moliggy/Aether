@@ -1,9 +1,8 @@
 use super::super::snapshot::GatewayProviderTransportSnapshot;
 use super::super::{
     body_rules_are_locally_supported, header_rules_are_locally_supported,
-    supports_local_oauth_request_auth_resolution,
-    resolve_transport_profile, transport_profile_is_configured,
-    transport_proxy_is_locally_supported,
+    resolve_transport_profile, supports_local_oauth_request_auth_resolution,
+    transport_profile_is_configured, transport_proxy_is_locally_supported,
 };
 use super::auth::{
     resolve_local_vertex_api_key_query_auth, supports_local_vertex_service_account_auth_resolution,
@@ -58,9 +57,8 @@ fn local_vertex_gemini_transport_unsupported_reason_with_network_impl(
         return Some("transport_body_rules_unsupported");
     }
     let has_api_key_auth = resolve_local_vertex_api_key_query_auth(transport).is_some();
-    let has_service_account_auth =
-        supports_local_vertex_service_account_auth_resolution(transport)
-            && supports_local_oauth_request_auth_resolution(transport);
+    let has_service_account_auth = supports_local_vertex_service_account_auth_resolution(transport)
+        && supports_local_oauth_request_auth_resolution(transport);
     if require_api_key {
         if !has_api_key_auth {
             return Some("transport_auth_unavailable");
@@ -295,9 +293,7 @@ mod tests {
             .to_string(),
         );
 
-        assert!(!supports_local_vertex_api_key_gemini_transport_with_network(
-            &transport
-        ));
+        assert!(!supports_local_vertex_api_key_gemini_transport_with_network(&transport));
         assert!(supports_local_vertex_gemini_transport_with_network(
             &transport
         ));

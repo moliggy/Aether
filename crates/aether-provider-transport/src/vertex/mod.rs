@@ -7,9 +7,8 @@ pub use auth::{
     parse_vertex_service_account_auth_config, resolve_local_vertex_api_key_query_auth,
     resolve_local_vertex_service_account_auth_config,
     supports_local_vertex_service_account_auth_resolution, VertexApiKeyQueryAuth,
-    VertexServiceAccountAuthConfig, VertexServiceAccountRefreshAdapter,
-    VERTEX_API_KEY_QUERY_PARAM, VERTEX_SERVICE_ACCOUNT_AUTH_HEADER,
-    VERTEX_SERVICE_ACCOUNT_PROVIDER_TYPE,
+    VertexServiceAccountAuthConfig, VertexServiceAccountRefreshAdapter, VERTEX_API_KEY_QUERY_PARAM,
+    VERTEX_SERVICE_ACCOUNT_AUTH_HEADER, VERTEX_SERVICE_ACCOUNT_PROVIDER_TYPE,
 };
 pub use context::{
     is_vertex_api_key_transport_context, is_vertex_service_account_transport_context,

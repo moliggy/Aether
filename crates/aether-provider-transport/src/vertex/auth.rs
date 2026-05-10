@@ -206,10 +206,7 @@ impl LocalOAuthRefreshAdapter for VertexServiceAccountRefreshAdapter {
         let now = aether_oauth::core::current_unix_secs();
         let assertion = build_vertex_service_account_assertion(&auth_config, now)?;
         let body = form_urlencoded::Serializer::new(String::new())
-            .append_pair(
-                "grant_type",
-                "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            )
+            .append_pair("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
             .append_pair("assertion", &assertion)
             .finish();
         let response = executor
@@ -236,13 +233,12 @@ impl LocalOAuthRefreshAdapter for VertexServiceAccountRefreshAdapter {
                 body_excerpt: body_excerpt(&response.body_text),
             });
         }
-        let body_json: Value =
-            serde_json::from_str(&response.body_text).map_err(|err| {
-                LocalOAuthRefreshError::InvalidResponse {
-                    provider_type: VERTEX_SERVICE_ACCOUNT_PROVIDER_TYPE,
-                    message: format!("vertex service account token response is not JSON: {err}"),
-                }
-            })?;
+        let body_json: Value = serde_json::from_str(&response.body_text).map_err(|err| {
+            LocalOAuthRefreshError::InvalidResponse {
+                provider_type: VERTEX_SERVICE_ACCOUNT_PROVIDER_TYPE,
+                message: format!("vertex service account token response is not JSON: {err}"),
+            }
+        })?;
         let access_token = json_string(body_json.get("access_token")).ok_or_else(|| {
             LocalOAuthRefreshError::InvalidResponse {
                 provider_type: VERTEX_SERVICE_ACCOUNT_PROVIDER_TYPE,
@@ -300,7 +296,7 @@ fn decode_vertex_service_account_private_key(
     private_key_pem: &str,
 ) -> Result<RsaPrivateKey, LocalOAuthRefreshError> {
     match RsaPrivateKey::from_pkcs8_pem(private_key_pem) {
-        Ok(private_key) => return Ok(private_key),
+        Ok(private_key) => Ok(private_key),
         Err(pkcs8_err) => RsaPrivateKey::from_pkcs1_pem(private_key_pem).map_err(|pkcs1_err| {
             LocalOAuthRefreshError::InvalidResponse {
                 provider_type: VERTEX_SERVICE_ACCOUNT_PROVIDER_TYPE,
@@ -447,7 +443,10 @@ mod tests {
         assert_eq!(config.project_id, "demo-project");
         assert_eq!(config.region.as_deref(), Some("global"));
         assert_eq!(
-            config.model_regions.get("gemini-2.0-flash").map(String::as_str),
+            config
+                .model_regions
+                .get("gemini-2.0-flash")
+                .map(String::as_str),
             Some("us-central1")
         );
     }
