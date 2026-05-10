@@ -501,7 +501,7 @@ fn build_admin_monitoring_trace_candidate_extra_data(
                 usage.response_body_ref.as_deref(),
                 usage.response_body_state,
             ) {
-                extra_object.insert("upstream_response".to_string(), response);
+                merge_admin_monitoring_trace_response(extra_object, "upstream_response", response);
             }
         }
 
@@ -556,6 +556,39 @@ fn admin_monitoring_trace_response_data(
         "body_ref": body_ref,
         "body_state": body_state.map(|state| state.as_str()),
     }))
+}
+
+fn merge_admin_monitoring_trace_response(
+    extra_object: &mut serde_json::Map<String, Value>,
+    key: &str,
+    response: Value,
+) {
+    let Some(response_object) = response.as_object() else {
+        extra_object.insert(key.to_string(), response);
+        return;
+    };
+    let Some(existing_object) = extra_object.get_mut(key).and_then(Value::as_object_mut) else {
+        extra_object.insert(key.to_string(), Value::Object(response_object.clone()));
+        return;
+    };
+
+    for (field, value) in response_object {
+        if admin_monitoring_trace_response_value_empty(value)
+            && existing_object
+                .get(field)
+                .is_some_and(|existing| !admin_monitoring_trace_response_value_empty(existing))
+        {
+            continue;
+        }
+        existing_object.insert(field.clone(), value.clone());
+    }
+}
+
+fn admin_monitoring_trace_response_value_empty(value: &Value) -> bool {
+    value.is_null()
+        || value.as_str().is_some_and(str::is_empty)
+        || value.as_array().is_some_and(Vec::is_empty)
+        || value.as_object().is_some_and(serde_json::Map::is_empty)
 }
 
 fn admin_monitoring_usage_is_error_node(usage: &StoredRequestUsageAudit) -> bool {

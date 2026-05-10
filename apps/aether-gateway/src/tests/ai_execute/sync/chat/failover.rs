@@ -1145,6 +1145,16 @@ async fn gateway_retries_next_local_openai_chat_sync_candidate_after_auth_failur
         stored_candidates[0].error_message.as_deref(),
         Some("invalid auth token")
     );
+    let failed_upstream_response = stored_candidates[0]
+        .extra_data
+        .as_ref()
+        .and_then(|value| value.get("upstream_response"))
+        .expect("failed candidate should keep its upstream response");
+    assert_eq!(failed_upstream_response["status_code"], json!(401));
+    assert_eq!(
+        failed_upstream_response["body"]["error"]["message"],
+        json!("invalid auth token")
+    );
     assert_eq!(stored_candidates[1].candidate_index, 1);
     assert_eq!(stored_candidates[1].status, RequestCandidateStatus::Success);
     assert_eq!(stored_candidates[1].status_code, Some(200));

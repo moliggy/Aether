@@ -20,9 +20,10 @@ use crate::execution_runtime::submission::{
 use crate::log_ids::short_request_id;
 use crate::orchestration::{
     apply_local_execution_effect, resolve_local_failover_analysis_for_attempt,
-    with_upstream_response_report_context, LocalAdaptiveRateLimitEffect, LocalAttemptFailureEffect,
-    LocalExecutionEffect, LocalExecutionEffectContext, LocalHealthFailureEffect,
-    LocalOAuthInvalidationEffect, LocalPoolErrorEffect,
+    trace_upstream_response_body, with_upstream_response_report_context,
+    LocalAdaptiveRateLimitEffect, LocalAttemptFailureEffect, LocalExecutionEffect,
+    LocalExecutionEffectContext, LocalHealthFailureEffect, LocalOAuthInvalidationEffect,
+    LocalPoolErrorEffect,
 };
 use crate::request_candidate_runtime::record_report_request_candidate_status;
 use crate::usage::submit_sync_report;
@@ -135,11 +136,12 @@ fn build_stream_failure_sync_payload(
     failure: StreamFailureReport,
 ) -> GatewaySyncReportRequest {
     let status_code = failure.status_code;
+    let body = trace_upstream_response_body(None, provider_buffered_body);
     let report_context = with_upstream_response_report_context(
         report_context.as_ref(),
         status_code,
         Some(&headers),
-        None,
+        body.as_ref(),
         None,
         None,
     )

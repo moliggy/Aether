@@ -83,11 +83,11 @@ use crate::execution_runtime::{
 use crate::execution_runtime::{MAX_STREAM_PREFETCH_BYTES, MAX_STREAM_PREFETCH_FRAMES};
 use crate::log_ids::short_request_id;
 use crate::orchestration::{
-    apply_local_execution_effect, build_local_error_flow_metadata, with_error_flow_report_context,
-    with_upstream_response_report_context, LocalAdaptiveRateLimitEffect,
-    LocalAdaptiveSuccessEffect, LocalAttemptFailureEffect, LocalExecutionEffect,
-    LocalExecutionEffectContext, LocalHealthFailureEffect, LocalHealthSuccessEffect,
-    LocalOAuthInvalidationEffect, LocalPoolErrorEffect,
+    apply_local_execution_effect, build_local_error_flow_metadata, trace_upstream_response_body,
+    with_error_flow_report_context, with_upstream_response_report_context,
+    LocalAdaptiveRateLimitEffect, LocalAdaptiveSuccessEffect, LocalAttemptFailureEffect,
+    LocalExecutionEffect, LocalExecutionEffectContext, LocalHealthFailureEffect,
+    LocalHealthSuccessEffect, LocalOAuthInvalidationEffect, LocalPoolErrorEffect,
 };
 use crate::request_candidate_runtime::{
     ensure_execution_request_candidate_slot, record_local_request_candidate_status,
@@ -254,14 +254,17 @@ fn with_stream_error_trace_context(
     report_context: Option<&Value>,
     status_code: u16,
     headers: &BTreeMap<String, String>,
+    body_json: Option<&Value>,
+    body_bytes: &[u8],
     response_text: Option<&str>,
     local_failover_analysis: crate::orchestration::LocalFailoverAnalysis,
 ) -> Option<Value> {
+    let body = trace_upstream_response_body(body_json, body_bytes);
     let upstream_context = with_upstream_response_report_context(
         report_context,
         status_code,
         Some(headers),
-        None,
+        body.as_ref(),
         None,
         None,
     );
@@ -1287,6 +1290,8 @@ async fn execute_stream_from_frame_stream(
                 report_context.as_ref(),
                 status_code,
                 &headers,
+                provider_body_json.as_ref(),
+                &provider_error_body,
                 error_response_text.as_deref(),
                 failover_analysis,
             );
@@ -1337,6 +1342,8 @@ async fn execute_stream_from_frame_stream(
                 report_context.as_ref(),
                 status_code,
                 &headers,
+                provider_body_json.as_ref(),
+                &provider_error_body,
                 error_response_text.as_deref(),
                 failover_analysis,
             );
@@ -1385,6 +1392,8 @@ async fn execute_stream_from_frame_stream(
             report_context.as_ref(),
             status_code,
             &headers,
+            provider_body_json.as_ref(),
+            &provider_error_body,
             error_response_text.as_deref(),
             failover_analysis,
         );

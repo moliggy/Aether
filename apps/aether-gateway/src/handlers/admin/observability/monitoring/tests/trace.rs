@@ -437,7 +437,7 @@ async fn admin_monitoring_trace_request_exposes_request_path_from_usage_audit() 
 
 #[tokio::test]
 async fn admin_monitoring_trace_request_exposes_failed_candidate_upstream_response_boundary() {
-    let candidate = sample_candidate(
+    let mut candidate = sample_candidate(
         "cand-used",
         "request-1",
         0,
@@ -446,6 +446,17 @@ async fn admin_monitoring_trace_request_exposes_failed_candidate_upstream_respon
         Some(33),
         Some(302),
     );
+    candidate.extra_data = Some(json!({
+        "cache_1h": true,
+        "upstream_response": {
+            "status_code": 302,
+            "body": {
+                "error": {
+                    "message": "redirect blocked"
+                }
+            }
+        }
+    }));
 
     let request_candidates = Arc::new(InMemoryRequestCandidateRepository::seed(vec![candidate]));
     let provider_catalog = Arc::new(InMemoryProviderCatalogReadRepository::seed(
@@ -511,7 +522,10 @@ async fn admin_monitoring_trace_request_exposes_failed_candidate_upstream_respon
         extra["upstream_response"]["headers"]["location"],
         json!("/")
     );
-    assert!(extra["upstream_response"]["body"].is_null());
+    assert_eq!(
+        extra["upstream_response"]["body"]["error"]["message"],
+        json!("redirect blocked")
+    );
     assert!(extra.get("client_response").is_none());
     assert!(extra.get("provider_response").is_none());
 }

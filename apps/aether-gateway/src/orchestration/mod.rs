@@ -1,4 +1,5 @@
 use aether_contracts::ExecutionPlan;
+use base64::Engine as _;
 use serde_json::{json, Map, Value};
 
 use crate::AppState;
@@ -150,6 +151,65 @@ pub(crate) fn with_upstream_response_report_context(
         Value::Object(upstream_response),
     );
     Some(Value::Object(object))
+}
+
+pub(crate) fn trace_upstream_response_body(
+    body_json: Option<&Value>,
+    body_bytes: &[u8],
+) -> Option<Value> {
+    if let Some(body_json) = body_json {
+        return Some(limit_trace_upstream_response_body_json(body_json));
+    }
+
+    if body_bytes.is_empty() {
+        return None;
+    }
+
+    if let Ok(text) = std::str::from_utf8(body_bytes) {
+        let text = text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        if let Ok(json_body) = serde_json::from_str::<Value>(text) {
+            return Some(limit_trace_upstream_response_body_json(&json_body));
+        }
+        return Some(Value::String(limit_trace_upstream_response_text(text)));
+    }
+
+    Some(json!({
+        "encoding": "base64",
+        "data": base64::engine::general_purpose::STANDARD.encode(
+            &body_bytes[..body_bytes.len().min(crate::MAX_ERROR_BODY_BYTES)]
+        ),
+        "truncated": body_bytes.len() > crate::MAX_ERROR_BODY_BYTES,
+    }))
+}
+
+fn limit_trace_upstream_response_body_json(body_json: &Value) -> Value {
+    let Ok(serialized) = serde_json::to_vec(body_json) else {
+        return body_json.clone();
+    };
+    if serialized.len() <= crate::MAX_ERROR_BODY_BYTES {
+        return body_json.clone();
+    }
+    Value::String(limit_trace_upstream_response_text(
+        String::from_utf8_lossy(&serialized).as_ref(),
+    ))
+}
+
+fn limit_trace_upstream_response_text(text: &str) -> String {
+    let mut bytes = 0usize;
+    let mut out = String::new();
+    for ch in text.chars() {
+        let len = ch.len_utf8();
+        if bytes + len > crate::MAX_ERROR_BODY_BYTES {
+            out.push_str("...[truncated]");
+            return out;
+        }
+        bytes += len;
+        out.push(ch);
+    }
+    out
 }
 
 fn trace_headers_to_json(headers: &std::collections::BTreeMap<String, String>) -> Value {
