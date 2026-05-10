@@ -6,8 +6,8 @@ use super::{
 };
 use crate::tests::{
     any, build_router, build_router_with_state, build_state_with_execution_runtime_override, json,
-    start_server, AppState, Arc, Body, HeaderValue, Json, Mutex, Request, Response, Router,
-    StatusCode, CONTROL_ACTION_PROXY_PUBLIC, CONTROL_EXECUTED_HEADER,
+    start_server, strip_sse_keepalive_comments, AppState, Arc, Body, HeaderValue, Json, Mutex,
+    Request, Response, Router, StatusCode, CONTROL_ACTION_PROXY_PUBLIC, CONTROL_EXECUTED_HEADER,
     EXECUTION_PATH_EXECUTION_RUNTIME_STREAM, EXECUTION_PATH_EXECUTION_RUNTIME_SYNC,
     EXECUTION_PATH_HEADER,
 };
@@ -458,7 +458,7 @@ async fn gateway_handles_internal_gateway_execute_stream_locally() {
         Some(EXECUTION_PATH_EXECUTION_RUNTIME_STREAM)
     );
     assert_eq!(
-        response.text().await.expect("body should read"),
+        strip_sse_keepalive_comments(&response.text().await.expect("body should read")),
         "data: one\n\ndata: [DONE]\n\n"
     );
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);

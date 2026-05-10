@@ -1,3 +1,5 @@
+import type { ImageProgress } from '@/api/requestTrace'
+
 // 统计数据状态
 export interface UsageStatsState {
   total_requests: number
@@ -116,6 +118,7 @@ export interface UsageRecord {
   created_at: string
   has_fallback?: boolean
   has_retry?: boolean
+  image_progress?: ImageProgress | null
 }
 
 // 日期范围参数

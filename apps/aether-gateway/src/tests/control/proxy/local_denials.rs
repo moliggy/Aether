@@ -501,7 +501,7 @@ async fn gateway_locally_denies_disallowed_claude_api_format_without_hitting_con
     assert_eq!(payload["error"]["type"], "http_error");
     assert_eq!(
         payload["error"]["message"],
-        "当前密钥不允许访问 claude:messages 格式"
+        "当前用户、用户组或密钥的访问控制策略不允许访问 claude:messages 格式"
     );
     assert_eq!(*auth_context_hits.lock().expect("mutex should lock"), 0);
     assert_eq!(*public_hits.lock().expect("mutex should lock"), 0);
@@ -584,7 +584,7 @@ async fn gateway_locally_denies_disallowed_provider_without_hitting_control_or_u
     assert_eq!(payload["error"]["type"], "http_error");
     assert_eq!(
         payload["error"]["message"],
-        "当前密钥不允许访问 claude 提供商"
+        "当前用户、用户组或密钥的访问控制策略不允许访问 claude 提供商"
     );
     assert_eq!(*auth_context_hits.lock().expect("mutex should lock"), 0);
     assert_eq!(*public_hits.lock().expect("mutex should lock"), 0);
@@ -656,7 +656,7 @@ async fn gateway_locally_denies_disallowed_gemini_model_without_hitting_control_
     assert_eq!(payload["error"]["type"], "http_error");
     assert_eq!(
         payload["error"]["message"],
-        "当前密钥不允许访问模型 gemini-2.5-pro"
+        "当前用户、用户组或密钥的访问控制策略不允许访问模型 gemini-2.5-pro"
     );
     assert_eq!(*auth_context_hits.lock().expect("mutex should lock"), 0);
     assert_eq!(*public_hits.lock().expect("mutex should lock"), 0);
@@ -806,7 +806,10 @@ async fn gateway_locally_denies_disallowed_openai_model_without_hitting_control_
     );
     let payload: serde_json::Value = response.json().await.expect("response json should parse");
     assert_eq!(payload["error"]["type"], "http_error");
-    assert_eq!(payload["error"]["message"], "当前密钥不允许访问模型 gpt-5");
+    assert_eq!(
+        payload["error"]["message"],
+        "当前用户、用户组或密钥的访问控制策略不允许访问模型 gpt-5"
+    );
     assert_eq!(*auth_context_hits.lock().expect("mutex should lock"), 0);
     assert_eq!(*public_hits.lock().expect("mutex should lock"), 0);
 

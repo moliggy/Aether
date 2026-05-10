@@ -172,6 +172,10 @@ impl<'a> AdminAppState<'a> {
         let user_api_keys = self
             .list_auth_api_key_export_records_by_user_ids(&user_ids)
             .await?;
+        let groups = self.list_user_groups().await?;
+        let memberships = self
+            .list_user_group_memberships_by_user_ids(&user_ids)
+            .await?;
         let standalone_api_keys = self.list_auth_api_key_export_standalone_records().await?;
         let standalone_api_key_ids = standalone_api_keys
             .iter()
@@ -205,12 +209,49 @@ impl<'a> AdminAppState<'a> {
                 .or_default()
                 .push(key);
         }
+        let mut memberships_by_user_id = BTreeMap::<
+            String,
+            Vec<aether_data::repository::users::StoredUserGroupMembership>,
+        >::new();
+        for membership in memberships {
+            memberships_by_user_id
+                .entry(membership.user_id.clone())
+                .or_default()
+                .push(membership);
+        }
+        let user_groups_data = groups
+            .iter()
+            .map(|group| {
+                json!({
+                    "id": group.id.clone(),
+                    "name": group.name.clone(),
+                    "description": group.description.clone(),
+                    "allowed_providers": group.allowed_providers.clone(),
+                    "allowed_providers_mode": group.allowed_providers_mode.clone(),
+                    "allowed_api_formats": group.allowed_api_formats.clone(),
+                    "allowed_api_formats_mode": group.allowed_api_formats_mode.clone(),
+                    "allowed_models": group.allowed_models.clone(),
+                    "allowed_models_mode": group.allowed_models_mode.clone(),
+                    "rate_limit": group.rate_limit,
+                    "rate_limit_mode": group.rate_limit_mode.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
 
         let users_data = users
             .iter()
             .map(|user| {
                 let wallet = wallets_by_user_id.get(&user.id);
                 let wallet_payload = serialize_admin_system_users_export_wallet(wallet);
+                let memberships = memberships_by_user_id.remove(&user.id).unwrap_or_default();
+                let group_ids = memberships
+                    .iter()
+                    .map(|membership| membership.group_id.clone())
+                    .collect::<Vec<_>>();
+                let group_names = memberships
+                    .iter()
+                    .map(|membership| membership.group_name.clone())
+                    .collect::<Vec<_>>();
                 let api_keys = api_keys_by_user_id.remove(&user.id).unwrap_or_default();
                 let api_keys_payload = api_keys
                     .iter()
@@ -226,10 +267,16 @@ impl<'a> AdminAppState<'a> {
                     "password_hash": user.password_hash.clone(),
                     "role": user.role.clone(),
                     "allowed_providers": user.allowed_providers.clone(),
+                    "allowed_providers_mode": user.allowed_providers_mode.clone(),
                     "allowed_api_formats": user.allowed_api_formats.clone(),
+                    "allowed_api_formats_mode": user.allowed_api_formats_mode.clone(),
                     "allowed_models": user.allowed_models.clone(),
+                    "allowed_models_mode": user.allowed_models_mode.clone(),
                     "rate_limit": user.rate_limit,
+                    "rate_limit_mode": user.rate_limit_mode.clone(),
                     "model_capability_settings": user.model_capability_settings.clone(),
+                    "group_ids": group_ids,
+                    "group_names": group_names,
                     "unlimited": wallet
                         .map(|entry| entry.limit_mode.eq_ignore_ascii_case("unlimited"))
                         .unwrap_or(false),
@@ -254,6 +301,7 @@ impl<'a> AdminAppState<'a> {
         Ok(json!({
             "version": ADMIN_SYSTEM_USERS_EXPORT_VERSION,
             "exported_at": Utc::now().to_rfc3339(),
+            "user_groups": user_groups_data,
             "users": users_data,
             "standalone_keys": standalone_keys_data,
         }))

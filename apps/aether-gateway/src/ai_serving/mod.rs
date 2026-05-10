@@ -49,7 +49,8 @@ pub(crate) use self::planner::{
     extract_pool_sticky_session_token, maybe_build_stream_decision_payload,
     maybe_build_stream_plan_payload, maybe_build_sync_decision_payload,
     maybe_build_sync_plan_payload, planner_is_matching_stream_request,
-    set_local_openai_chat_execution_exhausted_diagnostic, CandidateFailureDiagnostic,
+    set_local_openai_chat_execution_exhausted_diagnostic,
+    set_local_openai_image_execution_exhausted_diagnostic, CandidateFailureDiagnostic,
     CandidateFailureDiagnosticKind, GatewayAuthApiKeySnapshot, GatewayProviderTransportSnapshot,
     LocalExecutionAttemptSource, LocalResolvedOAuthRequestAuth, PlannerAppState,
 };

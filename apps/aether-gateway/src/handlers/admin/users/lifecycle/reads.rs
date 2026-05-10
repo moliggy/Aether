@@ -1,6 +1,7 @@
 use super::super::{build_admin_users_bad_request_response, format_optional_datetime_iso8601};
 use super::support::{
-    admin_user_id_from_detail_path, build_admin_user_payload, find_admin_export_user,
+    admin_user_id_from_detail_path, build_admin_user_export_payload,
+    build_admin_user_payload_with_groups, find_admin_export_user,
 };
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::handlers::admin::shared::{query_param_optional_bool, query_param_value};
@@ -32,6 +33,9 @@ pub(in super::super) async fn build_admin_list_users_response(
     let search = query_param_value(request_context.query_string(), "search")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    let group_id = query_param_value(request_context.query_string(), "group_id")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     let paged_rows = state
         .list_export_users_page(&aether_data::repository::users::UserExportListQuery {
@@ -40,16 +44,25 @@ pub(in super::super) async fn build_admin_list_users_response(
             role: role.clone(),
             is_active,
             search,
+            group_id,
         })
         .await?;
     let user_ids = paged_rows
         .iter()
         .map(|row| row.id.clone())
         .collect::<Vec<_>>();
-    let (auth_rows_result, wallet_rows_result, usage_totals_result) = tokio::join!(
+    let (
+        auth_rows_result,
+        wallet_rows_result,
+        usage_totals_result,
+        memberships_result,
+        groups_result,
+    ) = tokio::join!(
         state.list_user_auth_by_ids(&user_ids),
         state.list_wallet_snapshots_by_user_ids(&user_ids),
         state.summarize_usage_totals_by_user_ids(&user_ids),
+        state.list_user_group_memberships_by_user_ids(&user_ids),
+        state.list_user_groups(),
     );
     let auth_by_user_id = auth_rows_result?
         .into_iter()
@@ -63,6 +76,17 @@ pub(in super::super) async fn build_admin_list_users_response(
         .into_iter()
         .map(|item| (item.user_id.clone(), item))
         .collect::<BTreeMap<_, _>>();
+    let groups_by_id = groups_result?
+        .into_iter()
+        .map(|group| (group.id.clone(), group))
+        .collect::<BTreeMap<_, _>>();
+    let mut group_ids_by_user_id = BTreeMap::<String, Vec<String>>::new();
+    for membership in memberships_result? {
+        group_ids_by_user_id
+            .entry(membership.user_id)
+            .or_default()
+            .push(membership.group_id);
+    }
 
     let mut payload = Vec::with_capacity(paged_rows.len());
     for row in paged_rows {
@@ -71,25 +95,25 @@ pub(in super::super) async fn build_admin_list_users_response(
             .get(&row.id)
             .is_some_and(|wallet| wallet.limit_mode.eq_ignore_ascii_case("unlimited"));
         let usage_totals = usage_totals_by_user_id.get(&row.id);
-        payload.push(json!({
-            "id": row.id,
-            "email": row.email,
-            "username": row.username,
-            "role": row.role,
-            "allowed_providers": row.allowed_providers,
-            "allowed_api_formats": row.allowed_api_formats,
-            "allowed_models": row.allowed_models,
-            "rate_limit": row.rate_limit,
-            "unlimited": unlimited,
-            "is_active": row.is_active,
-            "created_at": format_optional_datetime_iso8601(auth.as_ref().and_then(|user| user.created_at)),
-            "updated_at": serde_json::Value::Null,
-            "last_login_at": format_optional_datetime_iso8601(
-                auth.as_ref().and_then(|user| user.last_login_at),
-            ),
-            "request_count": usage_totals.map(|item| item.request_count).unwrap_or_default(),
-            "total_tokens": usage_totals.map(|item| item.total_tokens).unwrap_or_default(),
-        }));
+        let groups = group_ids_by_user_id
+            .get(&row.id)
+            .into_iter()
+            .flatten()
+            .filter_map(|group_id| groups_by_id.get(group_id).cloned())
+            .collect::<Vec<_>>();
+        payload.push(build_admin_user_export_payload(
+            &row,
+            unlimited,
+            auth.as_ref().and_then(|user| user.created_at),
+            auth.as_ref().and_then(|user| user.last_login_at),
+            usage_totals
+                .map(|item| item.request_count)
+                .unwrap_or_default(),
+            usage_totals
+                .map(|item| item.total_tokens)
+                .unwrap_or_default(),
+            &groups,
+        ));
     }
 
     Ok(Json(payload).into_response())
@@ -116,13 +140,16 @@ pub(in super::super) async fn build_admin_get_user_response(
         ))
         .await?;
     let export_row = find_admin_export_user(state, &user_id).await?;
+    let groups = state.list_user_groups_for_user(&user_id).await?;
     let unlimited = wallet
         .as_ref()
         .is_some_and(|wallet| wallet.limit_mode.eq_ignore_ascii_case("unlimited"));
-    Ok(Json(build_admin_user_payload(
+    Ok(Json(build_admin_user_payload_with_groups(
         &user,
         export_row.as_ref().and_then(|row| row.rate_limit),
+        export_row.as_ref().map(|row| row.rate_limit_mode.as_str()),
         unlimited,
+        &groups,
     ))
     .into_response())
 }

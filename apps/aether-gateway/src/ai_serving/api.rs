@@ -30,6 +30,7 @@ pub(crate) use crate::ai_serving::{
     maybe_build_stream_decision_payload, maybe_build_stream_plan_payload,
     maybe_build_sync_decision_payload, maybe_build_sync_plan_payload,
     set_local_openai_chat_execution_exhausted_diagnostic,
+    set_local_openai_image_execution_exhausted_diagnostic,
 };
 pub(crate) use crate::ai_serving::{
     maybe_bridge_standard_sync_json_to_stream, maybe_build_provider_private_stream_normalizer,

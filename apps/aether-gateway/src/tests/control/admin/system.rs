@@ -13,7 +13,9 @@ use aether_data::repository::global_models::InMemoryGlobalModelReadRepository;
 use aether_data::repository::oauth_providers::InMemoryOAuthProviderRepository;
 use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
 use aether_data::repository::proxy_nodes::InMemoryProxyNodeRepository;
-use aether_data::repository::users::{InMemoryUserReadRepository, StoredUserExportRow};
+use aether_data::repository::users::{
+    InMemoryUserReadRepository, StoredUserAuthRecord, UpsertUserGroupRecord, UserReadRepository,
+};
 use aether_data::repository::wallet::{InMemoryWalletRepository, StoredWalletSnapshot};
 use aether_data_contracts::repository::global_models::StoredPublicGlobalModel;
 use axum::body::Body;
@@ -596,8 +598,8 @@ async fn gateway_handles_admin_system_users_export_locally_with_trusted_admin_pr
         }),
     );
 
-    let user_repository = Arc::new(InMemoryUserReadRepository::seed_export_users(vec![
-        StoredUserExportRow::new(
+    let user_repository = Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![
+        StoredUserAuthRecord::new(
             "user-1".to_string(),
             Some("alice@example.com".to_string()),
             true,
@@ -608,12 +610,40 @@ async fn gateway_handles_admin_system_users_export_locally_with_trusted_admin_pr
             Some(json!(["openai"])),
             Some(json!(["openai:chat"])),
             Some(json!(["gpt-5"])),
-            Some(120),
-            Some(json!({"gpt-5": {"cache_1h": true}})),
             true,
+            false,
+            Some(chrono::Utc::now()),
+            None,
         )
-        .expect("user export row should build"),
+        .expect("user export row should build")
+        .with_policy_modes(
+            "specific".to_string(),
+            "specific".to_string(),
+            "specific".to_string(),
+        )
+        .expect("user policy modes should build"),
     ]));
+    let user_group = user_repository
+        .create_user_group(UpsertUserGroupRecord {
+            name: "Restricted GPT".to_string(),
+            description: Some("GPT-only users".to_string()),
+            priority: 10,
+            allowed_providers: Some(vec!["openai".to_string()]),
+            allowed_providers_mode: "specific".to_string(),
+            allowed_api_formats: Some(vec!["openai:chat".to_string()]),
+            allowed_api_formats_mode: "specific".to_string(),
+            allowed_models: Some(vec!["gpt-5".to_string()]),
+            allowed_models_mode: "specific".to_string(),
+            rate_limit: Some(60),
+            rate_limit_mode: "custom".to_string(),
+        })
+        .await
+        .expect("user group should create")
+        .expect("user group should exist");
+    user_repository
+        .replace_user_groups_for_user("user-1", std::slice::from_ref(&user_group.id))
+        .await
+        .expect("user group membership should create");
     let auth_repository = Arc::new(
         InMemoryAuthApiKeySnapshotRepository::default().with_export_records(vec![
             StoredAuthApiKeyExportRecord::new(
@@ -728,9 +758,24 @@ async fn gateway_handles_admin_system_users_export_locally_with_trusted_admin_pr
 
     assert_eq!(response.status(), StatusCode::OK);
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
-    assert_eq!(payload["version"], "1.3");
+    assert_eq!(payload["version"], "1.4");
     assert!(payload["exported_at"].as_str().is_some());
+    assert_eq!(payload["user_groups"][0]["name"], "Restricted GPT");
+    assert!(payload["user_groups"][0].get("priority").is_none());
+    assert_eq!(
+        payload["user_groups"][0]["allowed_models"],
+        json!(["gpt-5"])
+    );
     assert_eq!(payload["users"][0]["email"], "alice@example.com");
+    assert_eq!(
+        payload["users"][0]["allowed_models_mode"],
+        json!("specific")
+    );
+    assert_eq!(payload["users"][0]["rate_limit_mode"], json!("system"));
+    assert_eq!(
+        payload["users"][0]["group_names"],
+        json!(["Restricted GPT"])
+    );
     assert_eq!(payload["users"][0]["wallet"]["balance"], json!(12.5));
     assert_eq!(
         payload["users"][0]["wallet"]["recharge_balance"],

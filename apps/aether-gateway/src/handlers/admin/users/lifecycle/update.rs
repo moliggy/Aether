@@ -1,12 +1,14 @@
 use super::super::{
     build_admin_users_bad_request_response, build_admin_users_data_unavailable_response,
-    build_admin_users_read_only_response, normalize_admin_optional_user_email,
-    normalize_admin_user_api_formats, normalize_admin_user_role, normalize_admin_user_string_list,
-    normalize_admin_username, validate_admin_user_password, AdminUpdateUserPatch,
+    build_admin_users_read_only_response, normalize_admin_list_policy_mode,
+    normalize_admin_optional_user_email, normalize_admin_rate_limit_policy_mode,
+    normalize_admin_user_api_formats, normalize_admin_user_group_ids, normalize_admin_user_role,
+    normalize_admin_user_string_list, normalize_admin_username, validate_admin_user_password,
+    AdminUpdateUserPatch,
 };
 use super::support::{
-    admin_user_id_from_detail_path, admin_user_password_policy, build_admin_user_payload,
-    find_admin_export_user,
+    admin_user_id_from_detail_path, admin_user_password_policy,
+    build_admin_user_payload_with_groups, find_admin_export_user,
 };
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::handlers::admin::shared::attach_admin_audit_response;
@@ -177,15 +179,110 @@ pub(in super::super) async fn build_admin_update_user_response(
     } else {
         None
     };
+    let allowed_providers_mode = if field_presence.contains("allowed_providers_mode") {
+        match payload.allowed_providers_mode.as_deref() {
+            Some(value) => match normalize_admin_list_policy_mode(value) {
+                Ok(value) => Some(value),
+                Err(detail) => {
+                    return Ok((
+                        http::StatusCode::BAD_REQUEST,
+                        Json(json!({ "detail": detail })),
+                    )
+                        .into_response())
+                }
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+    let allowed_api_formats_mode = if field_presence.contains("allowed_api_formats_mode") {
+        match payload.allowed_api_formats_mode.as_deref() {
+            Some(value) => match normalize_admin_list_policy_mode(value) {
+                Ok(value) => Some(value),
+                Err(detail) => {
+                    return Ok((
+                        http::StatusCode::BAD_REQUEST,
+                        Json(json!({ "detail": detail })),
+                    )
+                        .into_response())
+                }
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+    let allowed_models_mode = if field_presence.contains("allowed_models_mode") {
+        match payload.allowed_models_mode.as_deref() {
+            Some(value) => match normalize_admin_list_policy_mode(value) {
+                Ok(value) => Some(value),
+                Err(detail) => {
+                    return Ok((
+                        http::StatusCode::BAD_REQUEST,
+                        Json(json!({ "detail": detail })),
+                    )
+                        .into_response())
+                }
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+    let rate_limit_mode = if field_presence.contains("rate_limit_mode") {
+        match payload.rate_limit_mode.as_deref() {
+            Some(value) => match normalize_admin_rate_limit_policy_mode(value) {
+                Ok(value) => Some(value),
+                Err(detail) => {
+                    return Ok((
+                        http::StatusCode::BAD_REQUEST,
+                        Json(json!({ "detail": detail })),
+                    )
+                        .into_response())
+                }
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+    let group_ids = if field_presence.contains("group_ids") {
+        let requested_group_ids = normalize_admin_user_group_ids(payload.group_ids);
+        Some(
+            state
+                .include_default_user_group_ids(&requested_group_ids)
+                .await?,
+        )
+    } else {
+        None
+    };
+    if let Some(group_ids) = group_ids.as_ref() {
+        if !group_ids.is_empty() {
+            let groups = state.list_user_groups_by_ids(group_ids).await?;
+            if groups.len() != group_ids.len() {
+                return Ok((
+                    http::StatusCode::BAD_REQUEST,
+                    Json(json!({ "detail": "用户分组不存在" })),
+                )
+                    .into_response());
+            }
+        }
+    }
     let needs_auth_user_write = email.is_some()
         || username.is_some()
         || payload.password.is_some()
         || role.is_some()
         || field_presence.contains("allowed_providers")
+        || allowed_providers_mode.is_some()
         || field_presence.contains("allowed_api_formats")
+        || allowed_api_formats_mode.is_some()
         || field_presence.contains("allowed_models")
+        || allowed_models_mode.is_some()
         || field_presence.contains("rate_limit")
-        || payload.is_active.is_some();
+        || rate_limit_mode.is_some()
+        || payload.is_active.is_some()
+        || group_ids.is_some();
     if needs_auth_user_write && !state.has_auth_user_write_capability() {
         return Ok(build_admin_users_read_only_response(
             "当前为只读模式，无法更新用户",
@@ -209,6 +306,11 @@ pub(in super::super) async fn build_admin_update_user_response(
             )
                 .into_response());
         }
+    }
+    if let Some(group_ids) = group_ids.as_ref() {
+        state
+            .replace_user_groups_for_user(&user_id, group_ids)
+            .await?;
     }
 
     if let Some(password) = payload.password.as_deref() {
@@ -274,6 +376,29 @@ pub(in super::super) async fn build_admin_update_user_response(
                 .into_response());
         }
     }
+    if allowed_providers_mode.is_some()
+        || allowed_api_formats_mode.is_some()
+        || allowed_models_mode.is_some()
+        || rate_limit_mode.is_some()
+    {
+        if state
+            .update_local_auth_user_policy_modes(
+                &user_id,
+                allowed_providers_mode,
+                allowed_api_formats_mode,
+                allowed_models_mode,
+                rate_limit_mode,
+            )
+            .await?
+            .is_none()
+        {
+            return Ok((
+                http::StatusCode::NOT_FOUND,
+                Json(json!({ "detail": "用户不存在" })),
+            )
+                .into_response());
+        }
+    }
 
     if let Some(unlimited) = payload.unlimited {
         match state
@@ -322,13 +447,21 @@ pub(in super::super) async fn build_admin_update_user_response(
         .as_ref()
         .is_some_and(|wallet| wallet.limit_mode.eq_ignore_ascii_case("unlimited"));
     let export_row = find_admin_export_user(state, &user_id).await?;
+    let groups = state.list_user_groups_for_user(&user_id).await?;
     let rate_limit = export_row
         .as_ref()
         .and_then(|row| row.rate_limit)
         .or(payload.rate_limit);
 
     Ok(attach_admin_audit_response(
-        Json(build_admin_user_payload(&user, rate_limit, unlimited)).into_response(),
+        Json(build_admin_user_payload_with_groups(
+            &user,
+            rate_limit,
+            export_row.as_ref().map(|row| row.rate_limit_mode.as_str()),
+            unlimited,
+            &groups,
+        ))
+        .into_response(),
         "admin_user_updated",
         "update_user",
         "user",

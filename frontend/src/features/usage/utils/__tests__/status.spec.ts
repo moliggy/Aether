@@ -91,6 +91,20 @@ describe('usage status helpers', () => {
     expect(isUsageRecordFailed(record)).toBe(true)
   })
 
+  it('treats failed image progress as failed before the usage record finalizes', () => {
+    const record = buildUsageRecord({
+      status: 'streaming',
+      status_code: undefined,
+      error_message: undefined,
+      image_progress: {
+        phase: 'failed',
+      },
+    })
+
+    expect(resolveDisplayRequestStatus(record)).toBe('failed')
+    expect(isUsageRecordFailed(record)).toBe(true)
+  })
+
   it('prefers terminal request lifecycle status over status code for the timeline', () => {
     expect(resolveTimelineFinalStatus({
       traceFinalStatus: 'success',

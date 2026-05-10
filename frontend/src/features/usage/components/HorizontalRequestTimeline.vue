@@ -373,6 +373,67 @@
                   </div>
                 </div>
 
+                <div
+                  v-if="currentImageProgress"
+                  class="image-progress-block"
+                >
+                  <div class="image-progress-header">
+                    <span class="image-progress-title">图片生成进度</span>
+                    <span
+                      class="image-progress-phase"
+                      :class="imageProgressPhaseClass(currentImageProgress.phase)"
+                    >
+                      {{ formatImageProgressPhase(currentImageProgress.phase) }}
+                    </span>
+                  </div>
+                  <div class="image-progress-grid">
+                    <div class="image-progress-item">
+                      <span class="image-progress-label">上游 TTFB</span>
+                      <span class="image-progress-value mono">{{ formatLatency(currentImageProgress.upstream_ttfb_ms) }}</span>
+                    </div>
+                    <div class="image-progress-item">
+                      <span class="image-progress-label">SSE 帧数</span>
+                      <span class="image-progress-value mono">{{ formatProgressCount(currentImageProgress.upstream_sse_frame_count) }}</span>
+                    </div>
+                    <div class="image-progress-item">
+                      <span class="image-progress-label">Partial 图片</span>
+                      <span class="image-progress-value mono">{{ formatProgressCount(currentImageProgress.partial_image_count) }}</span>
+                    </div>
+                    <div class="image-progress-item">
+                      <span class="image-progress-label">最后帧</span>
+                      <span class="image-progress-value mono">{{ formatProgressFrameTime(currentImageProgress.last_upstream_frame_at_unix_ms) }}</span>
+                    </div>
+                    <template v-if="hasDownstreamHeartbeatProgress">
+                      <div class="image-progress-item">
+                        <span class="image-progress-label">下游心跳</span>
+                        <span class="image-progress-value mono">{{ formatProgressCount(currentImageProgress.downstream_heartbeat_count) }}</span>
+                      </div>
+                      <div class="image-progress-item">
+                        <span class="image-progress-label">心跳间隔</span>
+                        <span class="image-progress-value mono">{{ formatLatency(currentImageProgress.downstream_heartbeat_interval_ms) }}</span>
+                      </div>
+                      <div class="image-progress-item">
+                        <span class="image-progress-label">最后心跳</span>
+                        <span class="image-progress-value mono">{{ formatProgressFrameTime(currentImageProgress.last_downstream_heartbeat_at_unix_ms) }}</span>
+                      </div>
+                    </template>
+                    <div
+                      v-if="currentImageProgress.last_upstream_event"
+                      class="image-progress-item full-width"
+                    >
+                      <span class="image-progress-label">上游事件</span>
+                      <code class="image-progress-code">{{ currentImageProgress.last_upstream_event }}</code>
+                    </div>
+                    <div
+                      v-if="currentImageProgress.last_client_visible_event"
+                      class="image-progress-item full-width"
+                    >
+                      <span class="image-progress-label">客户端可见事件</span>
+                      <code class="image-progress-code">{{ currentImageProgress.last_client_visible_event }}</code>
+                    </div>
+                  </div>
+                </div>
+
                 <!-- 用量与费用（仅成功节点显示） -->
                 <div
                   v-if="currentAttempt.status === 'success' && usageData"
@@ -501,14 +562,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onBeforeUnmount } from 'vue'
 import { isAxiosError } from 'axios'
 import Card from '@/components/ui/card.vue'
 import Badge from '@/components/ui/badge.vue'
 import Skeleton from '@/components/ui/skeleton.vue'
 import JsonContentPanel from './JsonContentPanel.vue'
 import { ChevronLeft, ChevronRight, ExternalLink } from 'lucide-vue-next'
-import { requestTraceApi, type RequestTrace, type CandidateRecord } from '@/api/requestTrace'
+import { requestTraceApi, type RequestTrace, type CandidateRecord, type ImageProgress } from '@/api/requestTrace'
 import { log } from '@/utils/logger'
 import { parseApiError } from '@/utils/errorParser'
 import { formatApiFormat } from '@/api/endpoints/types/api-format'
@@ -582,7 +643,15 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   selectAttempt: [attempt: CandidateRecord | null]
-  traceState: [state: { loaded: boolean, hasTrace: boolean }]
+  traceState: [state: {
+    loaded: boolean
+    hasTrace: boolean
+    finalStatus?: RequestTrace['final_status'] | null
+    statusCode?: number | null
+    latencyMs?: number | null
+    imageProgress?: ImageProgress | null
+    errorMessage?: string | null
+  }]
 }>()
 
 // 用量数据（从 props 获取）
@@ -641,18 +710,9 @@ const selectedGroupIndex = ref(0)
 const selectedAttemptIndex = ref(0)
 const hoveredGroupIndex = ref<number | null>(null)
 const traceLoadStarted = ref(false)
-
-watch(
-  [trace, loading],
-  ([value, isLoading]) => {
-    const waitingForInternalTrace = Boolean(props.requestId && !props.traceData && !traceLoadStarted.value && !value)
-    emit('traceState', {
-      loaded: !isLoading && !waitingForInternalTrace,
-      hasTrace: Boolean(value?.candidates?.length),
-    })
-  },
-  { immediate: true },
-)
+let tracePollTimer: ReturnType<typeof setTimeout> | null = null
+let traceLoadInFlight: Promise<void> | null = null
+const TRACE_POLL_INTERVAL_MS = 1000
 
 // 格式化延迟（自动调整单位）
 const formatLatency = (ms: number | undefined | null): string => {
@@ -1074,6 +1134,112 @@ const hasRenderableValue = (value: unknown): boolean => {
   return true
 }
 
+const normalizeImageProgress = (value: unknown): ImageProgress | null => {
+  const raw = extractObject(value)
+  if (!raw) return null
+
+  const progress: ImageProgress = {
+    phase: readStringField(raw, 'phase'),
+    upstream_ttfb_ms: readNumberField(raw, 'upstream_ttfb_ms') ?? null,
+    upstream_sse_frame_count: readNumberField(raw, 'upstream_sse_frame_count') ?? null,
+    last_upstream_event: readStringField(raw, 'last_upstream_event') ?? null,
+    last_upstream_frame_at_unix_ms: readNumberField(raw, 'last_upstream_frame_at_unix_ms') ?? null,
+    partial_image_count: readNumberField(raw, 'partial_image_count') ?? null,
+    last_client_visible_event: readStringField(raw, 'last_client_visible_event') ?? null,
+    downstream_heartbeat_count: readNumberField(raw, 'downstream_heartbeat_count') ?? null,
+    last_downstream_heartbeat_at_unix_ms: readNumberField(raw, 'last_downstream_heartbeat_at_unix_ms') ?? null,
+    downstream_heartbeat_interval_ms: readNumberField(raw, 'downstream_heartbeat_interval_ms') ?? null,
+  }
+
+  return Object.values(progress).some(value => value !== undefined && value !== null && value !== '') ? progress : null
+}
+
+const currentImageProgress = computed<ImageProgress | null>(() => {
+  const attempt = currentAttempt.value
+  if (!attempt) return null
+  return normalizeImageProgress(attempt.image_progress)
+    ?? normalizeImageProgress(extractObject(attempt.extra_data)?.image_progress)
+})
+
+const formatImageProgressPhase = (phase?: string | null): string => {
+  const labels: Record<string, string> = {
+    upstream_connecting: '连接上游',
+    upstream_streaming: '上游生成中',
+    upstream_completed: '上游已完成',
+    failed: '失败',
+  }
+  if (!phase) return '未知'
+  return labels[phase] || phase
+}
+
+const imageProgressPhaseClass = (phase?: string | null): string => {
+  if (phase === 'upstream_completed') return 'phase-completed'
+  if (phase === 'failed') return 'phase-failed'
+  if (phase === 'upstream_streaming') return 'phase-streaming'
+  return 'phase-connecting'
+}
+
+const formatProgressCount = (value?: number | null): string => {
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : '-'
+}
+
+const formatProgressFrameTime = (value?: number | null): string => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '-'
+  const date = new Date(value)
+  const time = formatTime(date.toISOString())
+  const ageMs = Date.now() - value
+  if (ageMs >= 0 && ageMs < 60_000) {
+    return `${Math.max(0, Math.round(ageMs / 1000))}s 前 (${time})`
+  }
+  return time
+}
+
+const hasDownstreamHeartbeatProgress = computed(() => {
+  const progress = currentImageProgress.value
+  return typeof progress?.downstream_heartbeat_count === 'number' ||
+    typeof progress?.last_downstream_heartbeat_at_unix_ms === 'number' ||
+    typeof progress?.downstream_heartbeat_interval_ms === 'number'
+})
+
+const latestTraceAttemptForState = computed<CandidateRecord | null>(() => {
+  const candidates = rawTimeline.value
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const candidate = candidates[index]
+    if (candidate.status !== 'available' && candidate.status !== 'unused') {
+      return candidate
+    }
+  }
+  return null
+})
+
+const latestTraceImageProgress = computed<ImageProgress | null>(() => {
+  const candidates = rawTimeline.value
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const candidate = candidates[index]
+    const progress = normalizeImageProgress(candidate.image_progress)
+      ?? normalizeImageProgress(extractObject(candidate.extra_data)?.image_progress)
+    if (progress) return progress
+  }
+  return null
+})
+
+watch(
+  [trace, loading, latestTraceImageProgress, latestTraceAttemptForState, computedFinalStatus],
+  ([value, isLoading, imageProgress, attempt, finalStatus]) => {
+    const waitingForInternalTrace = Boolean(props.requestId && !props.traceData && !traceLoadStarted.value && !value)
+    emit('traceState', {
+      loaded: !isLoading && !waitingForInternalTrace,
+      hasTrace: Boolean(value?.candidates?.length),
+      finalStatus: finalStatus ?? value?.final_status ?? null,
+      statusCode: attempt?.status_code ?? null,
+      latencyMs: attempt?.latency_ms ?? value?.total_latency_ms ?? null,
+      imageProgress,
+      errorMessage: attempt?.error_message ?? null,
+    })
+  },
+  { immediate: true },
+)
+
 const normalizeUpstreamResponseDisplay = (value: unknown): Record<string, unknown> | null => {
   const raw = extractObject(value)
   if (!raw) return null
@@ -1342,6 +1508,15 @@ const keyCapabilities = computed(() => {
     .map(([key]) => key)
 })
 
+const hasActiveImageProgress = computed(() => {
+  return rawTimeline.value.some((candidate) => {
+    const progress = normalizeImageProgress(candidate.image_progress)
+      ?? normalizeImageProgress(extractObject(candidate.extra_data)?.image_progress)
+    if (!progress?.phase) return false
+    return progress.phase !== 'upstream_completed' && progress.phase !== 'failed'
+  })
+})
+
 // 判断是否为 OAuth 类型（provider_type 为具体值时也算 OAuth）
 const isOAuthType = (authType?: string): boolean => {
   if (!authType) return false
@@ -1480,32 +1655,78 @@ const navigateAttempt = (direction: number) => {
 const isSilentRefresh = ref(false)
 const loadTrace = async (silent = false) => {
   if (!props.requestId || props.traceData) return
+  if (traceLoadInFlight) return traceLoadInFlight
 
-  isSilentRefresh.value = silent
-  traceLoadStarted.value = true
+  traceLoadInFlight = (async () => {
+    isSilentRefresh.value = silent
+    traceLoadStarted.value = true
 
-  if (!silent) {
-    loading.value = true
-  }
-  error.value = null
-
-  try {
-    internalTrace.value = await requestTraceApi.getRequestTrace(props.requestId)
-  } catch (err: unknown) {
-    if (isAxiosError(err) && err.response?.status === 404) {
-      internalTrace.value = null
-      error.value = null
-      return
-    }
     if (!silent) {
-      error.value = parseApiError(err, '加载失败')
+      loading.value = true
     }
-    log.error('加载请求追踪失败:', err)
-  } finally {
-    if (!silent) {
-      loading.value = false
+    error.value = null
+
+    try {
+      internalTrace.value = await requestTraceApi.getRequestTrace(props.requestId)
+    } catch (err: unknown) {
+      if (isAxiosError(err) && err.response?.status === 404) {
+        internalTrace.value = null
+        error.value = null
+        return
+      }
+      if (!silent) {
+        error.value = parseApiError(err, '加载失败')
+      }
+      log.error('加载请求追踪失败:', err)
+    } finally {
+      if (!silent) {
+        loading.value = false
+      }
+      traceLoadInFlight = null
     }
+  })()
+
+  return traceLoadInFlight
+}
+
+const propsRequestIsActive = computed(() => {
+  const status = props.requestStatus ?? usageData.value?.status
+  return status === 'pending' || status === 'streaming'
+})
+
+const traceHasActiveCandidate = computed(() => {
+  return rawTimeline.value.some((candidate) => {
+    const status = getDisplayStatus(candidate)
+    return status === 'pending' || status === 'streaming'
+  })
+})
+
+const traceFinalIsTerminal = computed(() => {
+  const status = trace.value?.final_status
+  return status === 'success' || status === 'failed' || status === 'cancelled'
+})
+
+const shouldPollTrace = computed(() => {
+  if (!props.requestId || props.traceData) return false
+  if (traceHasActiveCandidate.value || hasActiveImageProgress.value) return true
+  return propsRequestIsActive.value && !traceFinalIsTerminal.value
+})
+
+const stopTracePolling = () => {
+  if (tracePollTimer) {
+    clearTimeout(tracePollTimer)
+    tracePollTimer = null
   }
+}
+
+const scheduleTracePolling = () => {
+  stopTracePolling()
+  if (!shouldPollTrace.value) return
+
+  tracePollTimer = setTimeout(async () => {
+    await loadTrace(true)
+    scheduleTracePolling()
+  }, TRACE_POLL_INTERVAL_MS)
 }
 
 // 监听 groupedTimeline 变化，自动选择最有意义的组
@@ -1594,6 +1815,14 @@ watch(
   },
   { immediate: true },
 )
+
+watch(shouldPollTrace, () => {
+  scheduleTracePolling()
+}, { immediate: true })
+
+onBeforeUnmount(() => {
+  stopTracePolling()
+})
 
 defineExpose({ refresh: () => loadTrace(true) })
 
@@ -2305,6 +2534,112 @@ function getDisplayStatus(attempt: CandidateRecord | null | undefined): string {
   color: hsl(var(--primary));
   border-color: hsl(var(--primary) / 0.5);
   background: hsl(var(--primary) / 0.08);
+}
+
+.image-progress-block {
+  margin-top: 0.875rem;
+  padding: 0.75rem;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 8px;
+  background: hsl(var(--background) / 0.72);
+}
+
+.image-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.625rem;
+}
+
+.image-progress-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.image-progress-phase {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid hsl(var(--border));
+}
+
+.image-progress-phase.phase-connecting,
+.image-progress-phase.phase-streaming {
+  color: #2563eb;
+  background: #3b82f614;
+  border-color: #3b82f633;
+}
+
+.image-progress-phase.phase-completed {
+  color: #16a34a;
+  background: #22c55e14;
+  border-color: #22c55e33;
+}
+
+.image-progress-phase.phase-failed {
+  color: #dc2626;
+  background: #ef444414;
+  border-color: #ef444433;
+}
+
+.image-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.625rem 0.875rem;
+}
+
+.image-progress-item {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.image-progress-item.full-width {
+  grid-column: span 2;
+}
+
+.image-progress-label {
+  font-size: 0.68rem;
+  color: hsl(var(--muted-foreground));
+  white-space: nowrap;
+}
+
+.image-progress-value {
+  min-width: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.image-progress-code {
+  min-width: 0;
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.12rem 0.35rem;
+  border-radius: 4px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  font-size: 0.72rem;
+  font-family: ui-monospace, monospace;
+}
+
+@media (max-width: 768px) {
+  .image-progress-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .image-progress-item.full-width {
+    grid-column: 1 / -1;
+  }
 }
 
 /* Provider 官网链接 */

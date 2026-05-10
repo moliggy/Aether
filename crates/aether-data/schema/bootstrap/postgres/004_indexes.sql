@@ -1022,6 +1022,22 @@ CREATE INDEX IF NOT EXISTS ix_system_configs_id ON public.system_configs USING b
 
 
 --
+-- Name: user_group_members_user_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS user_group_members_user_id_idx ON public.user_group_members USING btree (user_id);
+
+
+
+--
+-- Name: user_groups_priority_name_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS user_groups_priority_name_idx ON public.user_groups USING btree (priority DESC, name, id);
+
+
+
+--
 -- Name: ix_usage_created_at; Type: INDEX; Schema: public; Owner: -
 --
 

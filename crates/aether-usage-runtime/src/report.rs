@@ -233,6 +233,7 @@ pub fn is_local_ai_sync_report_kind(report_kind: &str) -> bool {
             | "openai_responses_compact_sync_error"
             | "openai_cli_sync_success"
             | "openai_image_sync_success"
+            | "openai_image_sync_error"
             | "claude_cli_sync_success"
             | "gemini_cli_sync_success"
             | "openai_cli_sync_error"
@@ -424,6 +425,7 @@ mod tests {
             "openai_responses_compact_sync_error"
         ));
         assert!(is_local_ai_sync_report_kind("openai_image_sync_success"));
+        assert!(is_local_ai_sync_report_kind("openai_image_sync_error"));
         assert!(is_local_ai_sync_report_kind("gemini_files_delete_mapping"));
         assert!(!is_local_ai_sync_report_kind("unknown_sync_kind"));
     }

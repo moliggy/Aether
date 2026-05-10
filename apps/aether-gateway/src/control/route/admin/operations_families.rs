@@ -576,6 +576,95 @@ pub(super) fn classify_admin_operations_family_route(
             false,
         ))
     } else if method == http::Method::GET
+        && matches!(
+            normalized_path,
+            "/api/admin/user-groups" | "/api/admin/user-groups/"
+        )
+    {
+        Some(classified(
+            "admin_proxy",
+            "users_manage",
+            "list_user_groups",
+            "admin:users",
+            false,
+        ))
+    } else if method == http::Method::POST
+        && matches!(
+            normalized_path,
+            "/api/admin/user-groups" | "/api/admin/user-groups/"
+        )
+    {
+        Some(classified(
+            "admin_proxy",
+            "users_manage",
+            "create_user_group",
+            "admin:users",
+            false,
+        ))
+    } else if method == http::Method::PUT
+        && matches!(
+            normalized_path,
+            "/api/admin/user-groups/default" | "/api/admin/user-groups/default/"
+        )
+    {
+        Some(classified(
+            "admin_proxy",
+            "users_manage",
+            "set_default_user_group",
+            "admin:users",
+            false,
+        ))
+    } else if method == http::Method::GET
+        && normalized_path.starts_with("/api/admin/user-groups/")
+        && normalized_path.ends_with("/members")
+        && normalized_path.matches('/').count() == 5
+    {
+        Some(classified(
+            "admin_proxy",
+            "users_manage",
+            "list_user_group_members",
+            "admin:users",
+            false,
+        ))
+    } else if method == http::Method::PUT
+        && normalized_path.starts_with("/api/admin/user-groups/")
+        && normalized_path.ends_with("/members")
+        && normalized_path.matches('/').count() == 5
+    {
+        Some(classified(
+            "admin_proxy",
+            "users_manage",
+            "replace_user_group_members",
+            "admin:users",
+            false,
+        ))
+    } else if method == http::Method::PUT
+        && normalized_path.starts_with("/api/admin/user-groups/")
+        && normalized_path.matches('/').count() == 4
+        && !normalized_path.ends_with("/default")
+        && !normalized_path.ends_with("/members")
+    {
+        Some(classified(
+            "admin_proxy",
+            "users_manage",
+            "update_user_group",
+            "admin:users",
+            false,
+        ))
+    } else if method == http::Method::DELETE
+        && normalized_path.starts_with("/api/admin/user-groups/")
+        && normalized_path.matches('/').count() == 4
+        && !normalized_path.ends_with("/default")
+        && !normalized_path.ends_with("/members")
+    {
+        Some(classified(
+            "admin_proxy",
+            "users_manage",
+            "delete_user_group",
+            "admin:users",
+            false,
+        ))
+    } else if method == http::Method::GET
         && matches!(normalized_path, "/api/admin/users" | "/api/admin/users/")
     {
         Some(classified(

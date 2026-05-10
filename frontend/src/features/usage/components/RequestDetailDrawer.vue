@@ -702,7 +702,8 @@ import Skeleton from '@/components/ui/skeleton.vue'
 import Tabs from '@/components/ui/tabs.vue'
 import TabsContent from '@/components/ui/tabs-content.vue'
 import { Check, Columns2, RefreshCw, X, Monitor, Server, MessageSquareText, Code2, Terminal, Play } from 'lucide-vue-next'
-import { dashboardApi, type RequestDetail } from '@/api/dashboard'
+import { dashboardApi, type RequestDetail, type RequestErrorDomain } from '@/api/dashboard'
+import type { ImageProgress, RequestTrace } from '@/api/requestTrace'
 import { formatApiFormat } from '@/api/endpoints/types/api-format'
 import { formatShortRequestId } from '@/utils/format'
 import { log } from '@/utils/logger'
@@ -744,6 +745,15 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
+  requestState: [state: {
+    id: string
+    requestId?: string | null
+    status?: 'pending' | 'streaming' | 'completed' | 'failed' | 'cancelled'
+    statusCode?: number | null
+    responseTimeMs?: number | null
+    imageProgress?: ImageProgress | null
+    errorMessage?: string | null
+  }]
 }>()
 
 const loading = ref(false)
@@ -784,14 +794,88 @@ type PricingTierLike = {
 
 type JsonRecord = Record<string, unknown>
 
+type NormalizedErrorDomain = {
+  source?: string | null
+  status_code?: number | null
+  type?: string | null
+  message: string
+  code?: string | number | null
+  category?: string | null
+}
+
 function asRecord(value: unknown): JsonRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   return value as JsonRecord
 }
 
-function handleTraceState(state: { loaded: boolean, hasTrace: boolean }) {
+function normalizeErrorDomain(domain: RequestErrorDomain | null | undefined): NormalizedErrorDomain | null {
+  if (!domain || typeof domain !== 'object') return null
+  const message = typeof domain.message === 'string' ? domain.message.trim() : ''
+  if (!message) return null
+  return {
+    source: domain.source ?? null,
+    status_code: domain.status_code ?? null,
+    type: domain.type ?? null,
+    message,
+    code: domain.code ?? null,
+    category: domain.category ?? null,
+  }
+}
+
+function formatErrorDomainMeta(domain: NormalizedErrorDomain): string {
+  const parts: string[] = []
+  if (domain.status_code != null) parts.push(`HTTP ${domain.status_code}`)
+  if (domain.type) parts.push(domain.type)
+  if (domain.source) parts.push(`source=${domain.source}`)
+  return parts.join(' · ')
+}
+
+function mapTraceFinalStatusToRequestStatus(
+  status?: RequestTrace['final_status'] | null
+): 'pending' | 'streaming' | 'completed' | 'failed' | 'cancelled' | undefined {
+  switch (status) {
+    case 'success':
+      return 'completed'
+    case 'failed':
+      return 'failed'
+    case 'cancelled':
+      return 'cancelled'
+    case 'streaming':
+      return 'streaming'
+    case 'pending':
+      return 'pending'
+    default:
+      return undefined
+  }
+}
+
+function handleTraceState(state: {
+  loaded: boolean
+  hasTrace: boolean
+  finalStatus?: RequestTrace['final_status'] | null
+  statusCode?: number | null
+  latencyMs?: number | null
+  imageProgress?: ImageProgress | null
+  errorMessage?: string | null
+}) {
   timelineLoaded.value = state.loaded
   timelineHasTrace.value = state.hasTrace
+  const id = props.requestId
+  if (!id) return
+
+  const status = mapTraceFinalStatusToRequestStatus(state.finalStatus)
+  const imageFailed = state.imageProgress?.phase === 'failed'
+  if (!status && !state.imageProgress && state.statusCode == null && state.latencyMs == null) return
+
+  emit('requestState', {
+    id,
+    requestId: detail.value?.request_id || detail.value?.id || null,
+    status: imageFailed ? 'failed' : status,
+    statusCode: state.statusCode ?? undefined,
+    responseTimeMs: state.latencyMs ?? undefined,
+    imageProgress: state.imageProgress ?? null,
+    errorMessage: state.errorMessage ?? undefined,
+  })
 }
 
 function toNumber(value: unknown): number | null {

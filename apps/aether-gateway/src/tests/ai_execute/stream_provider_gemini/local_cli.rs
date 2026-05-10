@@ -1,7 +1,7 @@
 use super::{
     any, build_router_with_state, build_state_with_execution_runtime_override,
-    encrypt_python_fernet_plaintext, json, start_server, to_bytes, Arc, Body, Bytes, Digest,
-    HeaderName, HeaderValue, InMemoryAuthApiKeySnapshotRepository,
+    encrypt_python_fernet_plaintext, json, start_server, strip_sse_keepalive_comments, to_bytes,
+    Arc, Body, Bytes, Digest, HeaderName, HeaderValue, InMemoryAuthApiKeySnapshotRepository,
     InMemoryMinimalCandidateSelectionReadRepository, InMemoryProviderCatalogReadRepository,
     InMemoryRequestCandidateRepository, Json, Mutex, Request, RequestCandidateReadRepository,
     RequestCandidateStatus, Response, Router, Sha256, StatusCode, StoredAuthApiKeySnapshot,
@@ -381,7 +381,7 @@ async fn gateway_executes_gemini_cli_stream_via_local_decision_gate_with_local_s
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response.text().await.expect("body should read"),
+        strip_sse_keepalive_comments(&response.text().await.expect("body should read")),
         "data: {\"candidates\":[]}\n\n"
     );
 
@@ -872,7 +872,7 @@ async fn gateway_executes_gemini_cli_stream_via_local_decision_gate_after_oauth_
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response.text().await.expect("body should read"),
+        strip_sse_keepalive_comments(&response.text().await.expect("body should read")),
         "data: {\"candidates\":[]}\n\n"
     );
 
@@ -1339,7 +1339,7 @@ async fn gateway_executes_vertex_ai_gemini_cli_stream_via_local_decision_gate_wi
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response.text().await.expect("body should read"),
+        strip_sse_keepalive_comments(&response.text().await.expect("body should read")),
         "data: {\"candidates\":[]}\n\n"
     );
 
@@ -1849,7 +1849,8 @@ async fn gateway_executes_antigravity_gemini_cli_stream_via_local_decision_gate_
         .expect("request should succeed");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let response_text = response.text().await.expect("body should read");
+    let response_text =
+        strip_sse_keepalive_comments(&response.text().await.expect("body should read"));
     let payload = response_text
         .trim()
         .strip_prefix("data: ")

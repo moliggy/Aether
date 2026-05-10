@@ -107,6 +107,10 @@ where
         }
     }
 
+    if let Some(outcome) = exhausted {
+        return Ok(AiServingExecutionOutcome::Exhausted(outcome));
+    }
+
     let fallback_reason = if port.scheduler_decision_supported() {
         AiPlanFallbackReason::RemoteDecisionMiss
     } else {
@@ -119,9 +123,7 @@ where
         AiServingExecutionOutcome::Exhausted(outcome) => {
             Ok(AiServingExecutionOutcome::Exhausted(outcome))
         }
-        AiServingExecutionOutcome::NoPath => Ok(exhausted
-            .map(AiServingExecutionOutcome::Exhausted)
-            .unwrap_or(AiServingExecutionOutcome::NoPath)),
+        AiServingExecutionOutcome::NoPath => Ok(AiServingExecutionOutcome::NoPath),
     }
 }
 
@@ -159,6 +161,10 @@ where
         }
     }
 
+    if let Some(outcome) = exhausted {
+        return Ok(AiServingExecutionOutcome::Exhausted(outcome));
+    }
+
     let fallback_reason = if port.scheduler_decision_supported() {
         AiPlanFallbackReason::RemoteDecisionMiss
     } else {
@@ -171,9 +177,7 @@ where
         AiServingExecutionOutcome::Exhausted(outcome) => {
             Ok(AiServingExecutionOutcome::Exhausted(outcome))
         }
-        AiServingExecutionOutcome::NoPath => Ok(exhausted
-            .map(AiServingExecutionOutcome::Exhausted)
-            .unwrap_or(AiServingExecutionOutcome::NoPath)),
+        AiServingExecutionOutcome::NoPath => Ok(AiServingExecutionOutcome::NoPath),
     }
 }
 
@@ -365,6 +369,20 @@ mod tests {
             outcome,
             AiServingExecutionOutcome::Exhausted("local_video_exhausted")
         ));
+        assert_eq!(
+            port.calls.lock().unwrap().as_slice(),
+            [
+                "VideoTaskFollowUp",
+                "LocalVideo",
+                "LocalImage",
+                "LocalOpenAiChat",
+                "LocalOpenAiResponses",
+                "LocalStandardFamily",
+                "LocalSameFormatProvider",
+                "LocalGeminiFiles",
+                "RemoteDecision",
+            ]
+        );
     }
 
     #[tokio::test]
@@ -403,6 +421,38 @@ mod tests {
         assert_eq!(
             port.calls.lock().unwrap().as_slice(),
             ["LocalVideoContent", "LocalImage"]
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_path_returns_last_exhaustion_without_plan_fallback() {
+        let port = TestStreamPort {
+            scheduler_supported: true,
+            outcomes: Mutex::new(VecDeque::from([
+                AiServingExecutionOutcome::NoPath,
+                AiServingExecutionOutcome::Exhausted("local_image_exhausted"),
+            ])),
+            calls: Mutex::default(),
+        };
+
+        let outcome = run_ai_stream_execution_path(&port).await.unwrap();
+
+        assert!(matches!(
+            outcome,
+            AiServingExecutionOutcome::Exhausted("local_image_exhausted")
+        ));
+        assert_eq!(
+            port.calls.lock().unwrap().as_slice(),
+            [
+                "LocalVideoContent",
+                "LocalImage",
+                "LocalOpenAiChat",
+                "LocalOpenAiResponses",
+                "LocalStandardFamily",
+                "LocalSameFormatProvider",
+                "LocalGeminiFiles",
+                "RemoteDecision",
+            ]
         );
     }
 }

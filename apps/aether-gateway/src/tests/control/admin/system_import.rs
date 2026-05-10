@@ -12,7 +12,7 @@ use aether_data::repository::oauth_providers::{
     InMemoryOAuthProviderRepository, OAuthProviderReadRepository, StoredOAuthProviderConfig,
 };
 use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
-use aether_data::repository::users::StoredUserAuthRecord;
+use aether_data::repository::users::{StoredUserAuthRecord, UserReadRepository};
 use aether_data::repository::wallet::{StoredWalletSnapshot, WalletLookupKey};
 use aether_data_contracts::repository::global_models::{
     AdminGlobalModelListQuery, AdminProviderModelListQuery, GlobalModelReadRepository,
@@ -556,11 +556,14 @@ async fn gateway_imports_admin_system_users_locally_and_persists_data() {
     }));
 
     let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::default());
+    let user_repository =
+        Arc::new(aether_data::repository::users::InMemoryUserReadRepository::default());
     let (upstream_url, upstream_handle) = start_server(upstream).await;
     let state = AppState::new()
         .expect("gateway should build")
         .with_data_state_for_tests(
             GatewayDataState::with_auth_api_key_repository_for_tests(Arc::clone(&auth_repository))
+                .with_user_reader(user_repository)
                 .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
         )
         .with_auth_users_for_tests([sample_import_admin_user("admin-user-123")])
@@ -575,8 +578,21 @@ async fn gateway_imports_admin_system_users_locally_and_persists_data() {
         .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
         .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
         .json(&json!({
-            "version": "1.3",
+            "version": "1.4",
             "merge_mode": "overwrite",
+            "user_groups": [{
+                "id": "source-group-1",
+                "name": "GPT Import",
+                "description": "Imported group",
+                "allowed_providers": ["openai"],
+                "allowed_providers_mode": "specific",
+                "allowed_api_formats": ["openai:chat"],
+                "allowed_api_formats_mode": "specific",
+                "allowed_models": ["gpt-5"],
+                "allowed_models_mode": "specific",
+                "rate_limit": 44,
+                "rate_limit_mode": "custom"
+            }],
             "users": [{
                 "email": "alice@example.com",
                 "email_verified": true,
@@ -587,6 +603,10 @@ async fn gateway_imports_admin_system_users_locally_and_persists_data() {
                 "allowed_api_formats": ["openai:chat"],
                 "allowed_models": ["gpt-5"],
                 "rate_limit": 77,
+                "allowed_models_mode": "specific",
+                "rate_limit_mode": "custom",
+                "group_ids": ["source-group-1"],
+                "group_names": ["GPT Import"],
                 "is_active": true,
                 "wallet": {
                     "balance": 20.0,
@@ -654,6 +674,7 @@ async fn gateway_imports_admin_system_users_locally_and_persists_data() {
     let payload: Value = response.json().await.expect("json body should parse");
     assert_eq!(status, StatusCode::OK, "payload={payload}");
     assert_eq!(payload["message"], "用户数据导入成功");
+    assert_eq!(payload["stats"]["user_groups"]["created"], json!(1));
     assert_eq!(payload["stats"]["users"]["created"], json!(1));
     assert_eq!(payload["stats"]["api_keys"]["created"], json!(1));
     assert_eq!(payload["stats"]["standalone_keys"]["created"], json!(1));
@@ -683,7 +704,21 @@ async fn gateway_imports_admin_system_users_locally_and_persists_data() {
         imported_user.allowed_models,
         Some(vec!["gpt-5".to_string()])
     );
+    assert_eq!(imported_user.allowed_models_mode, "specific");
     assert!(imported_user.is_active);
+
+    let imported_groups = state
+        .list_user_groups_for_user(&imported_user.id)
+        .await
+        .expect("user groups should load");
+    assert_eq!(imported_groups.len(), 1);
+    assert_eq!(imported_groups[0].name, "GPT Import");
+    assert_eq!(imported_groups[0].allowed_models_mode, "specific");
+    assert_eq!(
+        imported_groups[0].allowed_models,
+        Some(vec!["gpt-5".to_string()])
+    );
+    assert_eq!(imported_groups[0].rate_limit, Some(44));
 
     let user_wallet = state
         .find_wallet(WalletLookupKey::UserId(&imported_user.id))

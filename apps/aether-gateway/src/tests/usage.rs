@@ -28,8 +28,8 @@ use sha2::{Digest, Sha256};
 
 use super::{
     any, build_router_with_state, build_state_with_execution_runtime_override, send_request,
-    start_server, Body, HeaderValue, Json, Mutex, Request, Response, Router, StatusCode,
-    UsageRuntimeConfig, TRACE_ID_HEADER,
+    start_server, strip_sse_keepalive_comments, Body, HeaderValue, Json, Mutex, Request, Response,
+    Router, StatusCode, UsageRuntimeConfig, TRACE_ID_HEADER,
 };
 use crate::data::GatewayDataState;
 

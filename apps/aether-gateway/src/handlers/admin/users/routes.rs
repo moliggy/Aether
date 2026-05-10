@@ -1,13 +1,16 @@
 use super::{
-    build_admin_create_user_api_key_response, build_admin_create_user_response,
-    build_admin_delete_user_api_key_response, build_admin_delete_user_response,
+    build_admin_create_user_api_key_response, build_admin_create_user_group_response,
+    build_admin_create_user_response, build_admin_delete_user_api_key_response,
+    build_admin_delete_user_group_response, build_admin_delete_user_response,
     build_admin_delete_user_session_response, build_admin_delete_user_sessions_response,
     build_admin_get_user_response, build_admin_list_user_api_keys_response,
+    build_admin_list_user_group_members_response, build_admin_list_user_groups_response,
     build_admin_list_user_sessions_response, build_admin_list_users_response,
-    build_admin_resolve_user_selection_response, build_admin_reveal_user_api_key_response,
+    build_admin_replace_user_group_members_response, build_admin_resolve_user_selection_response,
+    build_admin_reveal_user_api_key_response, build_admin_set_default_user_group_response,
     build_admin_toggle_user_api_key_lock_response, build_admin_update_user_api_key_response,
-    build_admin_update_user_response, build_admin_user_batch_action_response,
-    build_admin_users_data_unavailable_response,
+    build_admin_update_user_group_response, build_admin_update_user_response,
+    build_admin_user_batch_action_response, build_admin_users_data_unavailable_response,
 };
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::GatewayError;
@@ -15,8 +18,27 @@ use axum::{body::Body, http, response::Response};
 
 fn is_admin_users_route(request_context: &AdminRequestContext<'_>) -> bool {
     let path = request_context.path();
-    (request_context.method() == http::Method::GET
-        && matches!(path, "/api/admin/users" | "/api/admin/users/"))
+    ((request_context.method() == http::Method::GET
+        || request_context.method() == http::Method::POST)
+        && matches!(path, "/api/admin/user-groups" | "/api/admin/user-groups/"))
+        || (request_context.method() == http::Method::PUT
+            && matches!(
+                path,
+                "/api/admin/user-groups/default" | "/api/admin/user-groups/default/"
+            ))
+        || ((request_context.method() == http::Method::PUT
+            || request_context.method() == http::Method::DELETE)
+            && path.starts_with("/api/admin/user-groups/")
+            && path.matches('/').count() == 4
+            && !path.ends_with("/members")
+            && !path.ends_with("/default"))
+        || ((request_context.method() == http::Method::GET
+            || request_context.method() == http::Method::PUT)
+            && path.starts_with("/api/admin/user-groups/")
+            && path.ends_with("/members")
+            && path.matches('/').count() == 5)
+        || (request_context.method() == http::Method::GET
+            && matches!(path, "/api/admin/users" | "/api/admin/users/"))
         || (request_context.method() == http::Method::POST
             && matches!(path, "/api/admin/users" | "/api/admin/users/"))
         || (request_context.method() == http::Method::POST
@@ -84,6 +106,26 @@ pub(super) async fn maybe_build_local_admin_users_routes_response(
     }
 
     match decision.route_kind.as_deref() {
+        Some("list_user_groups") => Ok(Some(build_admin_list_user_groups_response(state).await?)),
+        Some("create_user_group") => Ok(Some(
+            build_admin_create_user_group_response(state, request_body).await?,
+        )),
+        Some("update_user_group") => Ok(Some(
+            build_admin_update_user_group_response(state, request_context, request_body).await?,
+        )),
+        Some("delete_user_group") => Ok(Some(
+            build_admin_delete_user_group_response(state, request_context).await?,
+        )),
+        Some("list_user_group_members") => Ok(Some(
+            build_admin_list_user_group_members_response(state, request_context).await?,
+        )),
+        Some("replace_user_group_members") => Ok(Some(
+            build_admin_replace_user_group_members_response(state, request_context, request_body)
+                .await?,
+        )),
+        Some("set_default_user_group") => Ok(Some(
+            build_admin_set_default_user_group_response(state, request_body).await?,
+        )),
         Some("create_user") => Ok(Some(
             build_admin_create_user_response(state, request_context, request_body).await?,
         )),

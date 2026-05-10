@@ -10,7 +10,9 @@ use crate::handlers::admin::shared::{
 };
 use crate::handlers::admin::system::shared::configs::apply_admin_system_config_update;
 use crate::handlers::admin::users::{
-    hash_admin_user_api_key, normalize_admin_user_api_formats, normalize_admin_user_string_list,
+    hash_admin_user_api_key, normalize_admin_list_policy_mode,
+    normalize_admin_rate_limit_policy_mode, normalize_admin_user_api_formats,
+    normalize_admin_user_string_list,
 };
 use crate::handlers::public::normalize_admin_base_url;
 use crate::GatewayError;
@@ -397,6 +399,7 @@ fn build_import_provider_model_record(
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
 struct AdminSystemUsersImportStats {
+    user_groups: AdminSystemConfigImportCounter,
     users: AdminSystemConfigImportCounter,
     api_keys: AdminSystemConfigImportCounter,
     standalone_keys: AdminSystemConfigImportCounter,
@@ -542,6 +545,78 @@ fn imported_optional_value(value: Option<&Value>) -> Option<Value> {
     value.cloned().filter(|value| !value.is_null())
 }
 
+fn imported_optional_list_policy_mode(
+    value: Option<&Value>,
+    field_name: &str,
+) -> Result<Option<String>, String> {
+    let Some(value) = imported_optional_string(value)? else {
+        return Ok(None);
+    };
+    let value = value.to_ascii_lowercase();
+    normalize_admin_list_policy_mode(&value)
+        .map(Some)
+        .map_err(|_| format!("{field_name} 不合法"))
+}
+
+fn imported_optional_rate_limit_policy_mode(
+    value: Option<&Value>,
+    field_name: &str,
+) -> Result<Option<String>, String> {
+    let Some(value) = imported_optional_string(value)? else {
+        return Ok(None);
+    };
+    let value = value.to_ascii_lowercase();
+    normalize_admin_rate_limit_policy_mode(&value)
+        .map(Some)
+        .map_err(|_| format!("{field_name} 不合法"))
+}
+
+fn legacy_imported_list_policy_mode(values: &Option<Vec<String>>) -> String {
+    if values.is_some() {
+        "specific".to_string()
+    } else {
+        "unrestricted".to_string()
+    }
+}
+
+fn legacy_imported_rate_limit_policy_mode(value: Option<i32>) -> String {
+    if value.is_some() {
+        "custom".to_string()
+    } else {
+        "system".to_string()
+    }
+}
+
+fn imported_user_list_policy_mode(
+    object: &Map<String, Value>,
+    mode_field: &str,
+    value_field: &str,
+    values: &Option<Vec<String>>,
+) -> Result<Option<String>, String> {
+    imported_optional_list_policy_mode(object.get(mode_field), mode_field).map(|mode| {
+        mode.or_else(|| {
+            object
+                .contains_key(value_field)
+                .then(|| legacy_imported_list_policy_mode(values))
+        })
+    })
+}
+
+fn imported_user_rate_limit_policy_mode(
+    object: &Map<String, Value>,
+    mode_field: &str,
+    value_field: &str,
+    value: Option<i32>,
+) -> Result<Option<String>, String> {
+    imported_optional_rate_limit_policy_mode(object.get(mode_field), mode_field).map(|mode| {
+        mode.or_else(|| {
+            object
+                .contains_key(value_field)
+                .then(|| legacy_imported_rate_limit_policy_mode(value))
+        })
+    })
+}
+
 fn imported_rfc3339_to_unix_secs(
     value: Option<&Value>,
     field_name: &str,
@@ -599,6 +674,130 @@ fn normalize_imported_user_api_formats(
         object.get(field_name),
         field_name,
     )?)
+}
+
+fn build_imported_user_group_record(
+    group: &Map<String, Value>,
+    field_name: &str,
+) -> Result<
+    (
+        Option<String>,
+        String,
+        aether_data::repository::users::UpsertUserGroupRecord,
+    ),
+    String,
+> {
+    let export_id = imported_optional_string(group.get("id"))?;
+    let name = imported_optional_string(group.get("name"))?
+        .ok_or_else(|| format!("{field_name}.name 不能为空"))?;
+    let name = aether_data::repository::users::normalize_user_group_name(&name);
+    if name.is_empty() {
+        return Err(format!("{field_name}.name 不能为空"));
+    }
+    let description = imported_optional_string(group.get("description"))?;
+    let allowed_providers = normalize_imported_user_string_list(group, "allowed_providers")?;
+    let allowed_api_formats = normalize_imported_user_api_formats(group, "allowed_api_formats")?;
+    let allowed_models = normalize_imported_user_string_list(group, "allowed_models")?;
+    let rate_limit = imported_optional_i32(group.get("rate_limit"), "rate_limit")?;
+
+    let allowed_providers_mode = imported_optional_list_policy_mode(
+        group.get("allowed_providers_mode"),
+        "allowed_providers_mode",
+    )?
+    .unwrap_or_else(|| {
+        if group.contains_key("allowed_providers") {
+            legacy_imported_list_policy_mode(&allowed_providers)
+        } else {
+            "inherit".to_string()
+        }
+    });
+    let allowed_api_formats_mode = imported_optional_list_policy_mode(
+        group.get("allowed_api_formats_mode"),
+        "allowed_api_formats_mode",
+    )?
+    .unwrap_or_else(|| {
+        if group.contains_key("allowed_api_formats") {
+            legacy_imported_list_policy_mode(&allowed_api_formats)
+        } else {
+            "inherit".to_string()
+        }
+    });
+    let allowed_models_mode = imported_optional_list_policy_mode(
+        group.get("allowed_models_mode"),
+        "allowed_models_mode",
+    )?
+    .unwrap_or_else(|| {
+        if group.contains_key("allowed_models") {
+            legacy_imported_list_policy_mode(&allowed_models)
+        } else {
+            "inherit".to_string()
+        }
+    });
+    let rate_limit_mode =
+        imported_optional_rate_limit_policy_mode(group.get("rate_limit_mode"), "rate_limit_mode")?
+            .unwrap_or_else(|| {
+                if group.contains_key("rate_limit") {
+                    legacy_imported_rate_limit_policy_mode(rate_limit)
+                } else {
+                    "inherit".to_string()
+                }
+            });
+
+    let normalized_name = name.to_ascii_lowercase();
+
+    Ok((
+        export_id,
+        normalized_name,
+        aether_data::repository::users::UpsertUserGroupRecord {
+            name,
+            description,
+            priority: 0,
+            allowed_providers,
+            allowed_providers_mode,
+            allowed_api_formats,
+            allowed_api_formats_mode,
+            allowed_models,
+            allowed_models_mode,
+            rate_limit,
+            rate_limit_mode,
+        },
+    ))
+}
+
+fn resolve_imported_user_group_ids(
+    user: &Map<String, Value>,
+    imported_group_id_map: &BTreeMap<String, String>,
+    imported_group_name_map: &BTreeMap<String, String>,
+    groups_by_name: &BTreeMap<String, aether_data::repository::users::StoredUserGroup>,
+) -> Result<Vec<String>, String> {
+    let raw_group_ids =
+        imported_string_list_from_value(user.get("group_ids"), "group_ids")?.unwrap_or_default();
+    let raw_group_names = imported_string_list_from_value(user.get("group_names"), "group_names")?
+        .unwrap_or_default();
+    let mut group_ids = BTreeSet::new();
+    for raw_group_id in raw_group_ids {
+        if let Some(group_id) = imported_group_id_map.get(&raw_group_id) {
+            group_ids.insert(group_id.clone());
+            continue;
+        }
+        group_ids.insert(raw_group_id);
+    }
+    for raw_group_name in raw_group_names {
+        let normalized_name =
+            aether_data::repository::users::normalize_user_group_name(&raw_group_name)
+                .to_ascii_lowercase();
+        if normalized_name.is_empty() {
+            continue;
+        }
+        if let Some(group_id) = imported_group_name_map.get(&normalized_name) {
+            group_ids.insert(group_id.clone());
+            continue;
+        }
+        if let Some(group) = groups_by_name.get(&normalized_name) {
+            group_ids.insert(group.id.clone());
+        }
+    }
+    Ok(group_ids.into_iter().collect())
 }
 
 fn normalize_imported_wallet_target(
@@ -1686,6 +1885,11 @@ impl<'a> AdminAppState<'a> {
             Some(_) => return Ok(Err(invalid_request("standalone_keys 必须是数组"))),
             None => &empty,
         };
+        let imported_user_groups = match root.get("user_groups") {
+            Some(Value::Array(items)) => items,
+            Some(_) => return Ok(Err(invalid_request("user_groups 必须是数组"))),
+            None => &empty,
+        };
 
         let standalone_owner_id = match operator_id {
             Some(candidate) => match self.find_user_auth_by_id(candidate).await? {
@@ -1709,6 +1913,86 @@ impl<'a> AdminAppState<'a> {
         ));
 
         let mut stats = AdminSystemUsersImportStats::default();
+        let default_group_id = self.effective_default_user_group_id().await?;
+        let existing_groups = self.list_user_groups().await?;
+        let mut groups_by_name = existing_groups
+            .into_iter()
+            .map(|group| {
+                (
+                    aether_data::repository::users::normalize_user_group_name(&group.name)
+                        .to_ascii_lowercase(),
+                    group,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut imported_group_id_map = BTreeMap::<String, String>::new();
+        let mut imported_group_name_map = BTreeMap::<String, String>::new();
+
+        for (index, raw_group) in imported_user_groups.iter().enumerate() {
+            let group = match imported_object_field(raw_group, &format!("user_groups[{index}]")) {
+                Ok(value) => value,
+                Err(detail) => return Ok(Err(invalid_request(detail))),
+            };
+            let (export_id, normalized_name, record) = invalid_value!(
+                build_imported_user_group_record(group, &format!("user_groups[{index}]"))
+            );
+            if default_group_id
+                .as_deref()
+                .is_some_and(|group_id| export_id.as_deref() == Some(group_id))
+                || normalized_name == "default"
+            {
+                if let Some(default_group_id) = default_group_id.as_ref() {
+                    if let Some(export_id) = export_id {
+                        imported_group_id_map.insert(export_id, default_group_id.clone());
+                    }
+                    imported_group_name_map.insert(normalized_name, default_group_id.clone());
+                }
+                stats.user_groups.skipped += 1;
+                continue;
+            }
+            if let Some(existing) = groups_by_name.get(&normalized_name).cloned() {
+                if let Some(export_id) = export_id {
+                    imported_group_id_map.insert(export_id, existing.id.clone());
+                }
+                imported_group_name_map.insert(normalized_name.clone(), existing.id.clone());
+                match merge_mode {
+                    AdminImportMergeMode::Skip => {
+                        stats.user_groups.skipped += 1;
+                    }
+                    AdminImportMergeMode::Error => {
+                        return Ok(Err(invalid_request(format!(
+                            "用户组 '{}' 已存在",
+                            existing.name
+                        ))));
+                    }
+                    AdminImportMergeMode::Overwrite => {
+                        let Some(updated) = self.update_user_group(&existing.id, record).await?
+                        else {
+                            return Ok(Err((
+                                http::StatusCode::SERVICE_UNAVAILABLE,
+                                json!({ "detail": "Admin system data unavailable" }),
+                            )));
+                        };
+                        groups_by_name.insert(normalized_name, updated);
+                        stats.user_groups.updated += 1;
+                    }
+                }
+                continue;
+            }
+
+            let Some(created) = self.create_user_group(record).await? else {
+                return Ok(Err((
+                    http::StatusCode::SERVICE_UNAVAILABLE,
+                    json!({ "detail": "Admin system data unavailable" }),
+                )));
+            };
+            if let Some(export_id) = export_id {
+                imported_group_id_map.insert(export_id, created.id.clone());
+            }
+            imported_group_name_map.insert(normalized_name.clone(), created.id.clone());
+            groups_by_name.insert(normalized_name, created);
+            stats.user_groups.created += 1;
+        }
 
         for (index, raw_user) in users.iter().enumerate() {
             let user = match imported_object_field(raw_user, &format!("users[{index}]")) {
@@ -1760,6 +2044,53 @@ impl<'a> AdminAppState<'a> {
                 invalid_value!(normalize_imported_user_string_list(user, "allowed_models"));
             let rate_limit =
                 invalid_value!(imported_optional_i32(user.get("rate_limit"), "rate_limit"));
+            let allowed_providers_mode = invalid_value!(imported_user_list_policy_mode(
+                user,
+                "allowed_providers_mode",
+                "allowed_providers",
+                &allowed_providers,
+            ));
+            let allowed_api_formats_mode = invalid_value!(imported_user_list_policy_mode(
+                user,
+                "allowed_api_formats_mode",
+                "allowed_api_formats",
+                &allowed_api_formats,
+            ));
+            let allowed_models_mode = invalid_value!(imported_user_list_policy_mode(
+                user,
+                "allowed_models_mode",
+                "allowed_models",
+                &allowed_models,
+            ));
+            let rate_limit_mode = invalid_value!(imported_user_rate_limit_policy_mode(
+                user,
+                "rate_limit_mode",
+                "rate_limit",
+                rate_limit,
+            ));
+            let imported_user_group_ids = invalid_value!(resolve_imported_user_group_ids(
+                user,
+                &imported_group_id_map,
+                &imported_group_name_map,
+                &groups_by_name,
+            ));
+            let group_ids = if user.contains_key("group_ids") || user.contains_key("group_names") {
+                let group_ids = self
+                    .include_default_user_group_ids(&imported_user_group_ids)
+                    .await?;
+                if !group_ids.is_empty() {
+                    let existing_groups = self.list_user_groups_by_ids(&group_ids).await?;
+                    if existing_groups.len() != group_ids.len() {
+                        return Ok(Err(invalid_request(format!(
+                            "用户 '{}' 的用户组不存在",
+                            email.clone().unwrap_or(username.clone())
+                        ))));
+                    }
+                }
+                Some(group_ids)
+            } else {
+                None
+            };
             let is_active =
                 invalid_value!(imported_optional_bool(user.get("is_active"))).unwrap_or(true);
             let model_capability_settings = invalid_value!(imported_optional_json_object(
@@ -1883,6 +2214,31 @@ impl<'a> AdminAppState<'a> {
                                 )
                                 .await?;
                         }
+                        if allowed_providers_mode.is_some()
+                            || allowed_api_formats_mode.is_some()
+                            || allowed_models_mode.is_some()
+                            || rate_limit_mode.is_some()
+                        {
+                            let updated_policy_modes = self
+                                .update_local_auth_user_policy_modes(
+                                    &existing.id,
+                                    allowed_providers_mode.clone(),
+                                    allowed_api_formats_mode.clone(),
+                                    allowed_models_mode.clone(),
+                                    rate_limit_mode.clone(),
+                                )
+                                .await?;
+                            if updated_policy_modes.is_none() {
+                                return Ok(Err((
+                                    http::StatusCode::SERVICE_UNAVAILABLE,
+                                    json!({ "detail": "Admin system data unavailable" }),
+                                )));
+                            }
+                        }
+                        if let Some(group_ids) = group_ids.as_ref() {
+                            self.replace_user_groups_for_user(&existing.id, group_ids)
+                                .await?;
+                        }
                         self.sync_imported_user_wallet(
                             &existing.id,
                             &wallet_target,
@@ -1919,6 +2275,34 @@ impl<'a> AdminAppState<'a> {
                             &created.id,
                             model_capability_settings.clone(),
                         )
+                        .await?;
+                }
+                let created = if allowed_providers_mode.is_some()
+                    || allowed_api_formats_mode.is_some()
+                    || allowed_models_mode.is_some()
+                    || rate_limit_mode.is_some()
+                {
+                    let Some(updated_policy_modes) = self
+                        .update_local_auth_user_policy_modes(
+                            &created.id,
+                            allowed_providers_mode.clone(),
+                            allowed_api_formats_mode.clone(),
+                            allowed_models_mode.clone(),
+                            rate_limit_mode.clone(),
+                        )
+                        .await?
+                    else {
+                        return Ok(Err((
+                            http::StatusCode::SERVICE_UNAVAILABLE,
+                            json!({ "detail": "Admin system data unavailable" }),
+                        )));
+                    };
+                    updated_policy_modes
+                } else {
+                    created
+                };
+                if let Some(group_ids) = group_ids.as_ref() {
+                    self.replace_user_groups_for_user(&created.id, group_ids)
                         .await?;
                 }
                 self.sync_imported_user_wallet(
@@ -2454,9 +2838,10 @@ mod tests {
     #[test]
     fn users_import_requires_supported_export_version() {
         assert!(validate_imported_system_users_export_version(Some(&json!("1.3"))).is_ok());
+        assert!(validate_imported_system_users_export_version(Some(&json!("1.4"))).is_ok());
         assert_eq!(
             validate_imported_system_users_export_version(Some(&json!("2.2"))).unwrap_err(),
-            "不支持的用户数据版本: 2.2，支持的版本: 1.3"
+            "不支持的用户数据版本: 2.2，支持的版本: 1.3, 1.4"
         );
         assert_eq!(
             validate_imported_system_users_export_version(Some(&json!(null))).unwrap_err(),

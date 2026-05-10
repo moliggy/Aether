@@ -65,14 +65,32 @@ type = "json"
 nullable = true
 
 [[table.users.columns]]
+name = "allowed_models_mode"
+type = "text"
+length = 32
+default = "unrestricted"
+
+[[table.users.columns]]
 name = "allowed_providers"
 type = "json"
 nullable = true
 
 [[table.users.columns]]
+name = "allowed_providers_mode"
+type = "text"
+length = 32
+default = "unrestricted"
+
+[[table.users.columns]]
 name = "allowed_api_formats"
 type = "json"
 nullable = true
+
+[[table.users.columns]]
+name = "allowed_api_formats_mode"
+type = "text"
+length = 32
+default = "unrestricted"
 
 [[table.users.columns]]
 name = "model_capability_settings"
@@ -83,6 +101,12 @@ nullable = true
 name = "rate_limit"
 type = "int32"
 nullable = true
+
+[[table.users.columns]]
+name = "rate_limit_mode"
+type = "text"
+length = 32
+default = "system"
 
 [[table.users.columns]]
 name = "metadata"
@@ -121,6 +145,119 @@ columns = ["email"]
 [[table.users.uniques]]
 name = "users_username_key"
 columns = ["username"]
+
+[table.user_groups]
+domain = "identity"
+order = 15
+primary_key = ["id"]
+
+[[table.user_groups.columns]]
+name = "id"
+type = "text_id"
+length = 64
+
+[[table.user_groups.columns]]
+name = "name"
+type = "text"
+length = 100
+
+[[table.user_groups.columns]]
+name = "normalized_name"
+type = "text"
+length = 100
+
+[[table.user_groups.columns]]
+name = "description"
+type = "long_text"
+nullable = true
+
+[[table.user_groups.columns]]
+name = "priority"
+type = "int32"
+default = 0
+
+[[table.user_groups.columns]]
+name = "allowed_providers"
+type = "json"
+nullable = true
+
+[[table.user_groups.columns]]
+name = "allowed_providers_mode"
+type = "text"
+length = 32
+default = "inherit"
+
+[[table.user_groups.columns]]
+name = "allowed_api_formats"
+type = "json"
+nullable = true
+
+[[table.user_groups.columns]]
+name = "allowed_api_formats_mode"
+type = "text"
+length = 32
+default = "inherit"
+
+[[table.user_groups.columns]]
+name = "allowed_models"
+type = "json"
+nullable = true
+
+[[table.user_groups.columns]]
+name = "allowed_models_mode"
+type = "text"
+length = 32
+default = "inherit"
+
+[[table.user_groups.columns]]
+name = "rate_limit"
+type = "int32"
+nullable = true
+
+[[table.user_groups.columns]]
+name = "rate_limit_mode"
+type = "text"
+length = 32
+default = "inherit"
+
+[[table.user_groups.columns]]
+name = "created_at"
+type = "unix_seconds"
+
+[[table.user_groups.columns]]
+name = "updated_at"
+type = "unix_seconds"
+
+[[table.user_groups.uniques]]
+name = "user_groups_normalized_name_key"
+columns = ["normalized_name"]
+
+[[table.user_groups.indexes]]
+name = "user_groups_priority_name_idx"
+columns = ["priority", "name", "id"]
+
+[table.user_group_members]
+domain = "identity"
+order = 16
+primary_key = ["group_id", "user_id"]
+
+[[table.user_group_members.columns]]
+name = "group_id"
+type = "text_id"
+length = 64
+
+[[table.user_group_members.columns]]
+name = "user_id"
+type = "text_id"
+length = 64
+
+[[table.user_group_members.columns]]
+name = "created_at"
+type = "unix_seconds"
+
+[[table.user_group_members.indexes]]
+name = "user_group_members_user_id_idx"
+columns = ["user_id"]
 
 [table.api_keys]
 domain = "identity"

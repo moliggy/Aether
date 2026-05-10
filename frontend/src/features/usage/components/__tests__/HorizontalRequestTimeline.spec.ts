@@ -280,6 +280,44 @@ describe('HorizontalRequestTimeline', () => {
     expect(nodeDots[1].classList.contains('status-success')).toBe(true)
   })
 
+  it('renders Codex image progress from candidate image_progress', async () => {
+    const trace = buildTrace([
+      buildCandidate({
+        id: 'cand-image-progress',
+        provider_id: 'provider-image',
+        provider_name: 'Codex Image',
+        key_id: 'key-image',
+        key_name: 'Image Key',
+        candidate_index: 0,
+        status: 'streaming',
+        finished_at: undefined,
+        image_progress: {
+          phase: 'upstream_streaming',
+          upstream_ttfb_ms: 3807,
+          upstream_sse_frame_count: 12,
+          partial_image_count: 1,
+          last_upstream_event: 'response.output_item.added',
+          last_upstream_frame_at_unix_ms: Date.now(),
+          last_client_visible_event: 'image_generation.partial_image',
+          downstream_heartbeat_count: 3,
+          downstream_heartbeat_interval_ms: 15000,
+          last_downstream_heartbeat_at_unix_ms: Date.now(),
+        },
+      }),
+    ])
+
+    const root = mountTimeline(trace)
+    await nextTick()
+
+    expect(root.textContent).toContain('图片生成进度')
+    expect(root.textContent).toContain('上游生成中')
+    expect(root.textContent).toContain('3.81s')
+    expect(root.textContent).toContain('下游心跳')
+    expect(root.textContent).toContain('15.00s')
+    expect(root.textContent).toContain('response.output_item.added')
+    expect(root.textContent).toContain('image_generation.partial_image')
+  })
+
   it('treats 3xx terminal responses as failed for node display', async () => {
     const trace = buildTrace([
       buildCandidate({

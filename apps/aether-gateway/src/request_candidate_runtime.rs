@@ -274,6 +274,47 @@ pub(crate) async fn record_local_request_candidate_status(
     persist_local_request_candidate_status_record(state, record).await;
 }
 
+pub(crate) async fn record_local_request_candidate_extra_data(
+    state: &(impl RequestCandidateRuntimeWriter + ?Sized),
+    plan: &ExecutionPlan,
+    report_context: Option<&Value>,
+    status: RequestCandidateStatus,
+    status_code: Option<u16>,
+    latency_ms: Option<u64>,
+    extra_data: Value,
+) {
+    let Some(snapshot) = snapshot_local_request_candidate_status(plan, report_context) else {
+        return;
+    };
+    let record = UpsertRequestCandidateRecord {
+        id: snapshot.candidate_id.clone(),
+        request_id: snapshot.request_id.clone(),
+        user_id: snapshot.user_id.clone(),
+        api_key_id: snapshot.api_key_id.clone(),
+        username: None,
+        api_key_name: None,
+        candidate_index: snapshot.candidate_index,
+        retry_index: snapshot.retry_index,
+        provider_id: Some(snapshot.provider_id.clone()),
+        endpoint_id: Some(snapshot.endpoint_id.clone()),
+        key_id: Some(snapshot.key_id.clone()),
+        status,
+        skip_reason: None,
+        is_cached: None,
+        status_code,
+        error_type: None,
+        error_message: None,
+        latency_ms,
+        concurrent_requests: None,
+        extra_data: Some(extra_data),
+        required_capabilities: None,
+        created_at_unix_ms: None,
+        started_at_unix_ms: None,
+        finished_at_unix_ms: None,
+    };
+    persist_local_request_candidate_status_record(state, record).await;
+}
+
 pub(crate) async fn record_local_request_candidate_status_snapshot(
     state: &(impl RequestCandidateRuntimeWriter + ?Sized),
     snapshot: &LocalRequestCandidateStatusSnapshot,

@@ -293,7 +293,7 @@ mod tests {
                 .await
                 .expect("system config should list")
                 .len(),
-            1
+            2
         );
         assert!(backend
             .delete_system_config_value("feature.local")

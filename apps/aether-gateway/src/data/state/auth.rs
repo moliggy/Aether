@@ -86,6 +86,139 @@ impl GatewayDataState {
         }
     }
 
+    pub(crate) async fn list_user_groups(
+        &self,
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroup>, DataLayerError> {
+        match &self.user_reader {
+            Some(repository) => repository.list_user_groups().await,
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub(crate) async fn find_user_group_by_id(
+        &self,
+        group_id: &str,
+    ) -> Result<Option<aether_data::repository::users::StoredUserGroup>, DataLayerError> {
+        match &self.user_reader {
+            Some(repository) => repository.find_user_group_by_id(group_id).await,
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) async fn list_user_groups_by_ids(
+        &self,
+        group_ids: &[String],
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroup>, DataLayerError> {
+        match &self.user_reader {
+            Some(repository) => repository.list_user_groups_by_ids(group_ids).await,
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub(crate) async fn create_user_group(
+        &self,
+        record: aether_data::repository::users::UpsertUserGroupRecord,
+    ) -> Result<Option<aether_data::repository::users::StoredUserGroup>, DataLayerError> {
+        match &self.user_reader {
+            Some(repository) => repository.create_user_group(record).await,
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) async fn update_user_group(
+        &self,
+        group_id: &str,
+        record: aether_data::repository::users::UpsertUserGroupRecord,
+    ) -> Result<Option<aether_data::repository::users::StoredUserGroup>, DataLayerError> {
+        match &self.user_reader {
+            Some(repository) => repository.update_user_group(group_id, record).await,
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) async fn delete_user_group(&self, group_id: &str) -> Result<bool, DataLayerError> {
+        match &self.user_reader {
+            Some(repository) => repository.delete_user_group(group_id).await,
+            None => Ok(false),
+        }
+    }
+
+    pub(crate) async fn list_user_group_members(
+        &self,
+        group_id: &str,
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroupMember>, DataLayerError> {
+        match &self.user_reader {
+            Some(repository) => repository.list_user_group_members(group_id).await,
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub(crate) async fn replace_user_group_members(
+        &self,
+        group_id: &str,
+        user_ids: &[String],
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroupMember>, DataLayerError> {
+        match &self.user_reader {
+            Some(repository) => {
+                repository
+                    .replace_user_group_members(group_id, user_ids)
+                    .await
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub(crate) async fn list_user_groups_for_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroup>, DataLayerError> {
+        match &self.user_reader {
+            Some(repository) => repository.list_user_groups_for_user(user_id).await,
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub(crate) async fn list_user_group_memberships_by_user_ids(
+        &self,
+        user_ids: &[String],
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroupMembership>, DataLayerError>
+    {
+        match &self.user_reader {
+            Some(repository) => {
+                repository
+                    .list_user_group_memberships_by_user_ids(user_ids)
+                    .await
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub(crate) async fn replace_user_groups_for_user(
+        &self,
+        user_id: &str,
+        group_ids: &[String],
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroup>, DataLayerError> {
+        match &self.user_reader {
+            Some(repository) => {
+                repository
+                    .replace_user_groups_for_user(user_id, group_ids)
+                    .await
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub(crate) async fn add_user_to_group(
+        &self,
+        group_id: &str,
+        user_id: &str,
+    ) -> Result<bool, DataLayerError> {
+        match &self.user_reader {
+            Some(repository) => repository.add_user_to_group(group_id, user_id).await,
+            None => Ok(false),
+        }
+    }
+
     pub(crate) async fn list_user_oauth_links(
         &self,
         user_id: &str,
@@ -420,6 +553,28 @@ impl GatewayDataState {
                 rate_limit_present,
                 rate_limit,
                 is_active,
+            )
+            .await
+    }
+
+    pub(crate) async fn update_local_auth_user_policy_modes(
+        &self,
+        user_id: &str,
+        allowed_providers_mode: Option<String>,
+        allowed_api_formats_mode: Option<String>,
+        allowed_models_mode: Option<String>,
+        rate_limit_mode: Option<String>,
+    ) -> Result<Option<StoredUserAuthRecord>, DataLayerError> {
+        let Some(repository) = self.user_reader.as_ref() else {
+            return Ok(None);
+        };
+        repository
+            .update_local_auth_user_policy_modes(
+                user_id,
+                allowed_providers_mode,
+                allowed_api_formats_mode,
+                allowed_models_mode,
+                rate_limit_mode,
             )
             .await
     }
@@ -1470,13 +1625,14 @@ impl GatewayDataState {
         api_key_id: &str,
         now_unix_secs: u64,
     ) -> Result<Option<GatewayAuthApiKeySnapshot>, DataLayerError> {
-        read_resolved_auth_api_key_snapshot_by_user_api_key_ids(
+        let snapshot = read_resolved_auth_api_key_snapshot_by_user_api_key_ids(
             self,
             user_id,
             api_key_id,
             now_unix_secs,
         )
-        .await
+        .await?;
+        self.apply_user_group_effective_policies(snapshot).await
     }
 
     pub(crate) async fn read_auth_api_key_snapshot_by_key_hash(
@@ -1484,18 +1640,242 @@ impl GatewayDataState {
         key_hash: &str,
         now_unix_secs: u64,
     ) -> Result<Option<GatewayAuthApiKeySnapshot>, DataLayerError> {
-        read_resolved_auth_api_key_snapshot_by_key_hash(self, key_hash, now_unix_secs).await
+        let snapshot =
+            read_resolved_auth_api_key_snapshot_by_key_hash(self, key_hash, now_unix_secs).await?;
+        self.apply_user_group_effective_policies(snapshot).await
     }
+
+    async fn apply_user_group_effective_policies(
+        &self,
+        snapshot: Option<GatewayAuthApiKeySnapshot>,
+    ) -> Result<Option<GatewayAuthApiKeySnapshot>, DataLayerError> {
+        let Some(mut snapshot) = snapshot else {
+            return Ok(None);
+        };
+        let Some(repository) = self.user_reader.as_ref() else {
+            return Ok(Some(snapshot));
+        };
+        let Some(user) = repository.find_user_auth_by_id(&snapshot.user_id).await? else {
+            return Ok(Some(snapshot));
+        };
+        let export_row = repository.find_export_user_by_id(&snapshot.user_id).await?;
+        let mut groups = repository
+            .list_user_groups_for_user(&snapshot.user_id)
+            .await?;
+        groups.sort_by(|left, right| {
+            left.name
+                .cmp(&right.name)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+
+        let mut allowed_providers = resolve_effective_list_policy(
+            user.allowed_providers,
+            &user.allowed_providers_mode,
+            &groups,
+            |group| {
+                (
+                    &group.allowed_providers_mode,
+                    group.allowed_providers.clone(),
+                )
+            },
+        );
+        let mut allowed_api_formats = resolve_effective_list_policy(
+            user.allowed_api_formats,
+            &user.allowed_api_formats_mode,
+            &groups,
+            |group| {
+                (
+                    &group.allowed_api_formats_mode,
+                    group.allowed_api_formats.clone(),
+                )
+            },
+        );
+        let mut allowed_models = resolve_effective_list_policy(
+            user.allowed_models,
+            &user.allowed_models_mode,
+            &groups,
+            |group| (&group.allowed_models_mode, group.allowed_models.clone()),
+        );
+        let snapshot_user_rate_limit = snapshot.user_rate_limit;
+        let export_user_rate_limit = export_row.as_ref().and_then(|row| row.rate_limit);
+        let user_rate_limit_mode = match export_row.as_ref() {
+            Some(row)
+                if row.rate_limit.is_none()
+                    && row.rate_limit_mode == "system"
+                    && snapshot_user_rate_limit.is_some() =>
+            {
+                "custom"
+            }
+            Some(row) => row.rate_limit_mode.as_str(),
+            None if snapshot_user_rate_limit.is_some() => "custom",
+            None => "system",
+        };
+        let user_rate_limit = resolve_effective_rate_limit_policy(
+            export_user_rate_limit.or(snapshot_user_rate_limit),
+            user_rate_limit_mode,
+            &groups,
+        );
+        if !snapshot.api_key_is_standalone {
+            constrain_api_key_list_policy_to_user_policy(
+                &mut allowed_providers,
+                &mut snapshot.api_key_allowed_providers,
+            );
+            constrain_api_key_list_policy_to_user_policy(
+                &mut allowed_api_formats,
+                &mut snapshot.api_key_allowed_api_formats,
+            );
+            constrain_api_key_list_policy_to_user_policy(
+                &mut allowed_models,
+                &mut snapshot.api_key_allowed_models,
+            );
+        }
+        snapshot.apply_user_policy(
+            allowed_providers,
+            allowed_api_formats,
+            allowed_models,
+            user_rate_limit,
+        );
+        Ok(Some(snapshot))
+    }
+}
+
+fn resolve_effective_list_policy(
+    user_values: Option<Vec<String>>,
+    user_mode: &str,
+    groups: &[aether_data::repository::users::StoredUserGroup],
+    group_field: impl Fn(
+        &aether_data::repository::users::StoredUserGroup,
+    ) -> (&str, Option<Vec<String>>),
+) -> Option<Vec<String>> {
+    let group_policy = groups.iter().fold(None, |effective, group| {
+        let (mode, values) = group_field(group);
+        intersect_list_policies(effective, list_restriction_from_mode(mode, values))
+    });
+    let user_policy = list_restriction_from_mode(user_mode, user_values);
+    intersect_list_policies(group_policy, user_policy)
+}
+
+fn list_restriction_from_mode(mode: &str, values: Option<Vec<String>>) -> Option<Vec<String>> {
+    match mode {
+        "specific" => Some(values.unwrap_or_default()),
+        "deny_all" => Some(Vec::new()),
+        _ => None,
+    }
+}
+
+fn resolve_effective_rate_limit_policy(
+    user_rate_limit: Option<i32>,
+    user_mode: &str,
+    groups: &[aether_data::repository::users::StoredUserGroup],
+) -> Option<i32> {
+    let group_policy = groups.iter().fold(None, |effective, group| {
+        intersect_rate_limit_policies(
+            effective,
+            rate_limit_restriction_from_mode(&group.rate_limit_mode, group.rate_limit),
+        )
+    });
+    let user_policy = rate_limit_restriction_from_mode(user_mode, user_rate_limit);
+    rate_limit_policy_value(intersect_rate_limit_policies(group_policy, user_policy))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RateLimitRestriction {
+    Unlimited,
+    Limited(i32),
+}
+
+fn rate_limit_restriction_from_mode(
+    mode: &str,
+    rate_limit: Option<i32>,
+) -> Option<RateLimitRestriction> {
+    match mode {
+        "custom" => {
+            let rate_limit = rate_limit.unwrap_or(0).max(0);
+            if rate_limit == 0 {
+                Some(RateLimitRestriction::Unlimited)
+            } else {
+                Some(RateLimitRestriction::Limited(rate_limit))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn intersect_list_policies(
+    left: Option<Vec<String>>,
+    right: Option<Vec<String>>,
+) -> Option<Vec<String>> {
+    match (left, right) {
+        (None, None) => None,
+        (Some(values), None) | (None, Some(values)) => Some(values),
+        (Some(left_values), Some(right_values)) => {
+            let right_values = right_values
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>();
+            Some(
+                left_values
+                    .into_iter()
+                    .filter(|value| right_values.contains(value))
+                    .collect(),
+            )
+        }
+    }
+}
+
+fn intersect_rate_limit_policies(
+    left: Option<RateLimitRestriction>,
+    right: Option<RateLimitRestriction>,
+) -> Option<RateLimitRestriction> {
+    match (left, right) {
+        (None, None) => None,
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (Some(RateLimitRestriction::Unlimited), Some(RateLimitRestriction::Unlimited)) => {
+            Some(RateLimitRestriction::Unlimited)
+        }
+        (Some(RateLimitRestriction::Limited(value)), Some(RateLimitRestriction::Unlimited))
+        | (Some(RateLimitRestriction::Unlimited), Some(RateLimitRestriction::Limited(value))) => {
+            Some(RateLimitRestriction::Limited(value))
+        }
+        (Some(RateLimitRestriction::Limited(left)), Some(RateLimitRestriction::Limited(right))) => {
+            Some(RateLimitRestriction::Limited(left.min(right)))
+        }
+    }
+}
+
+fn rate_limit_policy_value(policy: Option<RateLimitRestriction>) -> Option<i32> {
+    match policy {
+        None => None,
+        Some(RateLimitRestriction::Unlimited) => Some(0),
+        Some(RateLimitRestriction::Limited(value)) => Some(value),
+    }
+}
+
+fn constrain_api_key_list_policy_to_user_policy(
+    user_policy: &mut Option<Vec<String>>,
+    api_key_policy: &mut Option<Vec<String>>,
+) {
+    let Some(api_key_values) = api_key_policy.as_ref().filter(|values| !values.is_empty()) else {
+        return;
+    };
+    let Some(user_values) = user_policy.clone() else {
+        return;
+    };
+    let effective = intersect_list_policies(Some(api_key_values.to_vec()), Some(user_values))
+        .unwrap_or_default();
+    *user_policy = Some(effective.clone());
+    *api_key_policy = Some(effective);
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
+    use super::*;
     use aether_data::repository::auth::{
         InMemoryAuthApiKeySnapshotRepository, StoredAuthApiKeyExportRecord,
         StoredAuthApiKeySnapshot,
     };
+    use aether_data::repository::users::StoredUserGroup;
 
     use crate::data::GatewayDataState;
 
@@ -1524,6 +1904,125 @@ mod tests {
             Some(serde_json::json!(["gpt-5"])),
         )
         .expect("snapshot should build")
+    }
+
+    fn sample_group(
+        id: &str,
+        priority: i32,
+        allowed_models: Option<Vec<&str>>,
+        allowed_models_mode: &str,
+        rate_limit: Option<i32>,
+        rate_limit_mode: &str,
+    ) -> StoredUserGroup {
+        StoredUserGroup {
+            id: id.to_string(),
+            name: id.to_string(),
+            normalized_name: id.to_string(),
+            description: None,
+            priority,
+            allowed_providers: None,
+            allowed_providers_mode: "unrestricted".to_string(),
+            allowed_api_formats: None,
+            allowed_api_formats_mode: "unrestricted".to_string(),
+            allowed_models: allowed_models.map(|values| {
+                values
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect::<Vec<_>>()
+            }),
+            allowed_models_mode: allowed_models_mode.to_string(),
+            rate_limit,
+            rate_limit_mode: rate_limit_mode.to_string(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn list_policy_intersects_group_and_user_restrictions() {
+        let groups = vec![
+            sample_group("default", 0, None, "unrestricted", None, "system"),
+            sample_group(
+                "restricted",
+                10,
+                Some(vec!["gpt-5", "gpt-4.1"]),
+                "specific",
+                None,
+                "system",
+            ),
+        ];
+
+        let policy = resolve_effective_list_policy(
+            Some(vec!["gpt-4.1".to_string(), "gemini-2.5-pro".to_string()]),
+            "specific",
+            &groups,
+            |group| (&group.allowed_models_mode, group.allowed_models.clone()),
+        );
+
+        assert_eq!(policy, Some(vec!["gpt-4.1".to_string()]));
+    }
+
+    #[test]
+    fn user_unrestricted_does_not_bypass_group_restrictions() {
+        let groups = vec![sample_group(
+            "restricted",
+            10,
+            Some(vec!["gpt-5"]),
+            "specific",
+            None,
+            "system",
+        )];
+
+        let policy = resolve_effective_list_policy(None, "unrestricted", &groups, |group| {
+            (&group.allowed_models_mode, group.allowed_models.clone())
+        });
+
+        assert_eq!(policy, Some(vec!["gpt-5".to_string()]));
+    }
+
+    #[test]
+    fn rate_limit_policy_uses_most_restrictive_custom_limit() {
+        let groups = vec![sample_group(
+            "restricted",
+            10,
+            None,
+            "unrestricted",
+            Some(60),
+            "custom",
+        )];
+
+        assert_eq!(
+            resolve_effective_rate_limit_policy(Some(120), "custom", &groups),
+            Some(60)
+        );
+    }
+
+    #[test]
+    fn rate_limit_unlimited_does_not_bypass_limited_group() {
+        let groups = vec![sample_group(
+            "restricted",
+            10,
+            None,
+            "unrestricted",
+            Some(60),
+            "custom",
+        )];
+
+        assert_eq!(
+            resolve_effective_rate_limit_policy(Some(0), "custom", &groups),
+            Some(60)
+        );
+    }
+
+    #[test]
+    fn api_key_specific_policy_cannot_expand_user_policy() {
+        let mut user_policy = Some(vec!["gpt-5".to_string()]);
+        let mut api_key_policy = Some(vec!["gpt-4.1".to_string()]);
+
+        constrain_api_key_list_policy_to_user_policy(&mut user_policy, &mut api_key_policy);
+
+        assert_eq!(user_policy, Some(Vec::<String>::new()));
+        assert_eq!(api_key_policy, Some(Vec::<String>::new()));
     }
 
     #[tokio::test]

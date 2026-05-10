@@ -15,6 +15,9 @@
           数据预览
         </p>
         <ul class="space-y-1 text-muted-foreground">
+          <li v-if="importUsersPreview.user_groups?.length">
+            用户组: {{ importUsersPreview.user_groups.length }} 个
+          </li>
           <li>用户: {{ importUsersPreview.users?.length || 0 }} 个</li>
           <li>
             API Keys: {{ importUsersPreview.users?.reduce((sum: number, u: { api_keys?: unknown[] }) => sum + (u.api_keys?.length || 0), 0) }} 个
@@ -93,6 +96,16 @@
       class="space-y-4"
     >
       <div class="grid grid-cols-2 gap-4 text-sm">
+        <div v-if="importUsersResult.stats.user_groups">
+          <p class="font-medium">
+            用户组
+          </p>
+          <p class="text-muted-foreground">
+            创建: {{ importUsersResult.stats.user_groups.created }},
+            更新: {{ importUsersResult.stats.user_groups.updated }},
+            跳过: {{ importUsersResult.stats.user_groups.skipped }}
+          </p>
+        </div>
         <div>
           <p class="font-medium">
             用户

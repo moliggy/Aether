@@ -4,6 +4,7 @@ const ADMIN_USERS_DATA_UNAVAILABLE_DETAIL: &str = "Admin user management data un
 
 mod api_keys;
 mod batch;
+mod groups;
 mod lifecycle;
 mod route_seam;
 mod routes;
@@ -23,6 +24,12 @@ pub(crate) use self::api_keys::{
 use self::batch::{
     build_admin_resolve_user_selection_response, build_admin_user_batch_action_response,
 };
+use self::groups::{
+    build_admin_create_user_group_response, build_admin_delete_user_group_response,
+    build_admin_list_user_group_members_response, build_admin_list_user_groups_response,
+    build_admin_replace_user_group_members_response, build_admin_set_default_user_group_response,
+    build_admin_update_user_group_response,
+};
 use self::lifecycle::{
     build_admin_create_user_response, build_admin_delete_user_response,
     build_admin_get_user_response, build_admin_list_users_response,
@@ -36,12 +43,16 @@ use self::shared::AdminUpdateUserPatch;
 use self::shared::{
     admin_default_user_initial_gift, build_admin_users_bad_request_response,
     build_admin_users_data_unavailable_response, build_admin_users_read_only_response,
-    format_optional_datetime_iso8601, normalize_admin_optional_user_email,
-    normalize_admin_user_role, normalize_admin_username, validate_admin_user_password,
-    AdminCreateUserApiKeyRequest, AdminCreateUserRequest, AdminToggleUserApiKeyLockRequest,
-    AdminUpdateUserApiKeyRequest,
+    format_optional_datetime_iso8601, legacy_admin_list_policy_mode,
+    legacy_admin_rate_limit_policy_mode, normalize_admin_optional_user_email,
+    normalize_admin_user_group_ids, normalize_admin_user_role, normalize_admin_username,
+    validate_admin_user_password, AdminCreateUserApiKeyRequest, AdminCreateUserRequest,
+    AdminToggleUserApiKeyLockRequest, AdminUpdateUserApiKeyRequest,
 };
-pub(crate) use self::shared::{normalize_admin_user_api_formats, normalize_admin_user_string_list};
+pub(crate) use self::shared::{
+    normalize_admin_list_policy_mode, normalize_admin_rate_limit_policy_mode,
+    normalize_admin_user_api_formats, normalize_admin_user_string_list,
+};
 
 pub(crate) async fn maybe_build_local_admin_users_response(
     request: AdminRouteRequest<'_>,

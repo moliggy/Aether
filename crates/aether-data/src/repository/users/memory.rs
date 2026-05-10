@@ -4,9 +4,11 @@ use std::sync::RwLock;
 use async_trait::async_trait;
 
 use super::types::{
-    LdapAuthUserProvisioningOutcome, StoredUserAuthRecord, StoredUserExportRow,
+    normalize_user_group_name, LdapAuthUserProvisioningOutcome, StoredUserAuthRecord,
+    StoredUserExportRow, StoredUserGroup, StoredUserGroupMember, StoredUserGroupMembership,
     StoredUserOAuthLinkSummary, StoredUserPreferenceRecord, StoredUserSessionRecord,
-    StoredUserSummary, UserExportListQuery, UserExportSummary, UserReadRepository,
+    StoredUserSummary, UpsertUserGroupRecord, UserExportListQuery, UserExportSummary,
+    UserReadRepository,
 };
 use crate::DataLayerError;
 
@@ -34,6 +36,8 @@ pub struct InMemoryUserReadRepository {
     preferences_by_user_id: RwLock<BTreeMap<String, StoredUserPreferenceRecord>>,
     sessions_by_id: RwLock<BTreeMap<String, StoredUserSessionRecord>>,
     model_settings_by_user_id: RwLock<BTreeMap<String, serde_json::Value>>,
+    groups_by_id: RwLock<BTreeMap<String, StoredUserGroup>>,
+    group_members: RwLock<BTreeMap<(String, String), chrono::DateTime<chrono::Utc>>>,
     export_rows: RwLock<Vec<StoredUserExportRow>>,
     read_only: bool,
 }
@@ -57,6 +61,8 @@ impl InMemoryUserReadRepository {
             preferences_by_user_id: RwLock::new(BTreeMap::new()),
             sessions_by_id: RwLock::new(BTreeMap::new()),
             model_settings_by_user_id: RwLock::new(BTreeMap::new()),
+            groups_by_id: RwLock::new(BTreeMap::new()),
+            group_members: RwLock::new(BTreeMap::new()),
             export_rows: RwLock::new(Vec::new()),
             read_only: false,
         }
@@ -90,6 +96,8 @@ impl InMemoryUserReadRepository {
             preferences_by_user_id: RwLock::new(BTreeMap::new()),
             sessions_by_id: RwLock::new(BTreeMap::new()),
             model_settings_by_user_id: RwLock::new(BTreeMap::new()),
+            groups_by_id: RwLock::new(BTreeMap::new()),
+            group_members: RwLock::new(BTreeMap::new()),
             export_rows: RwLock::new(Vec::new()),
             read_only: false,
         }
@@ -109,6 +117,8 @@ impl InMemoryUserReadRepository {
             preferences_by_user_id: RwLock::new(BTreeMap::new()),
             sessions_by_id: RwLock::new(BTreeMap::new()),
             model_settings_by_user_id: RwLock::new(BTreeMap::new()),
+            groups_by_id: RwLock::new(BTreeMap::new()),
+            group_members: RwLock::new(BTreeMap::new()),
             export_rows: RwLock::new(items.into_iter().collect()),
             read_only: false,
         }
@@ -257,6 +267,130 @@ fn upsert_memory_ldap_identifiers(
     }
 }
 
+fn memory_group_from_record(
+    record: UpsertUserGroupRecord,
+) -> Result<StoredUserGroup, DataLayerError> {
+    let now = chrono::Utc::now();
+    let name = normalize_user_group_name(&record.name);
+    StoredUserGroup::new(
+        uuid::Uuid::new_v4().to_string(),
+        name.clone(),
+        name.to_ascii_lowercase(),
+        record.description,
+        record.priority,
+        record.allowed_providers.map(serde_json::Value::from),
+        record.allowed_providers_mode,
+        record.allowed_api_formats.map(serde_json::Value::from),
+        record.allowed_api_formats_mode,
+        record.allowed_models.map(serde_json::Value::from),
+        record.allowed_models_mode,
+        record.rate_limit,
+        record.rate_limit_mode,
+        Some(now),
+        Some(now),
+    )
+}
+
+fn memory_update_group_from_record(
+    mut group: StoredUserGroup,
+    record: UpsertUserGroupRecord,
+) -> Result<StoredUserGroup, DataLayerError> {
+    let name = normalize_user_group_name(&record.name);
+    group.name = name.clone();
+    group.normalized_name = name.to_ascii_lowercase();
+    group.description = record.description;
+    group.priority = record.priority;
+    group.allowed_providers = record.allowed_providers;
+    group.allowed_providers_mode = record.allowed_providers_mode;
+    group.allowed_api_formats = record.allowed_api_formats;
+    group.allowed_api_formats_mode = record.allowed_api_formats_mode;
+    group.allowed_models = record.allowed_models;
+    group.allowed_models_mode = record.allowed_models_mode;
+    group.rate_limit = record.rate_limit;
+    group.rate_limit_mode = record.rate_limit_mode;
+    group.updated_at = Some(chrono::Utc::now());
+    StoredUserGroup::new(
+        group.id,
+        group.name,
+        group.normalized_name,
+        group.description,
+        group.priority,
+        group.allowed_providers.map(serde_json::Value::from),
+        group.allowed_providers_mode,
+        group.allowed_api_formats.map(serde_json::Value::from),
+        group.allowed_api_formats_mode,
+        group.allowed_models.map(serde_json::Value::from),
+        group.allowed_models_mode,
+        group.rate_limit,
+        group.rate_limit_mode,
+        group.created_at,
+        group.updated_at,
+    )
+}
+
+fn memory_group_members(
+    repository: &InMemoryUserReadRepository,
+    group_id: &str,
+) -> Vec<StoredUserGroupMember> {
+    let members = repository
+        .group_members
+        .read()
+        .expect("user repository lock")
+        .clone();
+    let users = repository.auth_by_id.read().expect("user repository lock");
+    members
+        .into_iter()
+        .filter(|((candidate_group_id, _), _)| candidate_group_id == group_id)
+        .filter_map(|((candidate_group_id, user_id), created_at)| {
+            users.get(&user_id).map(|user| StoredUserGroupMember {
+                group_id: candidate_group_id,
+                user_id: user.id.clone(),
+                username: user.username.clone(),
+                email: user.email.clone(),
+                role: user.role.clone(),
+                is_active: user.is_active,
+                is_deleted: user.is_deleted,
+                created_at: Some(created_at),
+            })
+        })
+        .collect()
+}
+
+fn memory_export_row_from_auth_user(
+    repository: &InMemoryUserReadRepository,
+    user: &StoredUserAuthRecord,
+) -> Result<StoredUserExportRow, DataLayerError> {
+    let model_capability_settings = repository
+        .model_settings_by_user_id
+        .read()
+        .expect("user repository lock")
+        .get(&user.id)
+        .cloned();
+    StoredUserExportRow::new(
+        user.id.clone(),
+        user.email.clone(),
+        user.email_verified,
+        user.username.clone(),
+        user.password_hash.clone(),
+        user.role.clone(),
+        user.auth_source.clone(),
+        user.allowed_providers.clone().map(serde_json::Value::from),
+        user.allowed_api_formats
+            .clone()
+            .map(serde_json::Value::from),
+        user.allowed_models.clone().map(serde_json::Value::from),
+        None,
+        model_capability_settings,
+        user.is_active,
+    )?
+    .with_policy_modes(
+        user.allowed_providers_mode.clone(),
+        user.allowed_api_formats_mode.clone(),
+        user.allowed_models_mode.clone(),
+        "system".to_string(),
+    )
+}
+
 #[async_trait]
 impl UserReadRepository for InMemoryUserReadRepository {
     async fn list_users_by_ids(
@@ -296,22 +430,36 @@ impl UserReadRepository for InMemoryUserReadRepository {
     async fn list_non_admin_export_users(
         &self,
     ) -> Result<Vec<StoredUserExportRow>, DataLayerError> {
+        let rows = self.export_rows.read().expect("user repository lock");
+        if !rows.is_empty() {
+            return Ok(rows
+                .iter()
+                .filter(|row| !row.role.eq_ignore_ascii_case("admin"))
+                .cloned()
+                .collect());
+        }
         Ok(self
-            .export_rows
+            .auth_by_id
             .read()
             .expect("user repository lock")
             .iter()
-            .filter(|row| !row.role.eq_ignore_ascii_case("admin"))
-            .cloned()
-            .collect())
+            .filter(|(_, user)| !user.role.eq_ignore_ascii_case("admin"))
+            .map(|(_, user)| memory_export_row_from_auth_user(self, user))
+            .collect::<Result<Vec<_>, _>>()?)
     }
 
     async fn list_export_users(&self) -> Result<Vec<StoredUserExportRow>, DataLayerError> {
+        let rows = self.export_rows.read().expect("user repository lock");
+        if !rows.is_empty() {
+            return Ok(rows.clone());
+        }
         Ok(self
-            .export_rows
+            .auth_by_id
             .read()
             .expect("user repository lock")
-            .clone())
+            .values()
+            .map(|user| memory_export_row_from_auth_user(self, user))
+            .collect::<Result<Vec<_>, _>>()?)
     }
 
     async fn list_export_users_page(
@@ -328,6 +476,23 @@ impl UserReadRepository for InMemoryUserReadRepository {
         }
         if let Some(is_active) = query.is_active {
             rows.retain(|row| row.is_active == is_active);
+        }
+        if let Some(group_id) = query
+            .group_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let member_ids = self
+                .group_members
+                .read()
+                .expect("user repository lock")
+                .keys()
+                .filter_map(|(candidate_group_id, user_id)| {
+                    (candidate_group_id == group_id).then(|| user_id.clone())
+                })
+                .collect::<std::collections::BTreeSet<_>>();
+            rows.retain(|row| member_ids.contains(&row.id));
         }
         if let Some(search) = query
             .search
@@ -373,6 +538,270 @@ impl UserReadRepository for InMemoryUserReadRepository {
             .iter()
             .find(|row| row.id == user_id)
             .cloned())
+    }
+
+    async fn list_user_groups(&self) -> Result<Vec<StoredUserGroup>, DataLayerError> {
+        let mut groups = self
+            .groups_by_id
+            .read()
+            .expect("user repository lock")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        groups.sort_by(|left, right| {
+            left.name
+                .cmp(&right.name)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(groups)
+    }
+
+    async fn find_user_group_by_id(
+        &self,
+        group_id: &str,
+    ) -> Result<Option<StoredUserGroup>, DataLayerError> {
+        Ok(self
+            .groups_by_id
+            .read()
+            .expect("user repository lock")
+            .get(group_id)
+            .cloned())
+    }
+
+    async fn list_user_groups_by_ids(
+        &self,
+        group_ids: &[String],
+    ) -> Result<Vec<StoredUserGroup>, DataLayerError> {
+        let groups = self.groups_by_id.read().expect("user repository lock");
+        Ok(group_ids
+            .iter()
+            .filter_map(|group_id| groups.get(group_id).cloned())
+            .collect())
+    }
+
+    async fn create_user_group(
+        &self,
+        record: UpsertUserGroupRecord,
+    ) -> Result<Option<StoredUserGroup>, DataLayerError> {
+        if self.read_only {
+            return Ok(None);
+        }
+        let group = memory_group_from_record(record)?;
+        let mut groups = self.groups_by_id.write().expect("user repository lock");
+        if groups
+            .values()
+            .any(|existing| existing.normalized_name == group.normalized_name)
+        {
+            return Err(DataLayerError::InvalidInput(format!(
+                "duplicate user group name: {}",
+                group.name
+            )));
+        }
+        groups.insert(group.id.clone(), group.clone());
+        Ok(Some(group))
+    }
+
+    async fn update_user_group(
+        &self,
+        group_id: &str,
+        record: UpsertUserGroupRecord,
+    ) -> Result<Option<StoredUserGroup>, DataLayerError> {
+        if self.read_only {
+            return Ok(None);
+        }
+        let mut groups = self.groups_by_id.write().expect("user repository lock");
+        let Some(existing) = groups.get(group_id).cloned() else {
+            return Ok(None);
+        };
+        let group = memory_update_group_from_record(existing, record)?;
+        if groups.values().any(|existing| {
+            existing.id != group.id && existing.normalized_name == group.normalized_name
+        }) {
+            return Err(DataLayerError::InvalidInput(format!(
+                "duplicate user group name: {}",
+                group.name
+            )));
+        }
+        groups.insert(group.id.clone(), group.clone());
+        Ok(Some(group))
+    }
+
+    async fn delete_user_group(&self, group_id: &str) -> Result<bool, DataLayerError> {
+        if self.read_only {
+            return Ok(false);
+        }
+        let removed = self
+            .groups_by_id
+            .write()
+            .expect("user repository lock")
+            .remove(group_id)
+            .is_some();
+        if removed {
+            self.group_members
+                .write()
+                .expect("user repository lock")
+                .retain(|key, _| key.0 != group_id);
+        }
+        Ok(removed)
+    }
+
+    async fn list_user_group_members(
+        &self,
+        group_id: &str,
+    ) -> Result<Vec<StoredUserGroupMember>, DataLayerError> {
+        Ok(memory_group_members(self, group_id))
+    }
+
+    async fn replace_user_group_members(
+        &self,
+        group_id: &str,
+        user_ids: &[String],
+    ) -> Result<Vec<StoredUserGroupMember>, DataLayerError> {
+        if self.read_only {
+            return Ok(Vec::new());
+        }
+        if !self
+            .groups_by_id
+            .read()
+            .expect("user repository lock")
+            .contains_key(group_id)
+        {
+            return Ok(Vec::new());
+        }
+        let valid_user_ids = {
+            let users = self.auth_by_id.read().expect("user repository lock");
+            user_ids
+                .iter()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .filter(|user_id| users.contains_key(*user_id))
+                .map(ToOwned::to_owned)
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let now = chrono::Utc::now();
+        let mut members = self.group_members.write().expect("user repository lock");
+        members.retain(|key, _| key.0 != group_id);
+        for user_id in valid_user_ids {
+            members.insert((group_id.to_string(), user_id), now);
+        }
+        drop(members);
+        Ok(memory_group_members(self, group_id))
+    }
+
+    async fn list_user_groups_for_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<StoredUserGroup>, DataLayerError> {
+        let group_ids = self
+            .group_members
+            .read()
+            .expect("user repository lock")
+            .keys()
+            .filter_map(|(group_id, candidate_user_id)| {
+                (candidate_user_id == user_id).then(|| group_id.clone())
+            })
+            .collect::<Vec<_>>();
+        self.list_user_groups_by_ids(&group_ids).await
+    }
+
+    async fn list_user_group_memberships_by_user_ids(
+        &self,
+        user_ids: &[String],
+    ) -> Result<Vec<StoredUserGroupMembership>, DataLayerError> {
+        let requested = user_ids
+            .iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect::<std::collections::BTreeSet<_>>();
+        if requested.is_empty() {
+            return Ok(Vec::new());
+        }
+        let groups = self.groups_by_id.read().expect("user repository lock");
+        let members = self.group_members.read().expect("user repository lock");
+        let mut memberships = members
+            .iter()
+            .filter(|((_, user_id), _)| requested.contains(user_id))
+            .filter_map(|((group_id, user_id), created_at)| {
+                groups.get(group_id).map(|group| StoredUserGroupMembership {
+                    user_id: user_id.clone(),
+                    group_id: group.id.clone(),
+                    group_name: group.name.clone(),
+                    group_priority: group.priority,
+                    created_at: Some(*created_at),
+                })
+            })
+            .collect::<Vec<_>>();
+        memberships.sort_by(|left, right| {
+            left.user_id
+                .cmp(&right.user_id)
+                .then_with(|| left.group_name.cmp(&right.group_name))
+                .then_with(|| left.group_id.cmp(&right.group_id))
+        });
+        Ok(memberships)
+    }
+
+    async fn replace_user_groups_for_user(
+        &self,
+        user_id: &str,
+        group_ids: &[String],
+    ) -> Result<Vec<StoredUserGroup>, DataLayerError> {
+        if self.read_only {
+            return Ok(Vec::new());
+        }
+        let existing_group_ids = {
+            let groups = self.groups_by_id.read().expect("user repository lock");
+            group_ids
+                .iter()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .filter(|group_id| groups.contains_key(*group_id))
+                .map(ToOwned::to_owned)
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        {
+            let now = chrono::Utc::now();
+            let mut members = self.group_members.write().expect("user repository lock");
+            members.retain(|key, _| key.1 != user_id);
+            for group_id in &existing_group_ids {
+                members.insert((group_id.clone(), user_id.to_string()), now);
+            }
+        }
+        self.list_user_groups_by_ids(&existing_group_ids.into_iter().collect::<Vec<_>>())
+            .await
+    }
+
+    async fn add_user_to_group(
+        &self,
+        group_id: &str,
+        user_id: &str,
+    ) -> Result<bool, DataLayerError> {
+        if self.read_only {
+            return Ok(false);
+        }
+        if !self
+            .groups_by_id
+            .read()
+            .expect("user repository lock")
+            .contains_key(group_id)
+        {
+            return Ok(false);
+        }
+        if !self
+            .auth_by_id
+            .read()
+            .expect("user repository lock")
+            .contains_key(user_id)
+        {
+            return Ok(false);
+        }
+        self.group_members
+            .write()
+            .expect("user repository lock")
+            .insert(
+                (group_id.to_string(), user_id.to_string()),
+                chrono::Utc::now(),
+            );
+        Ok(true)
     }
 
     async fn find_user_auth_by_id(
@@ -581,6 +1010,11 @@ impl UserReadRepository for InMemoryUserReadRepository {
             false,
             Some(created_at),
             Some(created_at),
+        )?
+        .with_policy_modes(
+            "inherit".to_string(),
+            "inherit".to_string(),
+            "inherit".to_string(),
         )?;
         self.insert_auth_user(user).map(Some)
     }
@@ -917,12 +1351,27 @@ impl UserReadRepository for InMemoryUserReadRepository {
         }
         if allowed_providers_present {
             user.allowed_providers = allowed_providers;
+            user.allowed_providers_mode = if user.allowed_providers.is_some() {
+                "specific".to_string()
+            } else {
+                "unrestricted".to_string()
+            };
         }
         if allowed_api_formats_present {
             user.allowed_api_formats = allowed_api_formats;
+            user.allowed_api_formats_mode = if user.allowed_api_formats.is_some() {
+                "specific".to_string()
+            } else {
+                "unrestricted".to_string()
+            };
         }
         if allowed_models_present {
             user.allowed_models = allowed_models;
+            user.allowed_models_mode = if user.allowed_models.is_some() {
+                "specific".to_string()
+            } else {
+                "unrestricted".to_string()
+            };
         }
         if let Some(is_active) = is_active {
             user.is_active = is_active;
@@ -948,12 +1397,71 @@ impl UserReadRepository for InMemoryUserReadRepository {
         {
             row.role = updated.role.clone();
             row.allowed_providers = updated.allowed_providers.clone();
+            row.allowed_providers_mode = updated.allowed_providers_mode.clone();
             row.allowed_api_formats = updated.allowed_api_formats.clone();
+            row.allowed_api_formats_mode = updated.allowed_api_formats_mode.clone();
             row.allowed_models = updated.allowed_models.clone();
+            row.allowed_models_mode = updated.allowed_models_mode.clone();
             if rate_limit_present {
                 row.rate_limit = rate_limit;
+                row.rate_limit_mode = if row.rate_limit.is_some() {
+                    "custom".to_string()
+                } else {
+                    "system".to_string()
+                };
             }
             row.is_active = updated.is_active;
+        }
+        Ok(Some(updated))
+    }
+
+    async fn update_local_auth_user_policy_modes(
+        &self,
+        user_id: &str,
+        allowed_providers_mode: Option<String>,
+        allowed_api_formats_mode: Option<String>,
+        allowed_models_mode: Option<String>,
+        rate_limit_mode: Option<String>,
+    ) -> Result<Option<StoredUserAuthRecord>, DataLayerError> {
+        if self.read_only {
+            return Ok(None);
+        }
+
+        let mut auth_by_id = self.auth_by_id.write().expect("user repository lock");
+        let Some(user) = auth_by_id.get_mut(user_id) else {
+            return Ok(None);
+        };
+        if let Some(mode) = allowed_providers_mode.clone() {
+            user.allowed_providers_mode = mode;
+        }
+        if let Some(mode) = allowed_api_formats_mode.clone() {
+            user.allowed_api_formats_mode = mode;
+        }
+        if let Some(mode) = allowed_models_mode.clone() {
+            user.allowed_models_mode = mode;
+        }
+        let updated = user.clone();
+        drop(auth_by_id);
+
+        if let Some(row) = self
+            .export_rows
+            .write()
+            .expect("user repository lock")
+            .iter_mut()
+            .find(|row| row.id == user_id)
+        {
+            if let Some(mode) = allowed_providers_mode {
+                row.allowed_providers_mode = mode;
+            }
+            if let Some(mode) = allowed_api_formats_mode {
+                row.allowed_api_formats_mode = mode;
+            }
+            if let Some(mode) = allowed_models_mode {
+                row.allowed_models_mode = mode;
+            }
+            if let Some(mode) = rate_limit_mode {
+                row.rate_limit_mode = mode;
+            }
         }
         Ok(Some(updated))
     }
@@ -1021,18 +1529,29 @@ impl UserReadRepository for InMemoryUserReadRepository {
             return Ok(None);
         }
 
-        self.create_local_auth_user_with_settings(
+        let now = chrono::Utc::now();
+        let user = StoredUserAuthRecord::new(
+            uuid::Uuid::new_v4().to_string(),
             email,
             email_verified,
             username,
-            password_hash,
+            Some(password_hash),
             "user".to_string(),
+            "local".to_string(),
             None,
             None,
             None,
+            true,
+            false,
+            Some(now),
             None,
-        )
-        .await
+        )?
+        .with_policy_modes(
+            "inherit".to_string(),
+            "inherit".to_string(),
+            "inherit".to_string(),
+        )?;
+        self.insert_auth_user(user).map(Some)
     }
 
     async fn create_local_auth_user_with_settings(
@@ -1092,6 +1611,10 @@ impl UserReadRepository for InMemoryUserReadRepository {
             .write()
             .expect("user repository lock")
             .retain(|_, link| link.user_id != user_id);
+        self.group_members
+            .write()
+            .expect("user repository lock")
+            .retain(|key, _| key.1 != user_id);
 
         let mut identifiers = self
             .auth_by_identifier
@@ -2073,6 +2596,7 @@ mod tests {
                 role: Some("user".to_string()),
                 is_active: Some(true),
                 search: None,
+                group_id: None,
             })
             .await
             .expect("paged export should succeed");

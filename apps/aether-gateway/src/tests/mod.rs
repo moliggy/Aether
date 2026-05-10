@@ -88,3 +88,20 @@ pub(super) async fn wait_until(timeout_ms: u64, mut predicate: impl FnMut() -> b
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 }
+
+pub(crate) fn strip_sse_keepalive_comments(body: &str) -> String {
+    body.replace(": aether-keepalive\n\n", "")
+}
+
+pub(crate) async fn next_non_keepalive_chunk(response: &mut reqwest::Response) -> Bytes {
+    loop {
+        let chunk = response
+            .chunk()
+            .await
+            .expect("chunk should read")
+            .expect("chunk should exist");
+        if chunk.as_ref() != b": aether-keepalive\n\n" {
+            return chunk;
+        }
+    }
+}

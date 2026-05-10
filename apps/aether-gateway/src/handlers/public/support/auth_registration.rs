@@ -513,6 +513,17 @@ pub(super) async fn handle_auth_register(
             false,
         );
     };
+    if let Err(err) = state
+        .assign_default_group_to_self_registered_user(&user.id)
+        .await
+    {
+        let _ = state.delete_local_auth_user(&user.id).await;
+        return build_auth_error_response(
+            http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("auth default user group assignment failed: {err:?}"),
+            false,
+        );
+    }
 
     if require_verification {
         if let Some(email) = email.as_deref() {

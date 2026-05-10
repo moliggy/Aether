@@ -119,6 +119,7 @@
       :is-open="detailModalOpen"
       :request-id="selectedRequestId"
       @close="detailModalOpen = false"
+      @request-state="handleDetailRequestState"
     />
   </div>
 </template>
@@ -129,6 +130,7 @@ import { useRoute } from 'vue-router'
 import { useLocalStorage } from '@vueuse/core'
 import { useAuthStore } from '@/stores/auth'
 import { usageApi } from '@/api/usage'
+import type { ImageProgress } from '@/api/requestTrace'
 import { usersApi } from '@/api/users'
 import { meApi } from '@/api/me'
 import { dashboardApi } from '@/api/dashboard'
@@ -153,7 +155,7 @@ import {
   isUsageUpstreamStream,
   resolveDisplayRequestStatus,
 } from '@/features/usage/utils/status'
-import type { DateRangeParams, FilterStatusValue } from '@/features/usage/types'
+import type { DateRangeParams, FilterStatusValue, RequestStatus } from '@/features/usage/types'
 import type { UserOption } from '@/features/usage/components/UsageRecordsTable.vue'
 import { log } from '@/utils/logger'
 import type { ActivityHeatmap } from '@/types/activity'
@@ -445,11 +447,15 @@ async function pollActiveRequests() {
       const shouldApply = newRank >= currentRank
       const updateHasFailureSignal =
         (typeof update.status_code === 'number' && update.status_code >= 400) ||
-        (typeof update.error_message === 'string' && update.error_message.trim().length > 0)
+        (typeof update.error_message === 'string' && update.error_message.trim().length > 0) ||
+        update.image_progress?.phase === 'failed'
       const shouldApplyData = shouldApply || updateHasFailureSignal
 
       if (shouldApply && record.status !== update.status) {
         record.status = update.status
+      }
+      if ('image_progress' in update) {
+        record.image_progress = update.image_progress ?? null
       }
       if (shouldApplyData) {
         // 进行中状态也需要持续更新（provider/key/TTFB 可能在 streaming 后才落库）
@@ -875,6 +881,63 @@ function showRequestDetail(id: string) {
   if (!isAdminPage.value) return
   selectedRequestId.value = id
   detailModalOpen.value = true
+}
+
+function sameImageProgress(left?: ImageProgress | null, right?: ImageProgress | null): boolean {
+  if (!left && !right) return true
+  if (!left || !right) return false
+  return left.phase === right.phase &&
+    left.upstream_ttfb_ms === right.upstream_ttfb_ms &&
+    left.upstream_sse_frame_count === right.upstream_sse_frame_count &&
+    left.last_upstream_event === right.last_upstream_event &&
+    left.last_upstream_frame_at_unix_ms === right.last_upstream_frame_at_unix_ms &&
+    left.partial_image_count === right.partial_image_count &&
+    left.last_client_visible_event === right.last_client_visible_event &&
+    left.downstream_heartbeat_count === right.downstream_heartbeat_count &&
+    left.last_downstream_heartbeat_at_unix_ms === right.last_downstream_heartbeat_at_unix_ms &&
+    left.downstream_heartbeat_interval_ms === right.downstream_heartbeat_interval_ms
+}
+
+function handleDetailRequestState(update: {
+  id: string
+  status?: RequestStatus
+  statusCode?: number | null
+  responseTimeMs?: number | null
+  imageProgress?: ImageProgress | null
+  errorMessage?: string | null
+}) {
+  const record = currentRecords.value.find(record => record.id === update.id)
+  if (!record) return
+
+  const statusPriority: Record<RequestStatus, number> = {
+    pending: 0,
+    streaming: 1,
+    completed: 2,
+    failed: 2,
+    cancelled: 2,
+  }
+  if (update.status) {
+    const currentRank = record.status ? statusPriority[record.status] : 0
+    const nextRank = statusPriority[update.status]
+    if (nextRank >= currentRank) {
+      record.status = update.status
+    }
+  }
+  if ('statusCode' in update) {
+    record.status_code = update.statusCode ?? undefined
+  }
+  if ('responseTimeMs' in update && update.responseTimeMs != null) {
+    record.response_time_ms = update.responseTimeMs
+  }
+  if ('imageProgress' in update) {
+    const nextProgress = update.imageProgress ?? null
+    if (!sameImageProgress(record.image_progress, nextProgress)) {
+      record.image_progress = nextProgress
+    }
+  }
+  if ('errorMessage' in update) {
+    record.error_message = update.errorMessage ?? undefined
+  }
 }
 
 function prefetchRequestDetail(id: string) {

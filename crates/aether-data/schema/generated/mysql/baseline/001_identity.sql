@@ -13,10 +13,14 @@ CREATE TABLE IF NOT EXISTS users (
     `is_active` TINYINT(1) NOT NULL DEFAULT 1,
     `is_deleted` TINYINT(1) NOT NULL DEFAULT 0,
     `allowed_models` JSON,
+    `allowed_models_mode` VARCHAR(32) NOT NULL DEFAULT 'unrestricted',
     `allowed_providers` JSON,
+    `allowed_providers_mode` VARCHAR(32) NOT NULL DEFAULT 'unrestricted',
     `allowed_api_formats` JSON,
+    `allowed_api_formats_mode` VARCHAR(32) NOT NULL DEFAULT 'unrestricted',
     `model_capability_settings` JSON,
     `rate_limit` INT,
+    `rate_limit_mode` VARCHAR(32) NOT NULL DEFAULT 'system',
     `metadata` JSON,
     `created_at` BIGINT NOT NULL,
     `updated_at` BIGINT NOT NULL,
@@ -26,6 +30,35 @@ CREATE TABLE IF NOT EXISTS users (
     PRIMARY KEY (`id`),
     UNIQUE KEY users_email_key (`email`),
     UNIQUE KEY users_username_key (`username`)
+);
+
+CREATE TABLE IF NOT EXISTS user_groups (
+    `id` VARCHAR(64) NOT NULL,
+    `name` VARCHAR(100) NOT NULL,
+    `normalized_name` VARCHAR(100) NOT NULL,
+    `description` LONGTEXT,
+    `priority` INT NOT NULL DEFAULT 0,
+    `allowed_providers` JSON,
+    `allowed_providers_mode` VARCHAR(32) NOT NULL DEFAULT 'inherit',
+    `allowed_api_formats` JSON,
+    `allowed_api_formats_mode` VARCHAR(32) NOT NULL DEFAULT 'inherit',
+    `allowed_models` JSON,
+    `allowed_models_mode` VARCHAR(32) NOT NULL DEFAULT 'inherit',
+    `rate_limit` INT,
+    `rate_limit_mode` VARCHAR(32) NOT NULL DEFAULT 'inherit',
+    `created_at` BIGINT NOT NULL,
+    `updated_at` BIGINT NOT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY user_groups_normalized_name_key (`normalized_name`),
+    KEY user_groups_priority_name_idx (`priority`, `name`, `id`)
+);
+
+CREATE TABLE IF NOT EXISTS user_group_members (
+    `group_id` VARCHAR(64) NOT NULL,
+    `user_id` VARCHAR(64) NOT NULL,
+    `created_at` BIGINT NOT NULL,
+    PRIMARY KEY (`group_id`, `user_id`),
+    KEY user_group_members_user_id_idx (`user_id`)
 );
 
 CREATE TABLE IF NOT EXISTS api_keys (

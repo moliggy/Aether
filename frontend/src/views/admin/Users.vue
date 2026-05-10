@@ -19,6 +19,15 @@
                 variant="ghost"
                 size="icon"
                 class="h-8 w-8"
+                title="分组管理"
+                @click="showUserGroupsDialog = true"
+              >
+                <FolderKanban class="w-3.5 h-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-8 w-8"
                 title="新增用户"
                 @click="openCreateDialog"
               >
@@ -58,6 +67,25 @@
                 </SelectItem>
                 <SelectItem value="user">
                   用户
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              v-model="filterGroup"
+            >
+              <SelectTrigger class="w-24 h-8 text-xs border-border/60">
+                <SelectValue placeholder="分组" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">
+                  全部
+                </SelectItem>
+                <SelectItem
+                  v-for="group in userGroups"
+                  :key="group.id"
+                  :value="group.id"
+                >
+                  {{ group.name }}
                 </SelectItem>
               </SelectContent>
             </Select>
@@ -149,8 +177,37 @@
               </Select>
             </div>
 
+            <Select v-model="filterGroup">
+              <SelectTrigger class="w-32 h-8 text-xs border-border/60">
+                <SelectValue placeholder="全部分组" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">
+                  全部分组
+                </SelectItem>
+                <SelectItem
+                  v-for="group in userGroups"
+                  :key="group.id"
+                  :value="group.id"
+                >
+                  {{ group.name }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+
             <!-- 分隔线 -->
             <div class="h-4 w-px bg-border" />
+
+            <!-- 新增用户按钮 -->
+            <Button
+              variant="ghost"
+              size="icon"
+              class="h-8 w-8"
+              title="分组管理"
+              @click="showUserGroupsDialog = true"
+            >
+              <FolderKanban class="w-3.5 h-3.5" />
+            </Button>
 
             <!-- 新增用户按钮 -->
             <Button
@@ -207,7 +264,7 @@
           <Button
             size="sm"
             class="h-7 px-3 text-[11px]"
-            :disabled="selectedCount === 0 || usersStore.loading"
+            :disabled="(selectedCount === 0 && userGroups.length === 0) || usersStore.loading"
             @click="openUserBatchDialog"
           >
             批量操作
@@ -316,6 +373,19 @@
                       :title="user.email || '-'"
                     >
                       {{ user.email || '-' }}
+                    </div>
+                    <div
+                      v-if="user.groups?.length"
+                      class="mt-1 flex flex-wrap gap-1"
+                    >
+                      <Badge
+                        v-for="group in user.groups"
+                        :key="group.id"
+                        variant="outline"
+                        class="h-5 px-1.5 py-0 text-[10px]"
+                      >
+                        {{ group.name }}
+                      </Badge>
                     </div>
                   </div>
                 </div>
@@ -550,8 +620,17 @@
                 <Badge
                   variant="secondary"
                   class="h-5 px-1.5 py-0 text-[10px] font-medium"
+                  :title="formatUserEffectiveRateLimitSource(user)"
                 >
                   {{ formatRateLimitInheritable(user.rate_limit) }}
+                </Badge>
+                <Badge
+                  v-for="group in user.groups || []"
+                  :key="group.id"
+                  variant="outline"
+                  class="h-5 px-1.5 py-0 text-[10px] font-medium"
+                >
+                  {{ group.name }}
                 </Badge>
               </div>
 
@@ -697,6 +776,7 @@
       ref="userFormDialogRef"
       :open="showUserFormDialog"
       :user="editingUser"
+      :groups="userGroups"
       @close="closeUserFormDialog"
       @submit="handleUserFormSubmit"
     />
@@ -707,8 +787,16 @@
       :select-all-filtered="selectAllFiltered"
       :selected-count="selectedCount"
       :filters="batchSelectionFilters"
+      :groups="userGroups"
       @close="showUserBatchDialog = false"
       @completed="handleUserBatchCompleted"
+    />
+
+    <UserGroupsDialog
+      :open="showUserGroupsDialog"
+      :users="usersStore.users"
+      @close="showUserGroupsDialog = false"
+      @changed="handleUserGroupsChanged"
     />
 
     <!-- API Keys 管理对话框 -->
@@ -1134,7 +1222,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useUsersStore } from '@/stores/users'
-import type { User, ApiKey, UserSession, UserBatchActionResponse, UserBatchSelectionFilters } from '@/api/users'
+import type { User, ApiKey, UserSession, UserBatchActionResponse, UserBatchSelectionFilters, UserGroup } from '@/api/users'
 import { formatSessionMeta } from '@/types/session'
 import { adminWalletApi, type AdminWallet } from '@/api/admin-wallets'
 import { useToast } from '@/composables/useToast'
@@ -1184,12 +1272,14 @@ import {
   CheckCircle,
   Lock,
   LockOpen,
-  MonitorSmartphone
+  MonitorSmartphone,
+  FolderKanban,
 } from 'lucide-vue-next'
 
 // 功能组件
 import UserFormDialog, { type UserFormData } from '@/features/users/components/UserFormDialog.vue'
 import UserBatchActionDialog from '@/features/users/components/UserBatchActionDialog.vue'
+import UserGroupsDialog from '@/features/users/components/UserGroupsDialog.vue'
 import WalletOpsDrawer from '@/features/wallet/components/WalletOpsDrawer.vue'
 import { parseApiError } from '@/utils/errorParser'
 import { formatTokens, formatRateLimitInheritable, formatRateLimitSimple, isRateLimitInherited, isRateLimitUnlimited } from '@/utils/format'
@@ -1233,10 +1323,13 @@ const userWalletMap = ref<Record<string, AdminWallet>>({})
 const showWalletActionDialogState = ref(false)
 const walletActionTarget = ref<{ user: User; wallet: AdminWallet } | null>(null)
 const showUserBatchDialog = ref(false)
+const showUserGroupsDialog = ref(false)
 
 const searchQuery = ref('')
 const filterRole = ref('all')
 const filterStatus = ref('all')
+const filterGroup = ref('all')
+const userGroups = ref<UserGroup[]>([])
 const userRoleFilterOptions = [
   { value: 'all', label: '全部角色' },
   { value: 'admin', label: '管理员' },
@@ -1285,6 +1378,10 @@ const filteredUsers = computed(() => {
     )
   }
 
+  if (filterGroup.value !== 'all') {
+    filtered = filtered.filter(u => (u.groups || []).some(group => group.id === filterGroup.value))
+  }
+
   return filtered
 })
 
@@ -1322,11 +1419,12 @@ const batchSelectionFilters = computed<UserBatchSelectionFilters>(() => {
   if (filterRole.value === 'admin' || filterRole.value === 'user') filters.role = filterRole.value
   if (filterStatus.value === 'active') filters.is_active = true
   if (filterStatus.value === 'inactive') filters.is_active = false
+  if (filterGroup.value !== 'all') filters.group_id = filterGroup.value
   return filters
 })
 
 // Watch filter changes and reset to first page
-watch([searchQuery, filterRole, filterStatus], () => {
+watch([searchQuery, filterRole, filterStatus, filterGroup], () => {
   currentPage.value = 1
   resetBatchSelection()
 })
@@ -1339,14 +1437,33 @@ onMounted(() => {
 
 async function refreshUsers(options: { preferCache?: boolean } = {}) {
   const cacheTtlMs = options.preferCache ? USERS_PAGE_CACHE_TTL_MS : 0
-  await usersStore.fetchUsers({ cacheTtlMs })
+  await Promise.all([
+    usersStore.fetchUsers({ cacheTtlMs }),
+    loadUserGroups(),
+  ])
   void loadUserWallets({
     cacheTtlMs: options.preferCache ? USER_WALLETS_CACHE_TTL_MS : 0,
   })
 }
 
+async function loadUserGroups(): Promise<void> {
+  try {
+    const response = await usersStore.listUserGroups()
+    userGroups.value = response.items
+    if (filterGroup.value !== 'all' && !userGroups.value.some((group) => group.id === filterGroup.value)) {
+      filterGroup.value = 'all'
+    }
+  } catch (err) {
+    log.error('加载用户分组失败:', err)
+  }
+}
+
+async function handleUserGroupsChanged(): Promise<void> {
+  await refreshUsers()
+}
+
 function openUserBatchDialog(): void {
-  if (selectedCount.value === 0) return
+  if (selectedCount.value === 0 && userGroups.value.length === 0) return
   showUserBatchDialog.value = true
 }
 
@@ -1429,6 +1546,22 @@ function formatConcurrentLimitSimple(concurrentLimit?: number | null): string {
   return `${concurrentLimit} 并发`
 }
 
+function formatUserEffectiveRateLimitSource(user: User): string {
+  const source = user.effective_policy?.rate_limit
+  if (!source) return ''
+  if (source.source === 'group' && source.group_name) {
+    return `继承自分组：${source.group_name}`
+  }
+  if (source.source === 'combined') {
+    const groupNames = Array.isArray(source.group_names) ? source.group_names.join('、') : ''
+    return groupNames ? `用户额外限制与分组叠加：${groupNames}` : '用户额外限制与分组叠加'
+  }
+  if (source.source === 'user') {
+    return '用户单独配置'
+  }
+  return '系统默认'
+}
+
 function isNegativeWalletValue(value: number | null): boolean {
   return typeof value === 'number' && value < 0
 }
@@ -1467,10 +1600,7 @@ function editUser(user: User) {
     unlimited: user.unlimited,
     role: user.role,
     is_active: user.is_active,
-    allowed_providers: user.allowed_providers == null ? null : [...user.allowed_providers],
-    allowed_api_formats: user.allowed_api_formats == null ? null : [...user.allowed_api_formats],
-    allowed_models: user.allowed_models == null ? null : [...user.allowed_models],
-    rate_limit: user.rate_limit ?? null
+    group_ids: (user.groups || []).map(group => group.id),
   }
   showUserFormDialog.value = true
 }
@@ -1490,10 +1620,7 @@ async function handleUserFormSubmit(data: UserFormData & { password?: string; un
         email: data.email || undefined,
         unlimited: data.unlimited,
         role: data.role,
-        allowed_providers: data.allowed_providers,
-        allowed_api_formats: data.allowed_api_formats,
-        allowed_models: data.allowed_models,
-        rate_limit: data.rate_limit ?? null
+        group_ids: data.group_ids ?? [],
       }
       if (data.password) {
         updateData.password = data.password
@@ -1510,10 +1637,7 @@ async function handleUserFormSubmit(data: UserFormData & { password?: string; un
         initial_gift_usd: data.initial_gift_usd,
         unlimited: data.unlimited,
         role: data.role,
-        allowed_providers: data.allowed_providers,
-        allowed_api_formats: data.allowed_api_formats,
-        allowed_models: data.allowed_models,
-        rate_limit: data.rate_limit ?? null
+        group_ids: data.group_ids ?? [],
       })
       // 如果创建时指定为禁用，则更新状态
       if (data.is_active === false && newUser) {

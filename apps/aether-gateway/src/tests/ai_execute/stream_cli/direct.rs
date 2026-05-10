@@ -1,7 +1,7 @@
 use super::{
     any, build_router_with_state, build_state_with_execution_runtime_override, json, start_server,
-    to_bytes, Arc, Body, Bytes, HeaderName, HeaderValue, Infallible, Json, Mutex, Request,
-    Response, Router, StatusCode, UsageRuntimeConfig, TRACE_ID_HEADER,
+    strip_sse_keepalive_comments, to_bytes, Arc, Body, Bytes, HeaderName, HeaderValue, Infallible,
+    Json, Mutex, Request, Response, Router, StatusCode, UsageRuntimeConfig, TRACE_ID_HEADER,
 };
 use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY};
 use aether_data::repository::auth::{
@@ -469,7 +469,7 @@ async fn gateway_executes_codex_cli_stream_via_local_decision_gate_after_oauth_r
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response.text().await.expect("body should read"),
+        strip_sse_keepalive_comments(&response.text().await.expect("body should read")),
         "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_codex_cli_stream_local_123\",\"object\":\"response\",\"model\":\"gpt-5.4\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"total_tokens\":3}}}\n\n"
     );
 

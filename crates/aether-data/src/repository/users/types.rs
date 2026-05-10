@@ -57,8 +57,11 @@ pub struct StoredUserAuthRecord {
     pub role: String,
     pub auth_source: String,
     pub allowed_providers: Option<Vec<String>>,
+    pub allowed_providers_mode: String,
     pub allowed_api_formats: Option<Vec<String>>,
+    pub allowed_api_formats_mode: String,
     pub allowed_models: Option<Vec<String>>,
+    pub allowed_models_mode: String,
     pub is_active: bool,
     pub is_deleted: bool,
     pub created_at: Option<DateTime<Utc>>,
@@ -113,16 +116,44 @@ impl StoredUserAuthRecord {
             role,
             auth_source,
             allowed_providers: parse_string_list(allowed_providers, "users.allowed_providers")?,
+            allowed_providers_mode: "unrestricted".to_string(),
             allowed_api_formats: parse_string_list(
                 allowed_api_formats,
                 "users.allowed_api_formats",
             )?,
+            allowed_api_formats_mode: "unrestricted".to_string(),
             allowed_models: parse_string_list(allowed_models, "users.allowed_models")?,
+            allowed_models_mode: "unrestricted".to_string(),
             is_active,
             is_deleted,
             created_at,
             last_login_at,
         })
+        .map(|record| record.with_legacy_policy_modes())
+    }
+
+    pub fn with_policy_modes(
+        mut self,
+        allowed_providers_mode: String,
+        allowed_api_formats_mode: String,
+        allowed_models_mode: String,
+    ) -> Result<Self, crate::DataLayerError> {
+        self.allowed_providers_mode =
+            normalize_list_policy_mode(&allowed_providers_mode, "users.allowed_providers_mode")?;
+        self.allowed_api_formats_mode = normalize_list_policy_mode(
+            &allowed_api_formats_mode,
+            "users.allowed_api_formats_mode",
+        )?;
+        self.allowed_models_mode =
+            normalize_list_policy_mode(&allowed_models_mode, "users.allowed_models_mode")?;
+        Ok(self)
+    }
+
+    fn with_legacy_policy_modes(mut self) -> Self {
+        self.allowed_providers_mode = legacy_list_policy_mode(&self.allowed_providers);
+        self.allowed_api_formats_mode = legacy_list_policy_mode(&self.allowed_api_formats);
+        self.allowed_models_mode = legacy_list_policy_mode(&self.allowed_models);
+        self
     }
 
     pub fn to_summary(&self) -> Result<StoredUserSummary, crate::DataLayerError> {
@@ -197,9 +228,13 @@ pub struct StoredUserExportRow {
     pub role: String,
     pub auth_source: String,
     pub allowed_providers: Option<Vec<String>>,
+    pub allowed_providers_mode: String,
     pub allowed_api_formats: Option<Vec<String>>,
+    pub allowed_api_formats_mode: String,
     pub allowed_models: Option<Vec<String>>,
+    pub allowed_models_mode: String,
     pub rate_limit: Option<i32>,
+    pub rate_limit_mode: String,
     pub model_capability_settings: Option<Value>,
     pub is_active: bool,
 }
@@ -251,15 +286,52 @@ impl StoredUserExportRow {
             role,
             auth_source,
             allowed_providers: parse_string_list(allowed_providers, "users.allowed_providers")?,
+            allowed_providers_mode: "unrestricted".to_string(),
             allowed_api_formats: parse_string_list(
                 allowed_api_formats,
                 "users.allowed_api_formats",
             )?,
+            allowed_api_formats_mode: "unrestricted".to_string(),
             allowed_models: parse_string_list(allowed_models, "users.allowed_models")?,
+            allowed_models_mode: "unrestricted".to_string(),
             rate_limit,
+            rate_limit_mode: "system".to_string(),
             model_capability_settings: normalize_optional_json(model_capability_settings),
             is_active,
         })
+        .map(|record| record.with_legacy_policy_modes())
+    }
+
+    pub fn with_policy_modes(
+        mut self,
+        allowed_providers_mode: String,
+        allowed_api_formats_mode: String,
+        allowed_models_mode: String,
+        rate_limit_mode: String,
+    ) -> Result<Self, crate::DataLayerError> {
+        self.allowed_providers_mode =
+            normalize_list_policy_mode(&allowed_providers_mode, "users.allowed_providers_mode")?;
+        self.allowed_api_formats_mode = normalize_list_policy_mode(
+            &allowed_api_formats_mode,
+            "users.allowed_api_formats_mode",
+        )?;
+        self.allowed_models_mode =
+            normalize_list_policy_mode(&allowed_models_mode, "users.allowed_models_mode")?;
+        self.rate_limit_mode =
+            normalize_rate_limit_policy_mode(&rate_limit_mode, "users.rate_limit_mode")?;
+        Ok(self)
+    }
+
+    fn with_legacy_policy_modes(mut self) -> Self {
+        self.allowed_providers_mode = legacy_list_policy_mode(&self.allowed_providers);
+        self.allowed_api_formats_mode = legacy_list_policy_mode(&self.allowed_api_formats);
+        self.allowed_models_mode = legacy_list_policy_mode(&self.allowed_models);
+        self.rate_limit_mode = if self.rate_limit.is_some() {
+            "custom".to_string()
+        } else {
+            "system".to_string()
+        };
+        self
     }
 }
 
@@ -404,6 +476,139 @@ pub struct StoredUserPreferenceRecord {
     pub announcement_notifications: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct StoredUserGroup {
+    pub id: String,
+    pub name: String,
+    pub normalized_name: String,
+    pub description: Option<String>,
+    pub priority: i32,
+    pub allowed_providers: Option<Vec<String>>,
+    pub allowed_providers_mode: String,
+    pub allowed_api_formats: Option<Vec<String>>,
+    pub allowed_api_formats_mode: String,
+    pub allowed_models: Option<Vec<String>>,
+    pub allowed_models_mode: String,
+    pub rate_limit: Option<i32>,
+    pub rate_limit_mode: String,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl StoredUserGroup {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: String,
+        name: String,
+        normalized_name: String,
+        description: Option<String>,
+        priority: i32,
+        allowed_providers: Option<Value>,
+        allowed_providers_mode: String,
+        allowed_api_formats: Option<Value>,
+        allowed_api_formats_mode: String,
+        allowed_models: Option<Value>,
+        allowed_models_mode: String,
+        rate_limit: Option<i32>,
+        rate_limit_mode: String,
+        created_at: Option<DateTime<Utc>>,
+        updated_at: Option<DateTime<Utc>>,
+    ) -> Result<Self, crate::DataLayerError> {
+        if id.trim().is_empty() {
+            return Err(crate::DataLayerError::UnexpectedValue(
+                "user_groups.id is empty".to_string(),
+            ));
+        }
+        if name.trim().is_empty() {
+            return Err(crate::DataLayerError::UnexpectedValue(
+                "user_groups.name is empty".to_string(),
+            ));
+        }
+        if normalized_name.trim().is_empty() {
+            return Err(crate::DataLayerError::UnexpectedValue(
+                "user_groups.normalized_name is empty".to_string(),
+            ));
+        }
+        Ok(Self {
+            id,
+            name,
+            normalized_name,
+            description,
+            priority,
+            allowed_providers: parse_string_list(
+                allowed_providers,
+                "user_groups.allowed_providers",
+            )?,
+            allowed_providers_mode: normalize_list_policy_mode(
+                &allowed_providers_mode,
+                "user_groups.allowed_providers_mode",
+            )?,
+            allowed_api_formats: parse_string_list(
+                allowed_api_formats,
+                "user_groups.allowed_api_formats",
+            )?,
+            allowed_api_formats_mode: normalize_list_policy_mode(
+                &allowed_api_formats_mode,
+                "user_groups.allowed_api_formats_mode",
+            )?,
+            allowed_models: parse_string_list(allowed_models, "user_groups.allowed_models")?,
+            allowed_models_mode: normalize_list_policy_mode(
+                &allowed_models_mode,
+                "user_groups.allowed_models_mode",
+            )?,
+            rate_limit,
+            rate_limit_mode: normalize_rate_limit_policy_mode(
+                &rate_limit_mode,
+                "user_groups.rate_limit_mode",
+            )?,
+            created_at,
+            updated_at,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StoredUserGroupMember {
+    pub group_id: String,
+    pub user_id: String,
+    pub username: String,
+    pub email: Option<String>,
+    pub role: String,
+    pub is_active: bool,
+    pub is_deleted: bool,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StoredUserGroupMembership {
+    pub user_id: String,
+    pub group_id: String,
+    pub group_name: String,
+    pub group_priority: i32,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct UpsertUserGroupRecord {
+    pub name: String,
+    pub description: Option<String>,
+    pub priority: i32,
+    pub allowed_providers: Option<Vec<String>>,
+    pub allowed_providers_mode: String,
+    pub allowed_api_formats: Option<Vec<String>>,
+    pub allowed_api_formats_mode: String,
+    pub allowed_models: Option<Vec<String>>,
+    pub allowed_models_mode: String,
+    pub rate_limit: Option<i32>,
+    pub rate_limit_mode: String,
+}
+
+impl UpsertUserGroupRecord {
+    pub fn normalized_name(&self) -> String {
+        normalize_user_group_name(&self.name).to_ascii_lowercase()
+    }
+}
+
 impl StoredUserPreferenceRecord {
     pub fn default_for_user(user_id: impl Into<String>) -> Self {
         Self {
@@ -429,6 +634,7 @@ pub struct UserExportListQuery {
     pub role: Option<String>,
     pub is_active: Option<bool>,
     pub search: Option<String>,
+    pub group_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -462,6 +668,64 @@ pub trait UserReadRepository: Send + Sync {
         &self,
         user_id: &str,
     ) -> Result<Option<StoredUserExportRow>, crate::DataLayerError>;
+
+    async fn list_user_groups(&self) -> Result<Vec<StoredUserGroup>, crate::DataLayerError>;
+
+    async fn find_user_group_by_id(
+        &self,
+        group_id: &str,
+    ) -> Result<Option<StoredUserGroup>, crate::DataLayerError>;
+
+    async fn list_user_groups_by_ids(
+        &self,
+        group_ids: &[String],
+    ) -> Result<Vec<StoredUserGroup>, crate::DataLayerError>;
+
+    async fn create_user_group(
+        &self,
+        record: UpsertUserGroupRecord,
+    ) -> Result<Option<StoredUserGroup>, crate::DataLayerError>;
+
+    async fn update_user_group(
+        &self,
+        group_id: &str,
+        record: UpsertUserGroupRecord,
+    ) -> Result<Option<StoredUserGroup>, crate::DataLayerError>;
+
+    async fn delete_user_group(&self, group_id: &str) -> Result<bool, crate::DataLayerError>;
+
+    async fn list_user_group_members(
+        &self,
+        group_id: &str,
+    ) -> Result<Vec<StoredUserGroupMember>, crate::DataLayerError>;
+
+    async fn replace_user_group_members(
+        &self,
+        group_id: &str,
+        user_ids: &[String],
+    ) -> Result<Vec<StoredUserGroupMember>, crate::DataLayerError>;
+
+    async fn list_user_groups_for_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<StoredUserGroup>, crate::DataLayerError>;
+
+    async fn list_user_group_memberships_by_user_ids(
+        &self,
+        user_ids: &[String],
+    ) -> Result<Vec<StoredUserGroupMembership>, crate::DataLayerError>;
+
+    async fn replace_user_groups_for_user(
+        &self,
+        user_id: &str,
+        group_ids: &[String],
+    ) -> Result<Vec<StoredUserGroup>, crate::DataLayerError>;
+
+    async fn add_user_to_group(
+        &self,
+        group_id: &str,
+        user_id: &str,
+    ) -> Result<bool, crate::DataLayerError>;
 
     async fn list_non_admin_export_users(
         &self,
@@ -602,6 +866,15 @@ pub trait UserReadRepository: Send + Sync {
         is_active: Option<bool>,
     ) -> Result<Option<StoredUserAuthRecord>, crate::DataLayerError>;
 
+    async fn update_local_auth_user_policy_modes(
+        &self,
+        user_id: &str,
+        allowed_providers_mode: Option<String>,
+        allowed_api_formats_mode: Option<String>,
+        allowed_models_mode: Option<String>,
+        rate_limit_mode: Option<String>,
+    ) -> Result<Option<StoredUserAuthRecord>, crate::DataLayerError>;
+
     async fn update_user_model_capability_settings(
         &self,
         user_id: &str,
@@ -714,6 +987,47 @@ fn normalize_optional_json(value: Option<Value>) -> Option<Value> {
     match value {
         Some(Value::Null) | None => None,
         Some(value) => Some(value),
+    }
+}
+
+pub fn normalize_user_group_name(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+pub fn normalize_list_policy_mode(
+    value: &str,
+    field_name: &str,
+) -> Result<String, crate::DataLayerError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "inherit" => Ok("inherit".to_string()),
+        "unrestricted" => Ok("unrestricted".to_string()),
+        "specific" => Ok("specific".to_string()),
+        "deny_all" => Ok("deny_all".to_string()),
+        _ => Err(crate::DataLayerError::UnexpectedValue(format!(
+            "{field_name} is not a valid list policy mode"
+        ))),
+    }
+}
+
+pub fn normalize_rate_limit_policy_mode(
+    value: &str,
+    field_name: &str,
+) -> Result<String, crate::DataLayerError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "inherit" => Ok("inherit".to_string()),
+        "system" => Ok("system".to_string()),
+        "custom" => Ok("custom".to_string()),
+        _ => Err(crate::DataLayerError::UnexpectedValue(format!(
+            "{field_name} is not a valid rate limit policy mode"
+        ))),
+    }
+}
+
+fn legacy_list_policy_mode(values: &Option<Vec<String>>) -> String {
+    if values.is_some() {
+        "specific".to_string()
+    } else {
+        "unrestricted".to_string()
     }
 }
 

@@ -551,7 +551,7 @@ fn build_direct_tunnel_request_meta(
     }
 }
 
-async fn send_request(
+pub(crate) async fn send_request(
     plan: &ExecutionPlan,
     body_bytes: Vec<u8>,
 ) -> Result<reqwest::Response, ExecutionRuntimeTransportError> {
@@ -728,7 +728,9 @@ async fn send_via_tunnel_relay(
     Ok(response)
 }
 
-fn build_request_body(plan: &ExecutionPlan) -> Result<Vec<u8>, ExecutionRuntimeTransportError> {
+pub(crate) fn build_request_body(
+    plan: &ExecutionPlan,
+) -> Result<Vec<u8>, ExecutionRuntimeTransportError> {
     let mut body_bytes = if let Some(json_body) = plan.body.json_body.clone() {
         serde_json::to_vec(&json_body).map_err(ExecutionRuntimeTransportError::BodyEncode)?
     } else if let Some(body_b64) = plan.body.body_bytes_b64.as_deref() {
@@ -1102,7 +1104,7 @@ fn is_hop_by_hop_header(name: &str) -> bool {
     )
 }
 
-fn collect_response_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
+pub(crate) fn collect_response_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
     header_map_to_string_map(headers)
 }
 
@@ -1130,7 +1132,7 @@ fn execution_log_url_host(url: &str) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
-fn decode_response_body_bytes(
+pub(crate) fn decode_response_body_bytes(
     headers: &BTreeMap<String, String>,
     body_bytes: &[u8],
 ) -> Option<Vec<u8>> {
@@ -1157,7 +1159,7 @@ fn decode_response_body_bytes(
     }
 }
 
-fn response_body_is_json(headers: &BTreeMap<String, String>, body_bytes: &[u8]) -> bool {
+pub(crate) fn response_body_is_json(headers: &BTreeMap<String, String>, body_bytes: &[u8]) -> bool {
     if headers
         .get("content-type")
         .map(|value| value.to_ascii_lowercase())

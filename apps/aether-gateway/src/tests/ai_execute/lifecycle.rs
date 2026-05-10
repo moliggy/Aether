@@ -20,6 +20,7 @@ use aether_data_contracts::repository::provider_catalog::{
 use sha2::{Digest, Sha256};
 
 use crate::data::GatewayDataState;
+use crate::tests::next_non_keepalive_chunk;
 
 fn hash_api_key(value: &str) -> String {
     let mut hasher = Sha256::new();
@@ -370,11 +371,7 @@ async fn gateway_stops_execution_runtime_stream_when_client_disconnects() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let mut response = response;
-    let first_chunk = response
-        .chunk()
-        .await
-        .expect("first chunk should read")
-        .expect("first chunk should exist");
+    let first_chunk = next_non_keepalive_chunk(&mut response).await;
     assert_eq!(
         first_chunk,
         Bytes::from_static(b"data: {\"id\":\"chatcmpl-first\"}\n\n")

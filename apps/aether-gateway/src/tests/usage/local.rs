@@ -2,8 +2,8 @@ use super::{
     any, build_router_with_state, build_state_with_execution_runtime_override,
     encrypt_python_fernet_plaintext, hash_api_key, json, sample_local_openai_auth_snapshot,
     sample_local_openai_candidate_row, sample_local_openai_endpoint, sample_local_openai_key,
-    sample_local_openai_provider, send_request, start_server, Arc, Body, GatewayDataState,
-    HeaderValue, InMemoryAuthApiKeySnapshotRepository,
+    sample_local_openai_provider, send_request, start_server, strip_sse_keepalive_comments, Arc,
+    Body, GatewayDataState, HeaderValue, InMemoryAuthApiKeySnapshotRepository,
     InMemoryMinimalCandidateSelectionReadRepository, InMemoryProviderCatalogReadRepository,
     InMemoryRequestCandidateRepository, InMemoryUsageReadRepository, Json, Mutex, Request,
     RequestCandidateReadRepository, RequestCandidateStatus, Response, Router, StatusCode,
@@ -840,6 +840,104 @@ async fn gateway_records_failed_usage_when_all_local_openai_chat_candidates_exha
     assert_eq!(stored_candidates[0].status_code, Some(503));
 }
 
+#[tokio::test]
+async fn gateway_records_failed_usage_when_sync_runtime_transport_is_unavailable_without_plan_fallback(
+) {
+    let usage_repository = Arc::new(InMemoryUsageReadRepository::default());
+    let request_candidate_repository = Arc::new(InMemoryRequestCandidateRepository::default());
+    let execution_hits = Arc::new(Mutex::new(0usize));
+    let execution_hits_clone = Arc::clone(&execution_hits);
+
+    let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
+        Some(hash_api_key("sk-client-openai-local-transport-unavailable")),
+        sample_local_openai_auth_snapshot(
+            "api-key-openai-usage-local-transport-unavailable-1",
+            "user-openai-usage-local-transport-unavailable-1",
+        ),
+    )]));
+    let candidate_selection_repository =
+        Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+            sample_local_openai_candidate_row(),
+        ]));
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![sample_local_openai_provider()],
+        vec![sample_local_openai_endpoint()],
+        vec![sample_local_openai_key()],
+    ));
+
+    let gateway_state = crate::AppState::new()
+        .expect("gateway should build")
+        .with_execution_runtime_sync_override_for_tests(move |_plan| {
+            *execution_hits_clone.lock().expect("mutex should lock") += 1;
+            Err(crate::GatewayError::Internal(
+                "simulated transport unavailable".to_string(),
+            ))
+        })
+        .with_data_state_for_tests(
+            GatewayDataState::with_auth_candidate_selection_provider_catalog_request_candidates_and_usage_for_tests(
+                auth_repository,
+                candidate_selection_repository,
+                provider_catalog_repository,
+                Arc::clone(&request_candidate_repository),
+                Arc::clone(&usage_repository),
+                DEVELOPMENT_ENCRYPTION_KEY,
+            ),
+        )
+        .with_usage_runtime_for_tests(UsageRuntimeConfig {
+            enabled: true,
+            ..UsageRuntimeConfig::default()
+        });
+    let gateway = build_router_with_state(gateway_state);
+    let request = Request::builder()
+        .method(http::Method::POST)
+        .uri("/v1/chat/completions")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            "Bearer sk-client-openai-local-transport-unavailable",
+        )
+        .header(
+            TRACE_ID_HEADER,
+            "trace-openai-chat-local-transport-unavailable-123",
+        )
+        .body(Body::from("{\"model\":\"gpt-5\",\"messages\":[]}"))
+        .expect("request should build");
+    let response = send_request(gateway, request).await;
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(*execution_hits.lock().expect("mutex should lock"), 1);
+
+    let stored_usage = wait_for_usage_status(
+        usage_repository.as_ref(),
+        "trace-openai-chat-local-transport-unavailable-123",
+        "failed",
+    )
+    .await;
+    assert_eq!(stored_usage.status, "failed");
+    assert_eq!(stored_usage.billing_status, "void");
+    assert_eq!(stored_usage.status_code, Some(503));
+    assert_eq!(
+        stored_usage
+            .response_body
+            .as_ref()
+            .and_then(|value| value.get("error"))
+            .and_then(|value| value.get("type"))
+            .and_then(|value| value.as_str()),
+        Some("execution_runtime_unavailable")
+    );
+
+    let stored_candidates = request_candidate_repository
+        .list_by_request_id("trace-openai-chat-local-transport-unavailable-123")
+        .await
+        .expect("request candidate trace should read");
+    assert_eq!(stored_candidates.len(), 1);
+    assert_eq!(stored_candidates[0].status, RequestCandidateStatus::Failed);
+    assert_eq!(
+        stored_candidates[0].error_type.as_deref(),
+        Some("execution_runtime_unavailable")
+    );
+}
+
 #[test]
 fn gateway_records_failed_usage_for_claude_runtime_miss_without_execution_exhaustion() {
     run_async_test_on_large_stack(
@@ -1184,7 +1282,8 @@ async fn gateway_handles_local_openai_chat_stream_report_with_local_reporting_wh
         .expect("request should succeed");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let body_text = response.text().await.expect("stream body should read");
+    let body_text =
+        strip_sse_keepalive_comments(&response.text().await.expect("stream body should read"));
     assert_eq!(
         body_text,
         "data: {\"id\":\"chatcmpl-local-report-stream-123\",\"usage\":{\"input_tokens\":2,\"output_tokens\":4,\"total_tokens\":6}}\n\ndata: [DONE]\n\n"

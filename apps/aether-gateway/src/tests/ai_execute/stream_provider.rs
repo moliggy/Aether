@@ -1,7 +1,8 @@
 use super::{
-    any, build_router_with_state, build_state_with_execution_runtime_override, json, start_server,
-    to_bytes, Arc, Body, Bytes, HeaderName, HeaderValue, Json, Mutex, Request, Response, Router,
-    StatusCode, TRACE_ID_HEADER,
+    any, build_router_with_state, build_state_with_execution_runtime_override, json,
+    next_non_keepalive_chunk, start_server, strip_sse_keepalive_comments, to_bytes, Arc, Body,
+    Bytes, HeaderName, HeaderValue, Json, Mutex, Request, Response, Router, StatusCode,
+    TRACE_ID_HEADER,
 };
 use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY};
 use aether_data::repository::auth::{
@@ -952,11 +953,12 @@ async fn gateway_executes_claude_cli_stream_via_local_decision_gate_without_wait
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        tokio::time::timeout(std::time::Duration::from_millis(100), response.chunk())
-            .await
-            .expect("same-format passthrough should yield first chunk before eof")
-            .expect("first chunk should read")
-            .expect("first chunk should exist"),
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            next_non_keepalive_chunk(&mut response),
+        )
+        .await
+        .expect("same-format passthrough should yield first chunk before eof"),
         Bytes::from_static(b"event: message_start\ndata: {\"type\":\"message_start\"}\n\n")
     );
     assert_eq!(
@@ -1470,7 +1472,7 @@ async fn gateway_executes_claude_code_cli_stream_via_local_decision_gate_with_lo
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response.text().await.expect("body should read"),
+        strip_sse_keepalive_comments(&response.text().await.expect("body should read")),
         "event: message_start\ndata: {\"type\":\"message_start\"}\n\n"
     );
 
@@ -1924,7 +1926,7 @@ async fn gateway_executes_claude_chat_stream_via_local_decision_gate_with_local_
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response.text().await.expect("body should read"),
+        strip_sse_keepalive_comments(&response.text().await.expect("body should read")),
         "event: message_start\ndata: {\"type\":\"message_start\"}\n\n"
     );
 

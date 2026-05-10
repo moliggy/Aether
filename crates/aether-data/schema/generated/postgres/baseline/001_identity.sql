@@ -13,10 +13,14 @@ CREATE TABLE IF NOT EXISTS public.users (
     is_active boolean DEFAULT true NOT NULL,
     is_deleted boolean DEFAULT false NOT NULL,
     allowed_models jsonb,
+    allowed_models_mode character varying(32) DEFAULT 'unrestricted' NOT NULL,
     allowed_providers jsonb,
+    allowed_providers_mode character varying(32) DEFAULT 'unrestricted' NOT NULL,
     allowed_api_formats jsonb,
+    allowed_api_formats_mode character varying(32) DEFAULT 'unrestricted' NOT NULL,
     model_capability_settings jsonb,
     rate_limit integer,
+    rate_limit_mode character varying(32) DEFAULT 'system' NOT NULL,
     metadata jsonb,
     created_at bigint NOT NULL,
     updated_at bigint NOT NULL,
@@ -28,6 +32,37 @@ CREATE TABLE IF NOT EXISTS public.users (
 ALTER TABLE ONLY public.users ADD CONSTRAINT users_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.users ADD CONSTRAINT users_email_key UNIQUE (email);
 ALTER TABLE ONLY public.users ADD CONSTRAINT users_username_key UNIQUE (username);
+
+CREATE TABLE IF NOT EXISTS public.user_groups (
+    id character varying(64) NOT NULL,
+    name character varying(100) NOT NULL,
+    normalized_name character varying(100) NOT NULL,
+    description text,
+    priority integer DEFAULT 0 NOT NULL,
+    allowed_providers jsonb,
+    allowed_providers_mode character varying(32) DEFAULT 'inherit' NOT NULL,
+    allowed_api_formats jsonb,
+    allowed_api_formats_mode character varying(32) DEFAULT 'inherit' NOT NULL,
+    allowed_models jsonb,
+    allowed_models_mode character varying(32) DEFAULT 'inherit' NOT NULL,
+    rate_limit integer,
+    rate_limit_mode character varying(32) DEFAULT 'inherit' NOT NULL,
+    created_at bigint NOT NULL,
+    updated_at bigint NOT NULL
+);
+
+ALTER TABLE ONLY public.user_groups ADD CONSTRAINT user_groups_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.user_groups ADD CONSTRAINT user_groups_normalized_name_key UNIQUE (normalized_name);
+CREATE INDEX IF NOT EXISTS user_groups_priority_name_idx ON public.user_groups USING btree (priority, name, id);
+
+CREATE TABLE IF NOT EXISTS public.user_group_members (
+    group_id character varying(64) NOT NULL,
+    user_id character varying(64) NOT NULL,
+    created_at bigint NOT NULL
+);
+
+ALTER TABLE ONLY public.user_group_members ADD CONSTRAINT user_group_members_pkey PRIMARY KEY (group_id, user_id);
+CREATE INDEX IF NOT EXISTS user_group_members_user_id_idx ON public.user_group_members USING btree (user_id);
 
 CREATE TABLE IF NOT EXISTS public.api_keys (
     id character varying(64) NOT NULL,

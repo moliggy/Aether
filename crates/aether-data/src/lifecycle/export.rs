@@ -23,6 +23,8 @@ pub enum ExportDomain {
     AuthModules,
     OAuthProviders,
     UserOAuthLinks,
+    UserGroups,
+    UserGroupMembers,
     ProxyNodes,
     SystemConfigs,
     Wallets,
@@ -43,6 +45,8 @@ impl ExportDomain {
             Self::AuthModules => "auth_modules",
             Self::OAuthProviders => "oauth_providers",
             Self::UserOAuthLinks => "user_oauth_links",
+            Self::UserGroups => "user_groups",
+            Self::UserGroupMembers => "user_group_members",
             Self::ProxyNodes => "proxy_nodes",
             Self::SystemConfigs => "system_configs",
             Self::Wallets => "wallets",
@@ -265,6 +269,8 @@ pub fn sqlite_core_export_domains() -> Vec<ExportDomain> {
         ExportDomain::AuthModules,
         ExportDomain::OAuthProviders,
         ExportDomain::UserOAuthLinks,
+        ExportDomain::UserGroups,
+        ExportDomain::UserGroupMembers,
         ExportDomain::ProxyNodes,
         ExportDomain::SystemConfigs,
         ExportDomain::Wallets,
@@ -367,19 +373,11 @@ pub async fn export_sqlite_jsonl(
             continue;
         }
         let (table_name, id_column) = sqlite_domain_table(domain)?;
-        let sql = format!("SELECT * FROM {table_name} ORDER BY {id_column} ASC");
+        let order_by = export_order_by(domain, id_column);
+        let sql = format!("SELECT * FROM {table_name} ORDER BY {order_by}");
         let rows = sqlx::query(&sql).fetch_all(pool).await.map_sql_err()?;
         for row in rows {
-            let id = row
-                .try_get::<Option<String>, _>(id_column)
-                .map_sql_err()?
-                .ok_or_else(|| {
-                    DataLayerError::UnexpectedValue(format!(
-                        "{} export row has null id column '{}'",
-                        domain.as_str(),
-                        id_column
-                    ))
-                })?;
+            let id = sqlite_export_row_id(domain, &row, id_column)?;
             records.push(DataExportRecord::row(domain, id, sqlite_row_payload(&row)?));
         }
     }
@@ -456,8 +454,10 @@ pub async fn export_postgres_jsonl(
             continue;
         }
         let (table_name, id_column) = postgres_domain_table(domain)?;
+        let export_id_sql = postgres_export_id_sql(domain, id_column);
+        let order_by = export_order_by(domain, id_column);
         let sql = format!(
-            "SELECT {id_column}::text AS export_id, to_jsonb(t) AS payload FROM {table_name} AS t ORDER BY {id_column} ASC"
+            "SELECT {export_id_sql} AS export_id, to_jsonb(t) AS payload FROM {table_name} AS t ORDER BY {order_by}"
         );
         let rows = sqlx::query(&sql).fetch_all(pool).await.map_sql_err()?;
         for row in rows {
@@ -500,6 +500,7 @@ pub async fn import_postgres_plan(
             continue;
         }
         let (table_name, id_column) = postgres_domain_table(*domain)?;
+        let conflict_columns = postgres_conflict_columns(*domain, id_column);
         let rows = plan.rows(*domain);
         if rows.is_empty() {
             continue;
@@ -507,7 +508,15 @@ pub async fn import_postgres_plan(
         let target_columns =
             postgres_import_columns_cached(pool, &mut column_cache, table_name).await?;
         for row in rows {
-            import_postgres_row(pool, table_name, id_column, *domain, row, &target_columns).await?;
+            import_postgres_row(
+                pool,
+                table_name,
+                &conflict_columns,
+                *domain,
+                row,
+                &target_columns,
+            )
+            .await?;
             imported = imported.saturating_add(1);
         }
     }
@@ -543,19 +552,11 @@ pub async fn export_mysql_jsonl(
             continue;
         }
         let (table_name, id_column) = mysql_domain_table(domain)?;
-        let sql = format!("SELECT * FROM {table_name} ORDER BY {id_column} ASC");
+        let order_by = export_order_by(domain, id_column);
+        let sql = format!("SELECT * FROM {table_name} ORDER BY {order_by}");
         let rows = sqlx::query(&sql).fetch_all(pool).await.map_sql_err()?;
         for row in rows {
-            let id = row
-                .try_get::<Option<String>, _>(id_column)
-                .map_sql_err()?
-                .ok_or_else(|| {
-                    DataLayerError::UnexpectedValue(format!(
-                        "{} export row has null id column '{}'",
-                        domain.as_str(),
-                        id_column
-                    ))
-                })?;
+            let id = mysql_export_row_id(domain, &row, id_column)?;
             records.push(DataExportRecord::row(domain, id, mysql_row_payload(&row)?));
         }
     }
@@ -617,6 +618,8 @@ fn sqlite_domain_table(
         ExportDomain::AuthModules => Ok(("auth_modules", "id")),
         ExportDomain::OAuthProviders => Ok(("oauth_providers", "provider_type")),
         ExportDomain::UserOAuthLinks => Ok(("user_oauth_links", "id")),
+        ExportDomain::UserGroups => Ok(("user_groups", "id")),
+        ExportDomain::UserGroupMembers => Ok(("user_group_members", "group_id")),
         ExportDomain::ProxyNodes => Ok(("proxy_nodes", "id")),
         ExportDomain::SystemConfigs => Ok(("system_configs", "id")),
         ExportDomain::Wallets => Err(DataLayerError::InvalidInput(
@@ -628,6 +631,43 @@ fn sqlite_domain_table(
                 .to_string(),
         )),
     }
+}
+
+fn export_order_by(domain: ExportDomain, id_column: &str) -> String {
+    if domain == ExportDomain::UserGroupMembers {
+        "group_id ASC, user_id ASC".to_string()
+    } else {
+        format!("{id_column} ASC")
+    }
+}
+
+fn sqlite_export_row_id(
+    domain: ExportDomain,
+    row: &sqlx::sqlite::SqliteRow,
+    id_column: &str,
+) -> Result<String, DataLayerError> {
+    if domain == ExportDomain::UserGroupMembers {
+        let group_id = sqlite_required_export_text(row, "group_id", domain)?;
+        let user_id = sqlite_required_export_text(row, "user_id", domain)?;
+        return Ok(format!("{group_id}:{user_id}"));
+    }
+    sqlite_required_export_text(row, id_column, domain)
+}
+
+fn sqlite_required_export_text(
+    row: &sqlx::sqlite::SqliteRow,
+    column: &str,
+    domain: ExportDomain,
+) -> Result<String, DataLayerError> {
+    row.try_get::<Option<String>, _>(column)
+        .map_sql_err()?
+        .ok_or_else(|| {
+            DataLayerError::UnexpectedValue(format!(
+                "{} export row has null id column '{}'",
+                domain.as_str(),
+                column
+            ))
+        })
 }
 
 async fn export_sqlite_billing_records(
@@ -898,6 +938,8 @@ fn postgres_domain_table(
         ExportDomain::AuthModules => Ok(("public.auth_modules", "id")),
         ExportDomain::OAuthProviders => Ok(("public.oauth_providers", "provider_type")),
         ExportDomain::UserOAuthLinks => Ok(("public.user_oauth_links", "id")),
+        ExportDomain::UserGroups => Ok(("public.user_groups", "id")),
+        ExportDomain::UserGroupMembers => Ok(("public.user_group_members", "group_id")),
         ExportDomain::ProxyNodes => Ok(("public.proxy_nodes", "id")),
         ExportDomain::SystemConfigs => Ok(("public.system_configs", "id")),
         ExportDomain::Wallets => Err(DataLayerError::InvalidInput(
@@ -909,6 +951,22 @@ fn postgres_domain_table(
             "postgres billing export uses multiple tables and must be handled as a domain"
                 .to_string(),
         )),
+    }
+}
+
+fn postgres_export_id_sql(domain: ExportDomain, id_column: &str) -> String {
+    if domain == ExportDomain::UserGroupMembers {
+        "group_id::text || ':' || user_id::text".to_string()
+    } else {
+        format!("{id_column}::text")
+    }
+}
+
+fn postgres_conflict_columns(domain: ExportDomain, id_column: &str) -> Vec<&str> {
+    if domain == ExportDomain::UserGroupMembers {
+        vec!["group_id", "user_id"]
+    } else {
+        vec![id_column]
     }
 }
 
@@ -1045,7 +1103,7 @@ async fn export_postgres_wallet_records(
 async fn import_postgres_row(
     pool: &crate::driver::postgres::PostgresPool,
     table_name: &str,
-    id_column: &str,
+    conflict_columns: &[&str],
     domain: ExportDomain,
     row: &ExportRow,
     target_columns: &PostgresImportColumns,
@@ -1060,23 +1118,22 @@ async fn import_postgres_row(
         .join(", ");
     let update_sql = columns
         .iter()
-        .filter(|column| **column != id_column)
+        .filter(|column| !conflict_columns.contains(column))
         .map(|column| {
             let quoted = postgres_quote_identifier(column)?;
             Ok(format!("{quoted} = EXCLUDED.{quoted}"))
         })
         .collect::<Result<Vec<_>, DataLayerError>>()?
         .join(", ");
+    let conflict_target_sql = conflict_columns
+        .iter()
+        .map(|column| postgres_quote_identifier(column))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
     let conflict_sql = if update_sql.is_empty() {
-        format!(
-            "ON CONFLICT ({}) DO NOTHING",
-            postgres_quote_identifier(id_column)?
-        )
+        format!("ON CONFLICT ({conflict_target_sql}) DO NOTHING")
     } else {
-        format!(
-            "ON CONFLICT ({}) DO UPDATE SET {update_sql}",
-            postgres_quote_identifier(id_column)?
-        )
+        format!("ON CONFLICT ({conflict_target_sql}) DO UPDATE SET {update_sql}")
     };
     let sql = format!(
         "INSERT INTO {table_name} ({column_sql}) SELECT {column_sql} FROM jsonb_populate_record(NULL::{table_name}, $1::jsonb) {conflict_sql}"
@@ -1276,7 +1333,7 @@ async fn import_postgres_billing_row(
     import_postgres_row(
         pool,
         table_name,
-        "id",
+        &["id"],
         ExportDomain::Billing,
         &ExportRow {
             id: row.id.clone(),
@@ -1309,7 +1366,7 @@ async fn import_postgres_wallet_row(
     import_postgres_row(
         pool,
         table_name,
-        id_column,
+        &[id_column],
         ExportDomain::Wallets,
         &ExportRow {
             id: row.id.clone(),
@@ -1382,6 +1439,8 @@ fn mysql_domain_table(
         ExportDomain::AuthModules => Ok(("auth_modules", "id")),
         ExportDomain::OAuthProviders => Ok(("oauth_providers", "provider_type")),
         ExportDomain::UserOAuthLinks => Ok(("user_oauth_links", "id")),
+        ExportDomain::UserGroups => Ok(("user_groups", "id")),
+        ExportDomain::UserGroupMembers => Ok(("user_group_members", "group_id")),
         ExportDomain::ProxyNodes => Ok(("proxy_nodes", "id")),
         ExportDomain::SystemConfigs => Ok(("system_configs", "id")),
         ExportDomain::Wallets => Err(DataLayerError::InvalidInput(
@@ -1392,6 +1451,35 @@ fn mysql_domain_table(
             "mysql billing export uses multiple tables and must be handled as a domain".to_string(),
         )),
     }
+}
+
+fn mysql_export_row_id(
+    domain: ExportDomain,
+    row: &sqlx::mysql::MySqlRow,
+    id_column: &str,
+) -> Result<String, DataLayerError> {
+    if domain == ExportDomain::UserGroupMembers {
+        let group_id = mysql_required_export_text(row, "group_id", domain)?;
+        let user_id = mysql_required_export_text(row, "user_id", domain)?;
+        return Ok(format!("{group_id}:{user_id}"));
+    }
+    mysql_required_export_text(row, id_column, domain)
+}
+
+fn mysql_required_export_text(
+    row: &sqlx::mysql::MySqlRow,
+    column: &str,
+    domain: ExportDomain,
+) -> Result<String, DataLayerError> {
+    row.try_get::<Option<String>, _>(column)
+        .map_sql_err()?
+        .ok_or_else(|| {
+            DataLayerError::UnexpectedValue(format!(
+                "{} export row has null id column '{}'",
+                domain.as_str(),
+                column
+            ))
+        })
 }
 
 async fn export_mysql_billing_records(
@@ -2094,6 +2182,10 @@ not-json"#,
             r#"
 INSERT INTO users (id, email, username, auth_source, created_at, updated_at)
 VALUES ('user-1', 'owner@example.com', 'owner', 'local', 1, 2);
+INSERT INTO user_groups (id, name, normalized_name, description, priority, allowed_models, allowed_models_mode, created_at, updated_at)
+VALUES ('group-1', 'Export Group', 'export group', 'Exported group', 10, '["gpt-test"]', 'specific', 1, 2);
+INSERT INTO user_group_members (group_id, user_id, created_at)
+VALUES ('group-1', 'user-1', 1);
 INSERT INTO api_keys (id, user_id, key_hash, key_encrypted, name, created_at, updated_at)
 VALUES ('api-key-1', 'user-1', 'hash-1', 'ciphertext-1', 'Default', 1, 2);
 INSERT INTO providers (id, name, provider_type, created_at, updated_at)
@@ -2136,6 +2228,16 @@ VALUES ('request-1', 'request-1', 'user-1', 'Provider One', 'gpt-test', 'complet
             import_plan.rows(ExportDomain::Users)[0].payload["email"],
             "owner@example.com"
         );
+        assert!(import_plan
+            .rows(ExportDomain::UserGroups)
+            .iter()
+            .any(|row| row.id == "group-1" && row.payload["name"] == "Export Group"));
+        assert!(import_plan
+            .rows(ExportDomain::UserGroupMembers)
+            .iter()
+            .any(|row| row.id == "group-1:user-1"
+                && row.payload["group_id"] == "group-1"
+                && row.payload["user_id"] == "user-1"));
         assert_eq!(
             import_plan.rows(ExportDomain::ApiKeys)[0].payload["key_encrypted"],
             "ciphertext-1"
@@ -2166,7 +2268,7 @@ VALUES ('request-1', 'request-1', 'user-1', 'Provider One', 'gpt-test', 'complet
         let imported = import_sqlite_jsonl(&target_pool, &encoded)
             .await
             .expect("sqlite import should load exported rows");
-        assert_eq!(imported, 12);
+        assert_eq!(imported, 16);
 
         let imported_api_key = sqlx::query_as::<_, (String,)>(
             "SELECT key_encrypted FROM api_keys WHERE id = 'api-key-1'",
@@ -2183,6 +2285,15 @@ VALUES ('request-1', 'request-1', 'user-1', 'Provider One', 'gpt-test', 'complet
         .await
         .expect("imported usage should load");
         assert_eq!(imported_usage.0, "request-1");
+
+        let imported_group_member = sqlx::query_as::<_, (String, String)>(
+            "SELECT group_id, user_id FROM user_group_members WHERE group_id = 'group-1' AND user_id = 'user-1'",
+        )
+        .fetch_one(&target_pool)
+        .await
+        .expect("imported user group member should load");
+        assert_eq!(imported_group_member.0, "group-1");
+        assert_eq!(imported_group_member.1, "user-1");
 
         let imported_billing_rule = sqlx::query_as::<_, (String,)>(
             "SELECT expression FROM billing_rules WHERE id = 'billing-rule-1'",
@@ -2217,7 +2328,7 @@ VALUES ('request-1', 'request-1', 'user-1', 'Provider One', 'gpt-test', 'complet
             let imported = import_postgres_jsonl(&postgres_pool, &encoded)
                 .await
                 .expect("postgres import should load exported rows");
-            assert_eq!(imported, 12);
+            assert_eq!(imported, 16);
 
             let imported_api_key = sqlx::query_as::<_, (String,)>(
                 "SELECT key_encrypted FROM api_keys WHERE id = 'api-key-1'",
@@ -2273,6 +2384,7 @@ VALUES ('request-1', 'request-1', 'user-1', 'Provider One', 'gpt-test', 'complet
         let config_key = format!("export.config.{suffix}");
         let wallet_id = format!("export-wallet-{suffix}");
         let request_id = format!("export-request-{suffix}");
+        let group_id = format!("export-group-{suffix}");
 
         sqlx::query(
             "INSERT INTO users (id, email, username, auth_source, email_verified, created_at, updated_at) VALUES ($1, $2, $3, 'local', TRUE, to_timestamp(1), to_timestamp(2))",
@@ -2283,6 +2395,23 @@ VALUES ('request-1', 'request-1', 'user-1', 'Provider One', 'gpt-test', 'complet
         .execute(&pool)
         .await
         .expect("user should seed");
+        sqlx::query(
+            "INSERT INTO user_groups (id, name, normalized_name, priority, allowed_models, allowed_models_mode, created_at, updated_at) VALUES ($1, $2, $3, 10, '[\"provider-model\"]', 'specific', to_timestamp(1), to_timestamp(2))",
+        )
+        .bind(&group_id)
+        .bind(format!("Export Group {suffix}"))
+        .bind(format!("export group {suffix}"))
+        .execute(&pool)
+        .await
+        .expect("user group should seed");
+        sqlx::query(
+            "INSERT INTO user_group_members (group_id, user_id, created_at) VALUES ($1, $2, to_timestamp(1))",
+        )
+        .bind(&group_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .expect("user group member should seed");
         sqlx::query(
             "INSERT INTO api_keys (id, user_id, key_hash, key_encrypted, name, created_at, updated_at) VALUES ($1, $2, $3, 'ciphertext-1', 'Default', to_timestamp(1), to_timestamp(2))",
         )
@@ -2390,6 +2519,14 @@ VALUES ('request-1', 'request-1', 'user-1', 'Provider One', 'gpt-test', 'complet
             .iter()
             .any(|row| row.id == user_id));
         assert!(import_plan
+            .rows(ExportDomain::UserGroups)
+            .iter()
+            .any(|row| row.id == group_id));
+        assert!(import_plan
+            .rows(ExportDomain::UserGroupMembers)
+            .iter()
+            .any(|row| row.id == format!("{group_id}:{user_id}")));
+        assert!(import_plan
             .rows(ExportDomain::ApiKeys)
             .iter()
             .any(|row| row.id == api_key_id && row.payload["key_encrypted"] == "ciphertext-1"));
@@ -2432,6 +2569,16 @@ VALUES ('request-1', 'request-1', 'user-1', 'Provider One', 'gpt-test', 'complet
                 .await
                 .expect("imported sqlite api key should load");
         assert_eq!(imported_api_key.0, "ciphertext-1");
+        let imported_group_member = sqlx::query_as::<_, (String, String)>(
+            "SELECT group_id, user_id FROM user_group_members WHERE group_id = ? AND user_id = ?",
+        )
+        .bind(&group_id)
+        .bind(&user_id)
+        .fetch_one(&target_pool)
+        .await
+        .expect("imported sqlite user group member should load");
+        assert_eq!(imported_group_member.0, group_id);
+        assert_eq!(imported_group_member.1, user_id);
     }
 
     #[tokio::test]
@@ -2466,6 +2613,7 @@ VALUES ('request-1', 'request-1', 'user-1', 'Provider One', 'gpt-test', 'complet
         let config_id = format!("export-config-{suffix}");
         let wallet_id = format!("export-wallet-{suffix}");
         let request_id = format!("export-request-{suffix}");
+        let group_id = format!("export-group-{suffix}");
 
         sqlx::query(
             "INSERT INTO users (id, email, username, auth_source, created_at, updated_at) VALUES (?, ?, ?, 'local', 1, 2)",
@@ -2476,6 +2624,23 @@ VALUES ('request-1', 'request-1', 'user-1', 'Provider One', 'gpt-test', 'complet
         .execute(&pool)
         .await
         .expect("user should seed");
+        sqlx::query(
+            "INSERT INTO user_groups (id, name, normalized_name, priority, allowed_models, allowed_models_mode, created_at, updated_at) VALUES (?, ?, ?, 10, '[\"provider-model\"]', 'specific', 1, 2)",
+        )
+        .bind(&group_id)
+        .bind(format!("Export Group {suffix}"))
+        .bind(format!("export group {suffix}"))
+        .execute(&pool)
+        .await
+        .expect("user group should seed");
+        sqlx::query(
+            "INSERT INTO user_group_members (group_id, user_id, created_at) VALUES (?, ?, 1)",
+        )
+        .bind(&group_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .expect("user group member should seed");
         sqlx::query(
             "INSERT INTO api_keys (id, user_id, key_hash, key_encrypted, name, created_at, updated_at) VALUES (?, ?, ?, 'ciphertext-1', 'Default', 1, 2)",
         )
@@ -2567,6 +2732,14 @@ VALUES ('request-1', 'request-1', 'user-1', 'Provider One', 'gpt-test', 'complet
             .iter()
             .any(|row| row.id == user_id));
         assert!(import_plan
+            .rows(ExportDomain::UserGroups)
+            .iter()
+            .any(|row| row.id == group_id));
+        assert!(import_plan
+            .rows(ExportDomain::UserGroupMembers)
+            .iter()
+            .any(|row| row.id == format!("{group_id}:{user_id}")));
+        assert!(import_plan
             .rows(ExportDomain::ApiKeys)
             .iter()
             .any(|row| row.id == api_key_id && row.payload["key_encrypted"] == "ciphertext-1"));
@@ -2585,6 +2758,8 @@ VALUES ('request-1', 'request-1', 'user-1', 'Provider One', 'gpt-test', 'complet
             &pool,
             vec![
                 ExportDomain::Users,
+                ExportDomain::UserGroups,
+                ExportDomain::UserGroupMembers,
                 ExportDomain::ApiKeys,
                 ExportDomain::ProviderKeys,
                 ExportDomain::Usage,
@@ -2596,7 +2771,7 @@ VALUES ('request-1', 'request-1', 'user-1', 'Provider One', 'gpt-test', 'complet
         let imported = import_mysql_jsonl(&pool, &selected_export)
             .await
             .expect("mysql import should be idempotent");
-        assert!(imported >= 4);
+        assert!(imported >= 6);
 
         let imported_api_key =
             sqlx::query_as::<_, (String,)>("SELECT key_encrypted FROM api_keys WHERE id = ?")

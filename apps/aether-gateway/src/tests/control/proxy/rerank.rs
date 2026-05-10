@@ -319,7 +319,7 @@ async fn rerank_route_rejects_chat_only_api_format() {
     let payload: serde_json::Value = response.json().await.expect("body should parse");
     assert_eq!(
         payload["error"]["message"],
-        "当前密钥不允许访问 openai:rerank 格式"
+        "当前用户、用户组或密钥的访问控制策略不允许访问 openai:rerank 格式"
     );
 
     gateway_handle.abort();

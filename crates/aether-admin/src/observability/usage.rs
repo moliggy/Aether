@@ -1002,6 +1002,7 @@ fn admin_usage_active_request_json(
     item: &StoredRequestUsageAudit,
     api_key_name: Option<String>,
     provider_key_name: Option<String>,
+    image_progress: Option<&Value>,
 ) -> Value {
     let cache_creation_input_tokens = admin_usage_cache_creation_tokens(item);
     let client_is_stream = admin_usage_client_is_stream(item);
@@ -1040,6 +1041,9 @@ fn admin_usage_active_request_json(
     value["has_format_conversion"] = json!(item.has_format_conversion);
     if let Some(target_model) = item.target_model.as_ref() {
         value["target_model"] = json!(target_model);
+    }
+    if let Some(image_progress) = image_progress {
+        value["image_progress"] = image_progress.clone();
     }
     value
 }
@@ -2038,6 +2042,7 @@ pub fn build_admin_usage_active_requests_response(
     api_key_names: &BTreeMap<String, String>,
     auth_api_key_reader_available: bool,
     provider_key_names: &BTreeMap<String, String>,
+    image_progress_by_request_id: &BTreeMap<String, Value>,
 ) -> Response<Body> {
     let payload: Vec<_> = items
         .iter()
@@ -2045,7 +2050,12 @@ pub fn build_admin_usage_active_requests_response(
             let provider_key_name = admin_usage_provider_key_name(item, provider_key_names);
             let api_key_name =
                 admin_usage_api_key_name(item, api_key_names, auth_api_key_reader_available);
-            admin_usage_active_request_json(item, api_key_name, provider_key_name)
+            admin_usage_active_request_json(
+                item,
+                api_key_name,
+                provider_key_name,
+                image_progress_by_request_id.get(&item.request_id),
+            )
         })
         .collect();
 
@@ -2410,7 +2420,7 @@ mod tests {
 
         assert!(!admin_usage_client_is_stream(&item));
 
-        let active = admin_usage_active_request_json(&item, None, None);
+        let active = admin_usage_active_request_json(&item, None, None, None);
         assert_eq!(active["is_stream"], true);
         assert_eq!(active["upstream_is_stream"], true);
         assert_eq!(active["client_requested_stream"], false);

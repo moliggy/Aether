@@ -1,6 +1,10 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::Error as IoError;
-use std::time::Instant;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
+use std::time::{Duration, Instant};
 
 use aether_contracts::{
     ExecutionPlan, ExecutionStreamTerminalSummary, ExecutionTelemetry, StreamFrame,
@@ -25,6 +29,7 @@ use futures_util::stream::BoxStream;
 use futures_util::{StreamExt, TryStreamExt};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
+use tokio::time::MissedTickBehavior;
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tokio_util::io::StreamReader;
 use tracing::{debug, info, warn};
@@ -93,6 +98,14 @@ use crate::usage::{GatewayStreamReportRequest, GatewaySyncReportRequest};
 use crate::{
     AppState, GatewayError, GEMINI_FILES_DOWNLOAD_PLAN_KIND, OPENAI_VIDEO_CONTENT_PLAN_KIND,
 };
+
+const OPENAI_IMAGE_STREAM_PLAN_KIND: &str = "openai_image_stream";
+const SSE_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+const SSE_KEEPALIVE_BYTES: &[u8] = b": aether-keepalive\n\n";
+const STREAM_IDLE_LOG_INTERVAL: Duration = Duration::from_secs(60);
+const STREAM_IDLE_LOG_INTERVAL_MS: u64 = 60_000;
+const REWRITTEN_STREAM_PREFETCH_TIMEOUT: Duration = Duration::from_millis(750);
+const OPENAI_IMAGE_STREAM_DEFAULT_TOTAL_TIMEOUT_MS: u64 = 900_000;
 
 fn record_sync_terminal_usage(
     state: &AppState,
@@ -851,6 +864,114 @@ fn encode_terminal_sse_error_event(failure: &StreamFailureReport) -> Result<Byte
     Ok(Bytes::from(event))
 }
 
+fn image_stream_failed_event_name(report_context: Option<&Value>) -> &'static str {
+    let operation = report_context
+        .and_then(|value| value.get("image_request"))
+        .and_then(|value| value.get("operation"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if operation == "edit" {
+        "image_edit.failed"
+    } else {
+        "image_generation.failed"
+    }
+}
+
+fn encode_openai_image_failed_event(
+    report_context: Option<&Value>,
+    failure: &StreamFailureReport,
+) -> Result<Bytes, std::io::Error> {
+    let event_name = image_stream_failed_event_name(report_context);
+    let failure_body = failure
+        .to_json_string()
+        .map_err(|err| IoError::other(err.to_string()))?;
+    let failure_json: Value =
+        serde_json::from_str(&failure_body).map_err(|err| IoError::other(err.to_string()))?;
+    let error = failure_json.get("error").cloned().unwrap_or_else(|| {
+        serde_json::json!({
+            "type": failure.error_type.as_str(),
+            "message": failure.error_message.as_str(),
+            "code": failure.status_code,
+        })
+    });
+    let payload = serde_json::json!({
+        "type": event_name,
+        "error": error,
+    });
+    let payload = serde_json::to_string(&payload).map_err(|err| IoError::other(err.to_string()))?;
+    let mut event = format!("event: {event_name}\n");
+    for line in payload.lines() {
+        event.push_str("data: ");
+        event.push_str(line);
+        event.push('\n');
+    }
+    event.push('\n');
+    Ok(Bytes::from(event))
+}
+
+fn resolve_openai_image_stream_total_timeout_ms(
+    plan_kind: &str,
+    plan: &ExecutionPlan,
+) -> Option<u64> {
+    if plan_kind != OPENAI_IMAGE_STREAM_PLAN_KIND {
+        return None;
+    }
+    Some(
+        plan.timeouts
+            .as_ref()
+            .and_then(|timeouts| timeouts.total_ms)
+            .unwrap_or(OPENAI_IMAGE_STREAM_DEFAULT_TOTAL_TIMEOUT_MS)
+            .max(1),
+    )
+}
+
+fn should_limit_direct_finalize_prefetch(plan_kind: &str, has_local_stream_rewriter: bool) -> bool {
+    plan_kind == OPENAI_IMAGE_STREAM_PLAN_KIND || has_local_stream_rewriter
+}
+
+fn build_sse_body_stream(
+    prefetched_chunks_for_body: Vec<Bytes>,
+    mut rx: mpsc::Receiver<Result<Bytes, IoError>>,
+    emit_keepalive: bool,
+    keepalive_interval: Duration,
+) -> impl futures_util::Stream<Item = Result<Bytes, IoError>> + Send + 'static {
+    stream! {
+        let mut sent_prefetched_chunk = false;
+        for chunk in prefetched_chunks_for_body {
+            sent_prefetched_chunk = true;
+            yield Ok(chunk);
+        }
+
+        if emit_keepalive {
+            if !sent_prefetched_chunk {
+                yield Ok(Bytes::from_static(SSE_KEEPALIVE_BYTES));
+            }
+            let mut keepalive = tokio::time::interval(keepalive_interval);
+            keepalive.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            keepalive.tick().await;
+            loop {
+                tokio::select! {
+                    biased;
+                    item = rx.recv() => {
+                        let Some(item) = item else {
+                            break;
+                        };
+                        yield item;
+                    }
+                    _ = keepalive.tick() => {
+                        yield Ok(Bytes::from_static(SSE_KEEPALIVE_BYTES));
+                    }
+                }
+            }
+        } else {
+            while let Some(item) = rx.recv().await {
+                yield item;
+            }
+        }
+    }
+}
+
 async fn next_stream_frame<R>(
     buffered_frames: &mut VecDeque<StreamFrame>,
     lines: &mut FramedRead<R, LinesCodec>,
@@ -1347,6 +1468,8 @@ async fn execute_stream_from_frame_stream(
         private_stream_normalizer.is_some(),
         local_stream_rewriter.is_some(),
     );
+    let limit_direct_finalize_prefetch =
+        should_limit_direct_finalize_prefetch(plan_kind, local_stream_rewriter.is_some());
     let mut prefetched_chunks: Vec<Bytes> = Vec::new();
     let mut provider_prefetched_body = Vec::new();
     let mut prefetched_body = Vec::new();
@@ -1380,7 +1503,38 @@ async fn execute_stream_from_frame_stream(
         while prefetched_chunks.len() < MAX_STREAM_PREFETCH_FRAMES
             && prefetched_inspection_body.len() < MAX_STREAM_PREFETCH_BYTES
         {
-            let Some(frame) = (match next_stream_frame(&mut buffered_frames, &mut lines).await {
+            let next_frame_result = if limit_direct_finalize_prefetch {
+                match tokio::time::timeout(
+                    REWRITTEN_STREAM_PREFETCH_TIMEOUT,
+                    next_stream_frame(&mut buffered_frames, &mut lines),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => {
+                        debug!(
+                            event_name = "execution_runtime_stream_prefetch_limited",
+                            log_type = "debug",
+                            trace_id = %trace_id,
+                            request_id = %request_id_for_log,
+                            candidate_id = ?candidate_id,
+                            plan_kind,
+                            report_kind,
+                            provider_name,
+                            endpoint_id = %plan.endpoint_id,
+                            key_id = %plan.key_id,
+                            model_name,
+                            candidate_index = candidate_index.as_str(),
+                            timeout_ms = REWRITTEN_STREAM_PREFETCH_TIMEOUT.as_millis() as u64,
+                            "gateway stopped rewritten stream prefetch before client-visible body"
+                        );
+                        break;
+                    }
+                }
+            } else {
+                next_stream_frame(&mut buffered_frames, &mut lines).await
+            };
+            let Some(frame) = (match next_frame_result {
                 Ok(frame) => frame,
                 Err(err) => {
                     let failure = build_stream_failure_report(
@@ -1705,7 +1859,6 @@ async fn execute_stream_from_frame_stream(
     let candidate_id = candidate_id.map(ToOwned::to_owned);
     let (tx, mut rx) = mpsc::channel::<Result<Bytes, IoError>>(16);
     let state_for_report = state.clone();
-    let plan_for_report = plan;
     let trace_id_owned = trace_id.to_string();
     let headers_for_report = headers.clone();
     let report_kind_owned = report_kind;
@@ -1723,8 +1876,14 @@ async fn execute_stream_from_frame_stream(
     let request_id_for_report = request_id.clone();
     let request_id_for_report_log = short_request_id(&request_id);
     let candidate_id_for_report = candidate_id.clone();
-    let emit_passthrough_sse_terminal_error =
-        skip_direct_finalize_prefetch && response_headers_indicate_sse(&upstream_headers);
+    let candidate_index_for_report = candidate_index.clone();
+    let is_openai_image_stream_for_report = plan_kind == OPENAI_IMAGE_STREAM_PLAN_KIND;
+    let openai_image_stream_total_timeout_ms =
+        resolve_openai_image_stream_total_timeout_ms(plan_kind, &plan);
+    let plan_for_report = plan;
+    let emit_passthrough_sse_terminal_error = skip_direct_finalize_prefetch
+        && response_headers_indicate_sse(&upstream_headers)
+        && !is_openai_image_stream_for_report;
     let body_capture_policy = match UsageRuntimeAccess::body_capture_policy(state.data.as_ref())
         .await
     {
@@ -1753,6 +1912,8 @@ async fn execute_stream_from_frame_stream(
             .max_response_body_bytes
             .unwrap_or(DEFAULT_USAGE_RESPONSE_BODY_CAPTURE_LIMIT_BYTES)
     };
+    let plan_kind_for_report = plan_kind.to_string();
+    let stream_started_at_for_report = stream_started_at;
     tokio::spawn(async move {
         let mut provider_buffered_body = Vec::new();
         let mut buffered_body = Vec::new();
@@ -1797,6 +1958,115 @@ async fn execute_stream_from_frame_stream(
         let reached_eof = initial_reached_eof;
         let mut downstream_dropped = false;
         let mut terminal_failure: Option<StreamFailureReport> = None;
+        let initial_elapsed_ms = stream_started_at_for_report
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        let last_upstream_frame_elapsed_ms = Arc::new(AtomicU64::new(initial_elapsed_ms));
+        let last_client_chunk_elapsed_ms =
+            Arc::new(AtomicU64::new(if prefetched_body_for_report.is_empty() {
+                0
+            } else {
+                initial_elapsed_ms
+            }));
+        let provider_stream_bytes = Arc::new(AtomicU64::new(
+            u64::try_from(provider_prefetched_body_for_report.len()).unwrap_or(u64::MAX),
+        ));
+        let client_stream_bytes = Arc::new(AtomicU64::new(
+            u64::try_from(prefetched_body_for_report.len()).unwrap_or(u64::MAX),
+        ));
+        let idle_monitor_done = Arc::new(AtomicBool::new(false));
+        let idle_monitor_handle = {
+            let done = Arc::clone(&idle_monitor_done);
+            let last_upstream = Arc::clone(&last_upstream_frame_elapsed_ms);
+            let last_client = Arc::clone(&last_client_chunk_elapsed_ms);
+            let provider_bytes = Arc::clone(&provider_stream_bytes);
+            let client_bytes = Arc::clone(&client_stream_bytes);
+            let trace_id_for_idle = trace_id_owned.clone();
+            let request_id_for_idle = request_id_for_report_log.clone();
+            let candidate_id_for_idle = candidate_id_for_report.clone();
+            let candidate_index_for_idle = candidate_index_for_report.clone();
+            let plan_kind_for_idle = plan_kind_for_report.clone();
+            let provider_name_for_idle = plan_for_report
+                .provider_name
+                .clone()
+                .unwrap_or_else(|| "-".to_string());
+            let endpoint_id_for_idle = plan_for_report.endpoint_id.clone();
+            let key_id_for_idle = plan_for_report.key_id.clone();
+            let model_name_for_idle = plan_for_report
+                .model_name
+                .clone()
+                .unwrap_or_else(|| "-".to_string());
+            let has_local_stream_rewriter_for_idle = local_stream_rewriter.is_some();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(STREAM_IDLE_LOG_INTERVAL);
+                interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                interval.tick().await;
+                loop {
+                    interval.tick().await;
+                    if done.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let elapsed_ms = stream_started_at_for_report
+                        .elapsed()
+                        .as_millis()
+                        .min(u128::from(u64::MAX)) as u64;
+                    let last_upstream_frame_elapsed_ms = last_upstream.load(Ordering::Relaxed);
+                    let last_client_chunk_elapsed_ms = last_client.load(Ordering::Relaxed);
+                    let upstream_idle_ms =
+                        elapsed_ms.saturating_sub(last_upstream_frame_elapsed_ms);
+                    let client_idle_ms = if last_client_chunk_elapsed_ms == 0 {
+                        elapsed_ms
+                    } else {
+                        elapsed_ms.saturating_sub(last_client_chunk_elapsed_ms)
+                    };
+                    if upstream_idle_ms >= STREAM_IDLE_LOG_INTERVAL_MS {
+                        warn!(
+                            event_name = "stream_execution_upstream_idle",
+                            log_type = "ops",
+                            trace_id = %trace_id_for_idle,
+                            request_id = %request_id_for_idle,
+                            candidate_id = ?candidate_id_for_idle.as_deref(),
+                            candidate_index = candidate_index_for_idle.as_str(),
+                            plan_kind = plan_kind_for_idle.as_str(),
+                            provider_name = provider_name_for_idle.as_str(),
+                            endpoint_id = %endpoint_id_for_idle,
+                            key_id = %key_id_for_idle,
+                            model_name = model_name_for_idle.as_str(),
+                            elapsed_ms,
+                            provider_bytes = provider_bytes.load(Ordering::Relaxed),
+                            client_bytes = client_bytes.load(Ordering::Relaxed),
+                            last_upstream_frame_elapsed_ms,
+                            last_client_chunk_elapsed_ms,
+                            "gateway stream has not received an upstream frame within the idle window"
+                        );
+                    } else if client_idle_ms >= STREAM_IDLE_LOG_INTERVAL_MS
+                        && last_upstream_frame_elapsed_ms >= last_client_chunk_elapsed_ms
+                    {
+                        warn!(
+                            event_name = "stream_execution_client_visible_idle",
+                            log_type = "ops",
+                            trace_id = %trace_id_for_idle,
+                            request_id = %request_id_for_idle,
+                            candidate_id = ?candidate_id_for_idle.as_deref(),
+                            candidate_index = candidate_index_for_idle.as_str(),
+                            plan_kind = plan_kind_for_idle.as_str(),
+                            provider_name = provider_name_for_idle.as_str(),
+                            endpoint_id = %endpoint_id_for_idle,
+                            key_id = %key_id_for_idle,
+                            model_name = model_name_for_idle.as_str(),
+                            elapsed_ms,
+                            provider_bytes = provider_bytes.load(Ordering::Relaxed),
+                            client_bytes = client_bytes.load(Ordering::Relaxed),
+                            last_upstream_frame_elapsed_ms,
+                            last_client_chunk_elapsed_ms,
+                            local_stream_rewriter = has_local_stream_rewriter_for_idle,
+                            "gateway stream received upstream frames but has no recent client-visible chunk"
+                        );
+                    }
+                }
+            })
+        };
         if !provider_prefetched_body_for_report.is_empty() {
             let normalized_prefetched_chunk = if let Some(normalizer) =
                 private_stream_normalizer.as_mut()
@@ -1865,8 +2135,67 @@ async fn execute_stream_from_frame_stream(
         }
 
         if terminal_failure.is_none() && !reached_eof {
+            let mut image_stream_total_timeout = openai_image_stream_total_timeout_ms
+                .map(|timeout_ms| Box::pin(tokio::time::sleep(Duration::from_millis(timeout_ms))));
             loop {
-                let next_frame = match next_stream_frame(&mut buffered_frames, &mut lines).await {
+                let next_frame_result = if let Some(timeout_sleep) =
+                    image_stream_total_timeout.as_mut()
+                {
+                    tokio::select! {
+                        result = next_stream_frame(&mut buffered_frames, &mut lines) => result,
+                        _ = timeout_sleep.as_mut() => {
+                            let timeout_ms = openai_image_stream_total_timeout_ms
+                                .unwrap_or(OPENAI_IMAGE_STREAM_DEFAULT_TOTAL_TIMEOUT_MS);
+                            let elapsed_ms = stream_started_at_for_report
+                                .elapsed()
+                                .as_millis()
+                                .min(u128::from(u64::MAX)) as u64;
+                            warn!(
+                                event_name = "openai_image_stream_total_timeout",
+                                log_type = "ops",
+                                trace_id = %trace_id_owned,
+                                request_id = %request_id_for_report_log,
+                                candidate_id = ?candidate_id_for_report.as_deref(),
+                                candidate_index = candidate_index_for_report.as_str(),
+                                plan_kind = plan_kind_for_report.as_str(),
+                                provider_name = plan_for_report.provider_name.as_deref().unwrap_or("-"),
+                                endpoint_id = %plan_for_report.endpoint_id,
+                                key_id = %plan_for_report.key_id,
+                                model_name = plan_for_report.model_name.as_deref().unwrap_or("-"),
+                                elapsed_ms,
+                                timeout_ms,
+                                provider_bytes = provider_stream_bytes.load(Ordering::Relaxed),
+                                client_bytes = client_stream_bytes.load(Ordering::Relaxed),
+                                last_upstream_frame_elapsed_ms = last_upstream_frame_elapsed_ms.load(Ordering::Relaxed),
+                                last_client_chunk_elapsed_ms = last_client_chunk_elapsed_ms.load(Ordering::Relaxed),
+                                "gateway OpenAI image stream exceeded total timeout"
+                            );
+                            telemetry = Some(ExecutionTelemetry {
+                                ttfb_ms: telemetry
+                                    .as_ref()
+                                    .and_then(|telemetry| telemetry.ttfb_ms)
+                                    .or_else(|| {
+                                        usage_stream_telemetry
+                                            .as_ref()
+                                            .and_then(|telemetry| telemetry.ttfb_ms)
+                                    }),
+                                elapsed_ms: Some(elapsed_ms),
+                                upstream_bytes: Some(provider_stream_bytes.load(Ordering::Relaxed)),
+                            });
+                            terminal_failure = Some(build_stream_failure_report(
+                                "image_stream_total_timeout",
+                                format!(
+                                    "OpenAI image stream exceeded total timeout of {timeout_ms}ms"
+                                ),
+                                504,
+                            ));
+                            break;
+                        }
+                    }
+                } else {
+                    next_stream_frame(&mut buffered_frames, &mut lines).await
+                };
+                let next_frame = match next_frame_result {
                     Ok(frame) => frame,
                     Err(err) => {
                         warn!(
@@ -1889,6 +2218,11 @@ async fn execute_stream_from_frame_stream(
                 let Some(frame) = next_frame else {
                     break;
                 };
+                let frame_elapsed_ms = stream_started_at_for_report
+                    .elapsed()
+                    .as_millis()
+                    .min(u128::from(u64::MAX)) as u64;
+                last_upstream_frame_elapsed_ms.store(frame_elapsed_ms, Ordering::Relaxed);
                 match frame.payload {
                     StreamFramePayload::Data { chunk_b64, text } => {
                         if sync_json_stream_bridge_active_for_report {
@@ -1922,6 +2256,10 @@ async fn execute_stream_from_frame_stream(
                             continue;
                         }
 
+                        provider_stream_bytes.fetch_add(
+                            u64::try_from(chunk.len()).unwrap_or(u64::MAX),
+                            Ordering::Relaxed,
+                        );
                         append_stream_capture_bytes(
                             &mut provider_buffered_body,
                             &chunk,
@@ -2000,7 +2338,7 @@ async fn execute_stream_from_frame_stream(
                             .and_then(|telemetry| telemetry.ttfb_ms)
                             .is_none()
                         {
-                            let first_data_elapsed_ms = stream_started_at
+                            let first_data_elapsed_ms = stream_started_at_for_report
                                 .elapsed()
                                 .as_millis()
                                 .min(u128::from(u64::MAX))
@@ -2027,6 +2365,8 @@ async fn execute_stream_from_frame_stream(
                             max_stream_body_buffer_bytes,
                             &mut client_body_truncated,
                         );
+                        let rewritten_chunk_len =
+                            u64::try_from(rewritten_chunk.len()).unwrap_or(u64::MAX);
                         if tx.send(Ok(Bytes::from(rewritten_chunk))).await.is_err() {
                             warn!(
                                 event_name = "stream_execution_downstream_disconnected",
@@ -2038,6 +2378,16 @@ async fn execute_stream_from_frame_stream(
                             );
                             downstream_dropped = true;
                             break;
+                        } else {
+                            client_stream_bytes.fetch_add(rewritten_chunk_len, Ordering::Relaxed);
+                            last_client_chunk_elapsed_ms.store(
+                                stream_started_at_for_report
+                                    .elapsed()
+                                    .as_millis()
+                                    .min(u128::from(u64::MAX))
+                                    as u64,
+                                Ordering::Relaxed,
+                            );
                         }
                     }
                     StreamFramePayload::Telemetry {
@@ -2140,16 +2490,29 @@ async fn execute_stream_from_frame_stream(
                                 max_stream_body_buffer_bytes,
                                 &mut client_body_truncated,
                             );
+                            let rewritten_chunk_len =
+                                u64::try_from(rewritten_chunk.len()).unwrap_or(u64::MAX);
                             if tx.send(Ok(Bytes::from(rewritten_chunk))).await.is_err() {
                                 warn!(
                                     event_name = "stream_execution_downstream_flush_disconnected",
                                     log_type = "ops",
                                     trace_id = %trace_id_owned,
                                     request_id = %request_id_for_report_log,
-                                    candidate_id = ?candidate_id_for_report.as_deref(),
-                                    "gateway stream downstream dropped while flushing private stream normalization"
+                                candidate_id = ?candidate_id_for_report.as_deref(),
+                                "gateway stream downstream dropped while flushing private stream normalization"
                                 );
                                 downstream_dropped = true;
+                            } else {
+                                client_stream_bytes
+                                    .fetch_add(rewritten_chunk_len, Ordering::Relaxed);
+                                last_client_chunk_elapsed_ms.store(
+                                    stream_started_at_for_report
+                                        .elapsed()
+                                        .as_millis()
+                                        .min(u128::from(u64::MAX))
+                                        as u64,
+                                    Ordering::Relaxed,
+                                );
                             }
                         }
                     }
@@ -2184,16 +2547,28 @@ async fn execute_stream_from_frame_stream(
                                 max_stream_body_buffer_bytes,
                                 &mut client_body_truncated,
                             );
+                            let flushed_chunk_len =
+                                u64::try_from(flushed_chunk.len()).unwrap_or(u64::MAX);
                             if tx.send(Ok(Bytes::from(flushed_chunk))).await.is_err() {
                                 warn!(
                                     event_name = "stream_execution_downstream_rewrite_flush_disconnected",
                                     log_type = "ops",
                                     trace_id = %trace_id_owned,
                                     request_id = %request_id_for_report_log,
-                                    candidate_id = ?candidate_id_for_report.as_deref(),
-                                    "gateway stream downstream dropped while flushing local stream rewrite"
+                                candidate_id = ?candidate_id_for_report.as_deref(),
+                                "gateway stream downstream dropped while flushing local stream rewrite"
                                 );
                                 downstream_dropped = true;
+                            } else {
+                                client_stream_bytes.fetch_add(flushed_chunk_len, Ordering::Relaxed);
+                                last_client_chunk_elapsed_ms.store(
+                                    stream_started_at_for_report
+                                        .elapsed()
+                                        .as_millis()
+                                        .min(u128::from(u64::MAX))
+                                        as u64,
+                                    Ordering::Relaxed,
+                                );
                             }
                         }
                         Ok(_) => {}
@@ -2220,44 +2595,70 @@ async fn execute_stream_from_frame_stream(
             }
         }
 
-        if !downstream_dropped && emit_passthrough_sse_terminal_error {
+        if !downstream_dropped {
             if let Some(failure) = terminal_failure.as_ref() {
-                match encode_terminal_sse_error_event(failure) {
-                    Ok(error_event) => {
-                        append_stream_capture_bytes(
-                            &mut buffered_body,
-                            error_event.as_ref(),
-                            max_stream_body_buffer_bytes,
-                            &mut client_body_truncated,
-                        );
-                        if tx.send(Ok(error_event)).await.is_err() {
-                            warn!(
+                let terminal_event = if is_openai_image_stream_for_report {
+                    Some(encode_openai_image_failed_event(
+                        report_context_owned.as_ref(),
+                        failure,
+                    ))
+                } else if emit_passthrough_sse_terminal_error {
+                    Some(encode_terminal_sse_error_event(failure))
+                } else {
+                    None
+                };
+                if let Some(terminal_event) = terminal_event {
+                    match terminal_event {
+                        Ok(error_event) => {
+                            let error_event_len =
+                                u64::try_from(error_event.len()).unwrap_or(u64::MAX);
+                            append_stream_capture_bytes(
+                                &mut buffered_body,
+                                error_event.as_ref(),
+                                max_stream_body_buffer_bytes,
+                                &mut client_body_truncated,
+                            );
+                            if tx.send(Ok(error_event)).await.is_err() {
+                                warn!(
                                 event_name = "stream_execution_downstream_terminal_error_disconnected",
                                 log_type = "ops",
                                 trace_id = %trace_id_owned,
                                 request_id = %request_id_for_report_log,
                                 candidate_id = ?candidate_id_for_report.as_deref(),
                                 "gateway stream downstream dropped while sending terminal SSE error event"
-                            );
-                            downstream_dropped = true;
+                                );
+                                downstream_dropped = true;
+                            } else {
+                                client_stream_bytes.fetch_add(error_event_len, Ordering::Relaxed);
+                                last_client_chunk_elapsed_ms.store(
+                                    stream_started_at_for_report
+                                        .elapsed()
+                                        .as_millis()
+                                        .min(u128::from(u64::MAX))
+                                        as u64,
+                                    Ordering::Relaxed,
+                                );
+                            }
                         }
-                    }
-                    Err(err) => {
-                        warn!(
+                        Err(err) => {
+                            warn!(
                             event_name = "stream_execution_terminal_error_event_encode_failed",
                             log_type = "ops",
                             trace_id = %trace_id_owned,
                             request_id = %request_id_for_report_log,
                             candidate_id = ?candidate_id_for_report.as_deref(),
                             error = ?err,
-                            "gateway failed to encode terminal SSE error event"
-                        );
+                                "gateway failed to encode terminal SSE error event"
+                            );
+                        }
                     }
                 }
             }
         }
 
         drop(tx);
+        idle_monitor_done.store(true, Ordering::Relaxed);
+        idle_monitor_handle.abort();
 
         stream_terminal_summary = merge_stream_terminal_summary(
             stream_terminal_summary,
@@ -2422,15 +2823,6 @@ async fn execute_stream_from_frame_stream(
         }
     });
 
-    let body_stream = stream! {
-        for chunk in prefetched_chunks_for_body {
-            yield Ok(chunk);
-        }
-        while let Some(item) = rx.recv().await {
-            yield item;
-        }
-    };
-
     headers.insert(CONTROL_REQUEST_ID_HEADER.to_string(), request_id.clone());
 
     if let Some(candidate_id) = candidate_id
@@ -2443,6 +2835,17 @@ async fn execute_stream_from_frame_stream(
             candidate_id.to_string(),
         );
     }
+
+    let emit_sse_keepalive = response_headers_indicate_sse(&headers);
+    if emit_sse_keepalive {
+        headers.remove("content-length");
+    }
+    let body_stream = build_sse_body_stream(
+        prefetched_chunks_for_body,
+        rx,
+        emit_sse_keepalive,
+        SSE_KEEPALIVE_INTERVAL,
+    );
 
     Ok(Some(build_client_response_from_parts(
         status_code,
@@ -2467,7 +2870,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::convert::Infallible;
     use std::sync::Arc;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use aether_contracts::{
         ExecutionPlan, ExecutionStreamTerminalSummary, ExecutionTimeouts, RequestBody,
@@ -2484,11 +2887,13 @@ mod tests {
     use axum::extract::Request;
     use axum::routing::any;
     use axum::{http::header, http::HeaderValue, Router};
+    use futures_util::StreamExt as _;
     use serde_json::{json, Value};
-    use tokio::sync::{watch, Notify};
+    use tokio::sync::{mpsc, watch, Notify};
 
     use super::{
-        execute_execution_runtime_stream, merge_stream_terminal_summary,
+        build_sse_body_stream, execute_execution_runtime_stream, execute_stream_from_frame_stream,
+        merge_stream_terminal_summary, should_limit_direct_finalize_prefetch,
         should_probe_success_failover_before_stream, should_skip_direct_finalize_prefetch,
     };
     use crate::control::GatewayControlDecision;
@@ -2612,6 +3017,132 @@ mod tests {
         assert!(should_probe_success_failover_before_stream(
             &BTreeMap::from([("content-type".to_string(), "application/json".to_string(),)])
         ));
+    }
+
+    #[test]
+    fn limits_prefetch_for_openai_image_and_rewritten_streams() {
+        assert!(should_limit_direct_finalize_prefetch(
+            "openai_image_stream",
+            false
+        ));
+        assert!(should_limit_direct_finalize_prefetch(
+            "openai_chat_stream",
+            true
+        ));
+        assert!(!should_limit_direct_finalize_prefetch(
+            "openai_chat_stream",
+            false
+        ));
+    }
+
+    #[tokio::test]
+    async fn sse_body_stream_emits_initial_and_periodic_keepalive_without_business_chunks() {
+        let (_tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
+        let mut body_stream = Box::pin(build_sse_body_stream(
+            Vec::new(),
+            rx,
+            true,
+            Duration::from_millis(10),
+        ));
+
+        let first = tokio::time::timeout(Duration::from_millis(50), body_stream.next())
+            .await
+            .expect("initial keepalive should be immediate")
+            .expect("stream should yield initial keepalive")
+            .expect("initial keepalive should be ok");
+        assert_eq!(first.as_ref(), b": aether-keepalive\n\n");
+
+        let second = tokio::time::timeout(Duration::from_millis(100), body_stream.next())
+            .await
+            .expect("periodic keepalive should arrive")
+            .expect("stream should yield periodic keepalive")
+            .expect("periodic keepalive should be ok");
+        assert_eq!(second.as_ref(), b": aether-keepalive\n\n");
+    }
+
+    #[tokio::test]
+    async fn openai_image_stream_total_timeout_emits_image_failed_event() {
+        let state = AppState::new().expect("app state should build");
+        let plan = ExecutionPlan {
+            request_id: "req-image-stream-timeout".into(),
+            candidate_id: Some("cand-image-stream-timeout".into()),
+            provider_name: Some("codex".into()),
+            provider_id: "prov-1".into(),
+            endpoint_id: "ep-1".into(),
+            key_id: "key-1".into(),
+            method: "POST".into(),
+            url: "https://chatgpt.com/backend-api/codex/responses".into(),
+            headers: BTreeMap::from([
+                ("content-type".into(), "application/json".into()),
+                ("accept".into(), "text/event-stream".into()),
+            ]),
+            content_type: Some("application/json".into()),
+            content_encoding: None,
+            body: RequestBody::from_json(json!({
+                "model": "gpt-image-1",
+                "prompt": "hello",
+                "stream": true
+            })),
+            stream: true,
+            client_api_format: "openai:image".into(),
+            provider_api_format: "openai:image".into(),
+            model_name: Some("gpt-image-1".into()),
+            proxy: None,
+            transport_profile: None,
+            timeouts: Some(ExecutionTimeouts {
+                total_ms: Some(25),
+                ..ExecutionTimeouts::default()
+            }),
+        };
+        let decision = GatewayControlDecision::synthetic(
+            "/v1/images/generations",
+            Some("ai_public".to_string()),
+            Some("openai".to_string()),
+            Some("image".to_string()),
+            Some("openai:image".to_string()),
+        )
+        .with_execution_runtime_candidate(true);
+        let frame_stream = stream! {
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                b"{\"type\":\"headers\",\"payload\":{\"kind\":\"headers\",\"status_code\":200,\"headers\":{\"content-type\":\"text/event-stream\"}}}\n",
+            ));
+            std::future::pending::<()>().await;
+        }
+        .boxed();
+
+        let response = execute_stream_from_frame_stream(
+            &state,
+            plan,
+            "trace-image-stream-timeout",
+            &decision,
+            "openai_image_stream",
+            None,
+            Some(json!({
+                "provider_api_format": "openai:image",
+                "client_api_format": "openai:image",
+                "image_request": {
+                    "operation": "generate"
+                }
+            })),
+            crate::clock::current_unix_ms(),
+            Instant::now(),
+            frame_stream,
+        )
+        .await
+        .expect("execution should succeed")
+        .expect("execution should return a client response");
+
+        let body = tokio::time::timeout(
+            Duration::from_secs(2),
+            to_bytes(response.into_body(), usize::MAX),
+        )
+        .await
+        .expect("timeout failure should close the response body")
+        .expect("response body should read");
+        let text = String::from_utf8(body.to_vec()).expect("response body should be utf8");
+        assert!(text.contains(": aether-keepalive\n\n"));
+        assert!(text.contains("event: image_generation.failed"));
+        assert!(text.contains("\"type\":\"image_stream_total_timeout\""));
     }
 
     #[tokio::test]

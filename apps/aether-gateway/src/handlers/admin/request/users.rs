@@ -63,6 +63,113 @@ impl<'a> AdminAppState<'a> {
         self.app.find_user_auth_by_identifier(identifier).await
     }
 
+    pub(crate) async fn list_user_groups(
+        &self,
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.app.list_user_groups().await
+    }
+
+    pub(crate) async fn find_user_group_by_id(
+        &self,
+        group_id: &str,
+    ) -> Result<Option<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.app.find_user_group_by_id(group_id).await
+    }
+
+    pub(crate) async fn list_user_groups_by_ids(
+        &self,
+        group_ids: &[String],
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.app.list_user_groups_by_ids(group_ids).await
+    }
+
+    pub(crate) async fn create_user_group(
+        &self,
+        record: aether_data::repository::users::UpsertUserGroupRecord,
+    ) -> Result<Option<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.app.create_user_group(record).await
+    }
+
+    pub(crate) async fn update_user_group(
+        &self,
+        group_id: &str,
+        record: aether_data::repository::users::UpsertUserGroupRecord,
+    ) -> Result<Option<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.app.update_user_group(group_id, record).await
+    }
+
+    pub(crate) async fn delete_user_group(&self, group_id: &str) -> Result<bool, GatewayError> {
+        self.app.delete_user_group(group_id).await
+    }
+
+    pub(crate) async fn list_user_group_members(
+        &self,
+        group_id: &str,
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroupMember>, GatewayError> {
+        self.app.list_user_group_members(group_id).await
+    }
+
+    pub(crate) async fn replace_user_group_members(
+        &self,
+        group_id: &str,
+        user_ids: &[String],
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroupMember>, GatewayError> {
+        self.app
+            .replace_user_group_members(group_id, user_ids)
+            .await
+    }
+
+    pub(crate) async fn list_user_groups_for_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.app.list_user_groups_for_user(user_id).await
+    }
+
+    pub(crate) async fn list_user_group_memberships_by_user_ids(
+        &self,
+        user_ids: &[String],
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroupMembership>, GatewayError> {
+        self.app
+            .list_user_group_memberships_by_user_ids(user_ids)
+            .await
+    }
+
+    pub(crate) async fn replace_user_groups_for_user(
+        &self,
+        user_id: &str,
+        group_ids: &[String],
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.app
+            .replace_user_groups_for_user(user_id, group_ids)
+            .await
+    }
+
+    pub(crate) async fn include_default_user_group_ids(
+        &self,
+        group_ids: &[String],
+    ) -> Result<Vec<String>, GatewayError> {
+        self.app.include_default_user_group_ids(group_ids).await
+    }
+
+    pub(crate) async fn effective_default_user_group_id(
+        &self,
+    ) -> Result<Option<String>, GatewayError> {
+        self.app.effective_default_user_group_id().await
+    }
+
+    pub(crate) async fn add_user_to_group(
+        &self,
+        group_id: &str,
+        user_id: &str,
+    ) -> Result<bool, GatewayError> {
+        self.app.add_user_to_group(group_id, user_id).await
+    }
+
+    pub(crate) async fn add_all_users_to_group(&self, group_id: &str) -> Result<(), GatewayError> {
+        self.app.add_all_users_to_group(group_id).await
+    }
+
     pub(crate) async fn is_other_user_auth_email_taken(
         &self,
         email: &str,
@@ -183,6 +290,25 @@ impl<'a> AdminAppState<'a> {
                 rate_limit_present,
                 rate_limit,
                 is_active,
+            )
+            .await
+    }
+
+    pub(crate) async fn update_local_auth_user_policy_modes(
+        &self,
+        user_id: &str,
+        allowed_providers_mode: Option<String>,
+        allowed_api_formats_mode: Option<String>,
+        allowed_models_mode: Option<String>,
+        rate_limit_mode: Option<String>,
+    ) -> Result<Option<aether_data::repository::users::StoredUserAuthRecord>, GatewayError> {
+        self.app
+            .update_local_auth_user_policy_modes(
+                user_id,
+                allowed_providers_mode,
+                allowed_api_formats_mode,
+                allowed_models_mode,
+                rate_limit_mode,
             )
             .await
     }

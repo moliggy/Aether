@@ -73,8 +73,23 @@ export interface ProxyNodeExport {
 export interface UsersExportData {
   version: string
   exported_at: string
+  user_groups?: UserGroupExport[]
   users: UserExport[]
   standalone_keys?: StandaloneKeyExport[]
+}
+
+export interface UserGroupExport {
+  id?: string
+  name: string
+  description?: string | null
+  allowed_providers?: string[] | null
+  allowed_providers_mode?: 'inherit' | 'unrestricted' | 'specific' | 'deny_all'
+  allowed_api_formats?: string[] | null
+  allowed_api_formats_mode?: 'inherit' | 'unrestricted' | 'specific' | 'deny_all'
+  allowed_models?: string[] | null
+  allowed_models_mode?: 'inherit' | 'unrestricted' | 'specific' | 'deny_all'
+  rate_limit?: number | null
+  rate_limit_mode?: 'inherit' | 'system' | 'custom'
 }
 
 export interface UserExport {
@@ -84,10 +99,16 @@ export interface UserExport {
   password_hash: string
   role: string
   allowed_providers?: string[] | null
+  allowed_providers_mode?: 'inherit' | 'unrestricted' | 'specific' | 'deny_all'
   allowed_api_formats?: string[] | null
+  allowed_api_formats_mode?: 'inherit' | 'unrestricted' | 'specific' | 'deny_all'
   allowed_models?: string[] | null
+  allowed_models_mode?: 'inherit' | 'unrestricted' | 'specific' | 'deny_all'
   rate_limit?: number | null  // null = 跟随系统默认，0 = 不限制
+  rate_limit_mode?: 'inherit' | 'system' | 'custom'
   model_capability_settings?: Record<string, Record<string, boolean>>
+  group_ids?: string[]
+  group_names?: string[]
   unlimited?: boolean
   wallet?: BillingSummary | null
   is_active: boolean
@@ -340,9 +361,10 @@ export interface UsersImportRequest extends UsersExportData {
 export interface UsersImportResponse {
   message: string
   stats: {
+    user_groups?: { created: number; updated: number; skipped: number }
     users: { created: number; updated: number; skipped: number }
-    api_keys: { created: number; skipped: number }
-    standalone_keys?: { created: number; skipped: number }
+    api_keys: { created: number; updated?: number; skipped: number }
+    standalone_keys?: { created: number; updated?: number; skipped: number }
     errors: string[]
   }
 }

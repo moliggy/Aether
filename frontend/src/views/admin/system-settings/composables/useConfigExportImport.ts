@@ -36,7 +36,9 @@ function looksLikeConfigExport(value: JsonObject): boolean {
 }
 
 function looksLikeUsersExport(value: JsonObject): boolean {
-  return hasArrayField(value, 'users') || hasArrayField(value, 'standalone_keys')
+  return hasArrayField(value, 'users')
+    || hasArrayField(value, 'standalone_keys')
+    || hasArrayField(value, 'user_groups')
 }
 
 export function useConfigExportImport(systemConfig: { value: SystemConfig }) {
@@ -228,6 +230,11 @@ export function useConfigExportImport(systemConfig: { value: SystemConfig }) {
 
         if (!Array.isArray(root.users)) {
           error('无效的用户数据文件：缺少 users 数组')
+          return
+        }
+
+        if (root.user_groups != null && !Array.isArray(root.user_groups)) {
+          error('无效的用户数据文件：user_groups 必须是数组')
           return
         }
 

@@ -22,11 +22,14 @@ struct AdminUserSelectionFilters {
     role: Option<String>,
     #[serde(default)]
     is_active: Option<bool>,
+    #[serde(default)]
+    group_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
 struct AdminUserSelectionRequest {
     user_ids: Vec<String>,
+    group_ids: Vec<String>,
     filters: Option<AdminUserSelectionFilters>,
     filters_scope_present: bool,
 }
@@ -51,6 +54,7 @@ struct NormalizedAdminUserSelectionFilters {
     search: Option<String>,
     role: Option<String>,
     is_active: Option<bool>,
+    group_id: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -60,12 +64,22 @@ struct AdminUserSelectionItem {
     email: Option<String>,
     role: String,
     is_active: bool,
+    matched_by: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct AdminUserSelectionWarning {
+    #[serde(rename = "type")]
+    warning_type: String,
+    group_id: Option<String>,
+    message: String,
 }
 
 #[derive(Debug, Clone, Default)]
 struct ResolvedAdminUserSelection {
     items: Vec<AdminUserSelectionItem>,
     missing_user_ids: Vec<String>,
+    warnings: Vec<AdminUserSelectionWarning>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -112,6 +126,7 @@ pub(in super::super) async fn build_admin_resolve_user_selection_response(
     Ok(Json(json!({
         "total": resolved.items.len(),
         "items": resolved.items,
+        "warnings": resolved.warnings,
     }))
     .into_response())
 }
@@ -229,6 +244,7 @@ pub(in super::super) async fn build_admin_user_batch_action_response(
         "success": success,
         "failed": failed,
         "failures": failures,
+        "warnings": resolved.warnings,
         "action": request.action.trim().to_ascii_lowercase(),
         "modified_fields": mutation.modified_fields,
     }))
@@ -284,6 +300,11 @@ fn parse_selection_request_value(value: Value) -> Result<AdminUserSelectionReque
         Some(value) => serde_json::from_value::<Vec<String>>(value.clone())
             .map_err(|_| "user_ids 必须是字符串数组".to_string())?,
     };
+    let group_ids = match map.get("group_ids") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(value) => serde_json::from_value::<Vec<String>>(value.clone())
+            .map_err(|_| "group_ids 必须是字符串数组".to_string())?,
+    };
 
     let (filters_scope_present, filters) = match map.get("filters") {
         Some(Value::Object(_)) => {
@@ -299,6 +320,7 @@ fn parse_selection_request_value(value: Value) -> Result<AdminUserSelectionReque
 
     Ok(AdminUserSelectionRequest {
         user_ids,
+        group_ids,
         filters,
         filters_scope_present,
     })
@@ -310,12 +332,36 @@ async fn resolve_admin_user_selection(
 ) -> Result<ResolvedAdminUserSelection, String> {
     let filters = normalize_selection_filters(selection.filters)?;
     let explicit_user_ids = normalize_user_ids(selection.user_ids);
-    if explicit_user_ids.is_empty() && !selection.filters_scope_present {
-        return Err("至少需要选择一个用户或明确提供筛选条件".to_string());
+    let explicit_group_ids = normalize_user_ids(selection.group_ids);
+    if explicit_user_ids.is_empty()
+        && explicit_group_ids.is_empty()
+        && !selection.filters_scope_present
+    {
+        return Err("至少需要选择一个用户、用户组或明确提供筛选条件".to_string());
     }
     let should_resolve_filters = selection.filters_scope_present;
     let mut items_by_id = BTreeMap::new();
     let mut missing_user_ids = Vec::new();
+    let mut warnings = Vec::new();
+
+    if !explicit_group_ids.is_empty() {
+        let groups = state
+            .list_user_groups_by_ids(&explicit_group_ids)
+            .await
+            .map_err(|_| "用户分组数据不可用".to_string())?;
+        let found_group_ids = groups
+            .iter()
+            .map(|group| group.id.clone())
+            .collect::<BTreeSet<_>>();
+        let missing_group_ids = explicit_group_ids
+            .iter()
+            .filter(|group_id| !found_group_ids.contains(*group_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing_group_ids.is_empty() {
+            return Err(format!("用户分组不存在: {}", missing_group_ids.join(", ")));
+        }
+    }
 
     if !explicit_user_ids.is_empty() {
         let users = state
@@ -325,15 +371,14 @@ async fn resolve_admin_user_selection(
         for user_id in explicit_user_ids {
             match users.get(&user_id).filter(|user| !user.is_deleted) {
                 Some(user) => {
-                    items_by_id.insert(
+                    insert_or_update_selection_item(
+                        &mut items_by_id,
                         user.id.clone(),
-                        AdminUserSelectionItem {
-                            user_id: user.id.clone(),
-                            username: user.username.clone(),
-                            email: user.email.clone(),
-                            role: user.role.clone(),
-                            is_active: user.is_active,
-                        },
+                        user.username.clone(),
+                        user.email.clone(),
+                        user.role.clone(),
+                        user.is_active,
+                        "direct".to_string(),
                     );
                 }
                 None => missing_user_ids.push(user_id),
@@ -341,24 +386,71 @@ async fn resolve_admin_user_selection(
         }
     }
 
-    if should_resolve_filters {
-        let users = state
-            .list_export_users()
+    for group_id in &explicit_group_ids {
+        let members = state
+            .list_user_group_members(group_id)
             .await
-            .map_err(|_| "用户数据不可用".to_string())?;
+            .map_err(|_| "用户分组成员数据不可用".to_string())?;
+        let mut matched_count = 0usize;
+        for member in members.into_iter().filter(|member| !member.is_deleted) {
+            matched_count += 1;
+            insert_or_update_selection_item(
+                &mut items_by_id,
+                member.user_id,
+                member.username,
+                member.email,
+                member.role,
+                member.is_active,
+                format!("group:{group_id}"),
+            );
+        }
+        if matched_count == 0 {
+            warnings.push(AdminUserSelectionWarning {
+                warning_type: "empty_group".to_string(),
+                group_id: Some(group_id.clone()),
+                message: "分组内没有可操作用户".to_string(),
+            });
+        }
+    }
+
+    if should_resolve_filters {
+        let users = if filters.as_ref().is_some_and(|filters| {
+            filters.search.is_some()
+                || filters.role.is_some()
+                || filters.is_active.is_some()
+                || filters.group_id.is_some()
+        }) {
+            state
+                .list_export_users_page(&aether_data::repository::users::UserExportListQuery {
+                    skip: 0,
+                    limit: 100_000,
+                    role: filters.as_ref().and_then(|filters| filters.role.clone()),
+                    is_active: filters.as_ref().and_then(|filters| filters.is_active),
+                    search: filters.as_ref().and_then(|filters| filters.search.clone()),
+                    group_id: filters
+                        .as_ref()
+                        .and_then(|filters| filters.group_id.clone()),
+                })
+                .await
+                .map_err(|_| "用户数据不可用".to_string())?
+        } else {
+            state
+                .list_export_users()
+                .await
+                .map_err(|_| "用户数据不可用".to_string())?
+        };
         for user in users
             .into_iter()
             .filter(|user| admin_user_matches_filters(user, filters.as_ref()))
         {
-            items_by_id.insert(
-                user.id.clone(),
-                AdminUserSelectionItem {
-                    user_id: user.id,
-                    username: user.username,
-                    email: user.email,
-                    role: user.role,
-                    is_active: user.is_active,
-                },
+            insert_or_update_selection_item(
+                &mut items_by_id,
+                user.id,
+                user.username,
+                user.email,
+                user.role,
+                user.is_active,
+                "filter".to_string(),
             );
         }
     }
@@ -374,7 +466,39 @@ async fn resolve_admin_user_selection(
     Ok(ResolvedAdminUserSelection {
         items,
         missing_user_ids,
+        warnings,
     })
+}
+
+fn insert_or_update_selection_item(
+    items_by_id: &mut BTreeMap<String, AdminUserSelectionItem>,
+    user_id: String,
+    username: String,
+    email: Option<String>,
+    role: String,
+    is_active: bool,
+    matched_by: String,
+) {
+    match items_by_id.get_mut(&user_id) {
+        Some(item) => {
+            if !item.matched_by.iter().any(|value| value == &matched_by) {
+                item.matched_by.push(matched_by);
+            }
+        }
+        None => {
+            items_by_id.insert(
+                user_id.clone(),
+                AdminUserSelectionItem {
+                    user_id,
+                    username,
+                    email,
+                    role,
+                    is_active,
+                    matched_by: vec![matched_by],
+                },
+            );
+        }
+    }
 }
 
 fn normalize_selection_filters(
@@ -401,6 +525,10 @@ fn normalize_selection_filters(
         search,
         role,
         is_active: filters.is_active,
+        group_id: filters
+            .group_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
     }))
 }
 

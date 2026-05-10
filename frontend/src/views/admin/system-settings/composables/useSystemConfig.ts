@@ -19,6 +19,8 @@ export interface SystemConfig {
   auto_delete_expired_keys: boolean
   // 格式转换
   enable_format_conversion: boolean
+  // 同步生图心跳
+  enable_openai_image_sync_heartbeat: boolean
   // 请求记录
   request_record_level: string
   max_request_body_size: number
@@ -58,6 +60,8 @@ const CONFIG_KEYS = [
   'auto_delete_expired_keys',
   // 格式转换
   'enable_format_conversion',
+  // 同步生图心跳
+  'enable_openai_image_sync_heartbeat',
   // 请求记录
   'request_record_level',
   'max_request_body_size',
@@ -98,6 +102,8 @@ function createDefaultConfig(): SystemConfig {
     auto_delete_expired_keys: false,
     // 格式转换
     enable_format_conversion: false,
+    // 同步生图心跳
+    enable_openai_image_sync_heartbeat: false,
     // 请求记录
     request_record_level: 'basic',
     max_request_body_size: 1048576,
@@ -160,7 +166,8 @@ export function useSystemConfig() {
       systemConfig.value.enable_registration !== originalConfig.value.enable_registration ||
       systemConfig.value.password_policy_level !== originalConfig.value.password_policy_level ||
       systemConfig.value.auto_delete_expired_keys !== originalConfig.value.auto_delete_expired_keys ||
-      systemConfig.value.enable_format_conversion !== originalConfig.value.enable_format_conversion
+      systemConfig.value.enable_format_conversion !== originalConfig.value.enable_format_conversion ||
+      systemConfig.value.enable_openai_image_sync_heartbeat !== originalConfig.value.enable_openai_image_sync_heartbeat
     )
   })
 
@@ -340,6 +347,11 @@ export function useSystemConfig() {
           value: systemConfig.value.enable_format_conversion,
           description: '全局格式转换开关：开启时强制允许所有提供商的格式转换',
         },
+        {
+          key: 'enable_openai_image_sync_heartbeat',
+          value: systemConfig.value.enable_openai_image_sync_heartbeat,
+          description: '同步生图心跳开关：开启后外层 HTTP 状态固定为 200，上游失败写入响应体',
+        },
       ]
 
       await Promise.all(
@@ -356,6 +368,8 @@ export function useSystemConfig() {
           systemConfig.value.auto_delete_expired_keys
         originalConfig.value.enable_format_conversion =
           systemConfig.value.enable_format_conversion
+        originalConfig.value.enable_openai_image_sync_heartbeat =
+          systemConfig.value.enable_openai_image_sync_heartbeat
       }
       success('基础配置已保存')
     } catch (err) {

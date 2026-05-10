@@ -369,6 +369,10 @@ pub fn build_admin_monitoring_trace_request_candidate_payload_with_key_accounts(
         "latency_ms": candidate.latency_ms,
         "concurrent_requests": candidate.concurrent_requests,
         "ranking": build_admin_monitoring_trace_candidate_ranking(candidate.extra_data.as_ref()),
+        "image_progress": candidate.extra_data.as_ref()
+            .and_then(|value| value.get("image_progress"))
+            .cloned()
+            .unwrap_or(Value::Null),
         "extra_data": build_admin_monitoring_trace_candidate_extra_data(candidate.extra_data.as_ref(), usage),
         "created_at": unix_ms_to_rfc3339(candidate.created_at_unix_ms),
         "started_at": candidate.started_at_unix_ms.and_then(unix_ms_to_rfc3339),

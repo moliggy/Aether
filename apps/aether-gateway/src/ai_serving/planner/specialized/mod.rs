@@ -18,6 +18,7 @@ pub(crate) use self::image::{
     build_local_image_sync_attempt_source_for_kind,
     build_local_image_sync_plan_and_reports_for_kind,
     maybe_build_stream_local_image_decision_payload, maybe_build_sync_local_image_decision_payload,
+    set_local_openai_image_execution_exhausted_diagnostic,
 };
 pub(crate) use self::video::{
     build_local_video_sync_attempt_source_for_kind,

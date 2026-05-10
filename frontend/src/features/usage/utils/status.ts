@@ -7,6 +7,9 @@ type RequestStatusLike = RequestStatus | string | null | undefined
 type UsageFailureSignal = {
   status_code?: number | null
   error_message?: string | null
+  image_progress?: {
+    phase?: string | null
+  } | null
 }
 
 type UsageDisplayStatusRecord = UsageFailureSignal & {
@@ -19,6 +22,19 @@ function hasLegacyFailureSignal(
 ): boolean {
   return (typeof record.status_code === 'number' && record.status_code >= 400) ||
     (typeof record.error_message === 'string' && record.error_message.trim().length > 0)
+}
+
+function hasImageProgressFailureSignal(
+  record: UsageFailureSignal
+): boolean {
+  return typeof record.image_progress?.phase === 'string' &&
+    record.image_progress.phase.trim().toLowerCase() === 'failed'
+}
+
+function hasAnyFailureSignal(
+  record: UsageFailureSignal
+): boolean {
+  return hasLegacyFailureSignal(record) || hasImageProgressFailureSignal(record)
 }
 
 export function hasUsageFallback(
@@ -160,13 +176,11 @@ function hasTerminalSuccessStatusCode(
     record.status_code < 300
 }
 
-export function isUsageRecordFailed(
-  record: Pick<UsageRecord, 'status' | 'status_code' | 'error_message'>
-): boolean {
+export function isUsageRecordFailed(record: UsageFailureSignal & Pick<UsageRecord, 'status'>): boolean {
   const status = typeof record.status === 'string' ? record.status.trim().toLowerCase() : ''
   if (status) {
     if (status === 'pending' || status === 'streaming') {
-      return !hasTerminalSuccessStatusCode(record) && hasLegacyFailureSignal(record)
+      return !hasTerminalSuccessStatusCode(record) && hasAnyFailureSignal(record)
     }
     if (status === 'cancelled') {
       return false
@@ -184,12 +198,10 @@ export function isUsageRecordFailed(
   if (status) {
     return status === 'failed'
   }
-  return hasLegacyFailureSignal(record)
+  return hasAnyFailureSignal(record)
 }
 
-export function isUsageRecordSuccessful(
-  record: Pick<UsageRecord, 'status' | 'status_code' | 'error_message'>
-): boolean {
+export function isUsageRecordSuccessful(record: UsageFailureSignal & Pick<UsageRecord, 'status'>): boolean {
   const status = typeof record.status === 'string' ? record.status.trim().toLowerCase() : ''
   if (status) {
     if (status === 'completed') {
@@ -203,7 +215,7 @@ export function isUsageRecordSuccessful(
   if (hasTerminalSuccessStatusCode(record)) {
     return true
   }
-  return !hasLegacyFailureSignal(record)
+  return !hasAnyFailureSignal(record)
 }
 
 export function normalizeRequestStatus(status: RequestStatusLike): RequestStatus | undefined {
@@ -224,13 +236,13 @@ export function resolveDisplayRequestStatus(record: UsageDisplayStatusRecord): R
   const status = normalizeRequestStatus(record.status)
   if ((status === 'pending' || status === 'streaming') &&
     !hasTerminalSuccessStatusCode(record) &&
-    hasLegacyFailureSignal(record)) {
+    hasAnyFailureSignal(record)) {
     return 'failed'
   }
   if (status === 'streaming' && record.first_byte_time_ms == null) {
     return 'pending'
   }
-  return status
+  return status ?? (hasAnyFailureSignal(record) ? 'failed' : undefined)
 }
 
 export function mapRequestStatusToTimelineStatus(

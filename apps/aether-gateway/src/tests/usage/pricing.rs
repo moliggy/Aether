@@ -1,13 +1,14 @@
 use super::{
     any, build_router_with_state, build_state_with_execution_runtime_override,
-    encrypt_python_fernet_plaintext, hash_api_key, json, start_server, Arc, Body, GatewayDataState,
-    HeaderValue, InMemoryAuthApiKeySnapshotRepository,
-    InMemoryMinimalCandidateSelectionReadRepository, InMemoryProviderCatalogReadRepository,
-    InMemoryRequestCandidateRepository, InMemoryUsageReadRepository, Json, Request,
-    RequestCandidateReadRepository, RequestCandidateStatus, Response, Router, StatusCode,
-    StoredAuthApiKeySnapshot, StoredMinimalCandidateSelectionRow, StoredProviderCatalogEndpoint,
-    StoredProviderCatalogKey, StoredProviderCatalogProvider, StoredProviderModelMapping,
-    UsageReadRepository, UsageRuntimeConfig, DEVELOPMENT_ENCRYPTION_KEY, TRACE_ID_HEADER,
+    encrypt_python_fernet_plaintext, hash_api_key, json, start_server,
+    strip_sse_keepalive_comments, Arc, Body, GatewayDataState, HeaderValue,
+    InMemoryAuthApiKeySnapshotRepository, InMemoryMinimalCandidateSelectionReadRepository,
+    InMemoryProviderCatalogReadRepository, InMemoryRequestCandidateRepository,
+    InMemoryUsageReadRepository, Json, Request, RequestCandidateReadRepository,
+    RequestCandidateStatus, Response, Router, StatusCode, StoredAuthApiKeySnapshot,
+    StoredMinimalCandidateSelectionRow, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
+    StoredProviderCatalogProvider, StoredProviderModelMapping, UsageReadRepository,
+    UsageRuntimeConfig, DEVELOPMENT_ENCRYPTION_KEY, TRACE_ID_HEADER,
 };
 use aether_data::repository::billing::InMemoryBillingReadRepository;
 use aether_data::repository::wallet::{InMemoryWalletRepository, StoredWalletSnapshot};
@@ -939,7 +940,7 @@ async fn gateway_records_openai_stream_usage_and_pricing_with_cache_tokens_impl(
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response.text().await.expect("stream body should read"),
+        strip_sse_keepalive_comments(&response.text().await.expect("stream body should read")),
         stream_body.concat()
     );
 
@@ -1132,7 +1133,7 @@ async fn gateway_records_claude_stream_usage_and_pricing_with_cache_breakdown_im
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response.text().await.expect("stream body should read"),
+        strip_sse_keepalive_comments(&response.text().await.expect("stream body should read")),
         stream_body.concat()
     );
 
@@ -1310,7 +1311,7 @@ async fn gateway_records_gemini_stream_usage_and_pricing_with_cache_read_tokens_
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response.text().await.expect("stream body should read"),
+        strip_sse_keepalive_comments(&response.text().await.expect("stream body should read")),
         stream_body.concat()
     );
 

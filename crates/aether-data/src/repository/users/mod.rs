@@ -9,7 +9,8 @@ pub use mysql::MysqlUserReadRepository;
 pub use postgres::SqlxUserReadRepository;
 pub use sqlite::SqliteUserReadRepository;
 pub use types::{
-    StoredUserAuthRecord, StoredUserExportRow, StoredUserOAuthLinkSummary,
-    StoredUserPreferenceRecord, StoredUserSessionRecord, StoredUserSummary, UserExportListQuery,
-    UserExportSummary, UserReadRepository,
+    normalize_user_group_name, StoredUserAuthRecord, StoredUserExportRow, StoredUserGroup,
+    StoredUserGroupMember, StoredUserGroupMembership, StoredUserOAuthLinkSummary,
+    StoredUserPreferenceRecord, StoredUserSessionRecord, StoredUserSummary, UpsertUserGroupRecord,
+    UserExportListQuery, UserExportSummary, UserReadRepository,
 };

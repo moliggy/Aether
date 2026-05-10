@@ -1239,8 +1239,11 @@ CREATE TABLE IF NOT EXISTS public.users (
     password_hash character varying(255),
     role public.userrole DEFAULT 'user'::public.userrole NOT NULL,
     allowed_providers json,
+    allowed_providers_mode text DEFAULT 'unrestricted'::text NOT NULL,
     allowed_api_formats json,
+    allowed_api_formats_mode text DEFAULT 'unrestricted'::text NOT NULL,
     allowed_models json,
+    allowed_models_mode text DEFAULT 'unrestricted'::text NOT NULL,
     model_capability_settings json,
     is_active boolean DEFAULT true NOT NULL,
     is_deleted boolean DEFAULT false NOT NULL,
@@ -1252,7 +1255,44 @@ CREATE TABLE IF NOT EXISTS public.users (
     ldap_username character varying(255),
     email_verified boolean NOT NULL,
     rate_limit integer,
+    rate_limit_mode text DEFAULT 'system'::text NOT NULL,
     metadata json
+);
+
+
+
+--
+-- Name: user_groups; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE IF NOT EXISTS public.user_groups (
+    id character varying(36) NOT NULL,
+    name character varying(100) NOT NULL,
+    normalized_name character varying(100) NOT NULL,
+    description text,
+    priority integer DEFAULT 0 NOT NULL,
+    allowed_providers json,
+    allowed_providers_mode text DEFAULT 'inherit'::text NOT NULL,
+    allowed_api_formats json,
+    allowed_api_formats_mode text DEFAULT 'inherit'::text NOT NULL,
+    allowed_models json,
+    allowed_models_mode text DEFAULT 'inherit'::text NOT NULL,
+    rate_limit integer,
+    rate_limit_mode text DEFAULT 'inherit'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+
+--
+-- Name: user_group_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE IF NOT EXISTS public.user_group_members (
+    group_id character varying(36) NOT NULL,
+    user_id character varying(36) NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 

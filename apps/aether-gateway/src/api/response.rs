@@ -271,6 +271,8 @@ pub(crate) fn build_local_auth_rejection_response(
     control_decision: Option<&GatewayControlDecision>,
     rejection: &GatewayLocalAuthRejection,
 ) -> Result<Response<Body>, GatewayError> {
+    const ACCESS_POLICY_SUBJECT: &str = "当前用户、用户组或密钥的访问控制策略";
+
     match rejection {
         GatewayLocalAuthRejection::InvalidApiKey => build_local_http_error_response(
             trace_id,
@@ -298,7 +300,7 @@ pub(crate) fn build_local_auth_rejection_response(
                 trace_id,
                 control_decision,
                 StatusCode::FORBIDDEN,
-                &format!("当前密钥不允许访问 {provider} 提供商"),
+                &format!("{ACCESS_POLICY_SUBJECT}不允许访问 {provider} 提供商"),
             )
         }
         GatewayLocalAuthRejection::ApiFormatNotAllowed { api_format } => {
@@ -306,14 +308,14 @@ pub(crate) fn build_local_auth_rejection_response(
                 trace_id,
                 control_decision,
                 StatusCode::FORBIDDEN,
-                &format!("当前密钥不允许访问 {api_format} 格式"),
+                &format!("{ACCESS_POLICY_SUBJECT}不允许访问 {api_format} 格式"),
             )
         }
         GatewayLocalAuthRejection::ModelNotAllowed { model } => build_local_http_error_response(
             trace_id,
             control_decision,
             StatusCode::FORBIDDEN,
-            &format!("当前密钥不允许访问模型 {model}"),
+            &format!("{ACCESS_POLICY_SUBJECT}不允许访问模型 {model}"),
         ),
     }
 }

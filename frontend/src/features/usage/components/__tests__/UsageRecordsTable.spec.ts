@@ -233,6 +233,20 @@ describe('UsageRecordsTable', () => {
     expect(root.querySelector('[data-active-latency-state="waiting-first-byte"]')).toBeNull()
   })
 
+  it('shows failed when Codex image progress fails before the usage record finalizes', () => {
+    const root = mountUsageRecordsTable([buildRecord({
+      status: 'pending',
+      response_time_ms: null,
+      first_byte_time_ms: null,
+      image_progress: {
+        phase: 'failed',
+      },
+    })])
+
+    expect(root.textContent).toContain('失败')
+    expect(root.textContent).not.toContain('等待中')
+  })
+
   it('renders output TPS in the non-admin usage table', () => {
     const root = mountUsageRecordsTable([buildRecord()], { isAdmin: false })
 

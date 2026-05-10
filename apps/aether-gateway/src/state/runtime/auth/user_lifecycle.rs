@@ -1,8 +1,80 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::constants::{BUILTIN_DEFAULT_USER_GROUP_ID, DEFAULT_USER_GROUP_CONFIG_KEY};
 use crate::{AppState, GatewayError};
 
 impl AppState {
+    pub(crate) async fn assign_default_group_to_self_registered_user(
+        &self,
+        user_id: &str,
+    ) -> Result<(), GatewayError> {
+        let group_id = self.effective_default_user_group_id().await?;
+        let Some(group_id) = group_id else {
+            return Ok(());
+        };
+        if !self.add_user_to_group(&group_id, user_id).await? {
+            return Err(GatewayError::Internal(format!(
+                "failed to add user {user_id} to default group {group_id}"
+            )));
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn configured_default_user_group_id(
+        &self,
+    ) -> Result<Option<String>, GatewayError> {
+        Ok(self
+            .read_system_config_json_value(DEFAULT_USER_GROUP_CONFIG_KEY)
+            .await?
+            .and_then(|value| value.as_str().map(str::to_string))
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()))
+    }
+
+    pub(crate) async fn effective_default_user_group_id(
+        &self,
+    ) -> Result<Option<String>, GatewayError> {
+        if let Some(group_id) = self.configured_default_user_group_id().await? {
+            if self.find_user_group_by_id(&group_id).await?.is_none() {
+                return Err(GatewayError::Internal(format!(
+                    "{DEFAULT_USER_GROUP_CONFIG_KEY} points to missing group: {group_id}"
+                )));
+            }
+            return Ok(Some(group_id));
+        }
+        if self
+            .find_user_group_by_id(BUILTIN_DEFAULT_USER_GROUP_ID)
+            .await?
+            .is_some()
+        {
+            return Ok(Some(BUILTIN_DEFAULT_USER_GROUP_ID.to_string()));
+        }
+        Ok(None)
+    }
+
+    pub(crate) async fn include_default_user_group_ids(
+        &self,
+        group_ids: &[String],
+    ) -> Result<Vec<String>, GatewayError> {
+        let mut group_ids = group_ids
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<BTreeSet<_>>();
+        if let Some(default_group_id) = self.effective_default_user_group_id().await? {
+            group_ids.insert(default_group_id);
+        }
+        Ok(group_ids.into_iter().collect())
+    }
+
+    pub(crate) async fn add_all_users_to_group(&self, group_id: &str) -> Result<(), GatewayError> {
+        for user in self.list_export_users().await? {
+            self.add_user_to_group(group_id, &user.id).await?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn resolve_auth_user_summaries_by_ids(
         &self,
         user_ids: &[String],
@@ -128,6 +200,126 @@ impl AppState {
         }
         self.data
             .find_user_auth_by_identifier(identifier)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn list_user_groups(
+        &self,
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.data
+            .list_user_groups()
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn find_user_group_by_id(
+        &self,
+        group_id: &str,
+    ) -> Result<Option<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.data
+            .find_user_group_by_id(group_id)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn list_user_groups_by_ids(
+        &self,
+        group_ids: &[String],
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.data
+            .list_user_groups_by_ids(group_ids)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn create_user_group(
+        &self,
+        record: aether_data::repository::users::UpsertUserGroupRecord,
+    ) -> Result<Option<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.data
+            .create_user_group(record)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn update_user_group(
+        &self,
+        group_id: &str,
+        record: aether_data::repository::users::UpsertUserGroupRecord,
+    ) -> Result<Option<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.data
+            .update_user_group(group_id, record)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn delete_user_group(&self, group_id: &str) -> Result<bool, GatewayError> {
+        self.data
+            .delete_user_group(group_id)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn list_user_group_members(
+        &self,
+        group_id: &str,
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroupMember>, GatewayError> {
+        self.data
+            .list_user_group_members(group_id)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn replace_user_group_members(
+        &self,
+        group_id: &str,
+        user_ids: &[String],
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroupMember>, GatewayError> {
+        self.data
+            .replace_user_group_members(group_id, user_ids)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn list_user_groups_for_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.data
+            .list_user_groups_for_user(user_id)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn list_user_group_memberships_by_user_ids(
+        &self,
+        user_ids: &[String],
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroupMembership>, GatewayError> {
+        self.data
+            .list_user_group_memberships_by_user_ids(user_ids)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn replace_user_groups_for_user(
+        &self,
+        user_id: &str,
+        group_ids: &[String],
+    ) -> Result<Vec<aether_data::repository::users::StoredUserGroup>, GatewayError> {
+        self.data
+            .replace_user_groups_for_user(user_id, group_ids)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn add_user_to_group(
+        &self,
+        group_id: &str,
+        user_id: &str,
+    ) -> Result<bool, GatewayError> {
+        self.data
+            .add_user_to_group(group_id, user_id)
             .await
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
@@ -289,6 +481,12 @@ impl AppState {
                 Some(now),
                 None,
             )
+            .map_err(|err| GatewayError::Internal(err.to_string()))?
+            .with_policy_modes(
+                "inherit".to_string(),
+                "inherit".to_string(),
+                "inherit".to_string(),
+            )
             .map_err(|err| GatewayError::Internal(err.to_string()))?;
             store
                 .lock()
@@ -418,6 +616,45 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
+    pub(crate) async fn update_local_auth_user_policy_modes(
+        &self,
+        user_id: &str,
+        allowed_providers_mode: Option<String>,
+        allowed_api_formats_mode: Option<String>,
+        allowed_models_mode: Option<String>,
+        rate_limit_mode: Option<String>,
+    ) -> Result<Option<aether_data::repository::users::StoredUserAuthRecord>, GatewayError> {
+        #[cfg(test)]
+        if let Some(store) = self.auth_user_store.as_ref() {
+            let mut guard = store.lock().expect("auth user store should lock");
+            let Some(user) = guard.get_mut(user_id) else {
+                return Ok(None);
+            };
+            if let Some(mode) = allowed_providers_mode {
+                user.allowed_providers_mode = mode;
+            }
+            if let Some(mode) = allowed_api_formats_mode {
+                user.allowed_api_formats_mode = mode;
+            }
+            if let Some(mode) = allowed_models_mode {
+                user.allowed_models_mode = mode;
+            }
+            let _ = rate_limit_mode;
+            return Ok(Some(user.clone()));
+        }
+
+        self.data
+            .update_local_auth_user_policy_modes(
+                user_id,
+                allowed_providers_mode,
+                allowed_api_formats_mode,
+                allowed_models_mode,
+                rate_limit_mode,
+            )
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
     pub(crate) async fn touch_auth_user_last_login(
         &self,
         user_id: &str,
@@ -507,6 +744,12 @@ impl AppState {
                 false,
                 Some(now),
                 None,
+            )
+            .map_err(|err| GatewayError::Internal(err.to_string()))?
+            .with_policy_modes(
+                "inherit".to_string(),
+                "inherit".to_string(),
+                "inherit".to_string(),
             )
             .map_err(|err| GatewayError::Internal(err.to_string()))?;
             let gift_balance = if unlimited {

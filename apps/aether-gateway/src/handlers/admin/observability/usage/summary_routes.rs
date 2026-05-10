@@ -194,6 +194,57 @@ async fn resolve_admin_usage_attempt_flags_by_usage_id(
         .collect())
 }
 
+async fn resolve_admin_usage_image_progress_by_request_id(
+    state: &AdminAppState<'_>,
+    items: &[StoredRequestUsageAudit],
+) -> Result<BTreeMap<String, serde_json::Value>, GatewayError> {
+    if !state.has_request_candidate_data_reader() || items.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let request_ids = items
+        .iter()
+        .map(|item| item.request_id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut progress_by_request_id = BTreeMap::new();
+    for request_id in request_ids {
+        let candidates = state
+            .app()
+            .read_request_candidates_by_request_id(&request_id)
+            .await?;
+        if let Some(progress) = latest_admin_usage_image_progress(&candidates) {
+            progress_by_request_id.insert(request_id, progress);
+        }
+    }
+    Ok(progress_by_request_id)
+}
+
+fn latest_admin_usage_image_progress(
+    candidates: &[StoredRequestCandidate],
+) -> Option<serde_json::Value> {
+    candidates
+        .iter()
+        .filter_map(|candidate| {
+            let progress = candidate
+                .extra_data
+                .as_ref()
+                .and_then(|value| value.get("image_progress"))?
+                .clone();
+            Some((
+                candidate
+                    .started_at_unix_ms
+                    .unwrap_or(candidate.created_at_unix_ms),
+                candidate.candidate_index,
+                candidate.retry_index,
+                progress,
+            ))
+        })
+        .max_by_key(|(started_at, candidate_index, retry_index, _)| {
+            (*started_at, *candidate_index, *retry_index)
+        })
+        .map(|(_, _, _, progress)| progress)
+}
+
 fn admin_usage_matches_attempt_status(
     item: &StoredRequestUsageAudit,
     status: &str,
@@ -490,6 +541,7 @@ pub(super) async fn maybe_build_local_admin_usage_summary_response(
                         &BTreeMap::new(),
                         state.has_auth_api_key_data_reader(),
                         &BTreeMap::new(),
+                        &BTreeMap::new(),
                     )));
                 };
                 state
@@ -513,12 +565,15 @@ pub(super) async fn maybe_build_local_admin_usage_summary_response(
             };
             let api_key_names = admin_usage_api_key_names(state, &items).await?;
             let provider_key_names = admin_usage_provider_key_names(state, &items).await?;
+            let image_progress_by_request_id =
+                resolve_admin_usage_image_progress_by_request_id(state, &items).await?;
 
             return Ok(Some(build_admin_usage_active_requests_response(
                 &items,
                 &api_key_names,
                 state.has_auth_api_key_data_reader(),
                 &provider_key_names,
+                &image_progress_by_request_id,
             )));
         }
         Some("records")

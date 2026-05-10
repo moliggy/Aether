@@ -211,6 +211,13 @@ pub(crate) async fn resolve_identity_oauth_login_user(
             return Err(IdentityOAuthAccountError::Storage(format!("{err:?}")));
         }
     }
+    if let Err(err) = state
+        .assign_default_group_to_self_registered_user(&user.id)
+        .await
+    {
+        let _ = state.delete_local_auth_user(&user.id).await;
+        return Err(IdentityOAuthAccountError::Storage(format!("{err:?}")));
+    }
     if let Err(err) = upsert_oauth_link(state, &user.id, claims, now).await {
         let _ = state.delete_local_auth_user(&user.id).await;
         return Err(err);

@@ -158,6 +158,19 @@ where
         last_plan: aether_contracts::ExecutionPlan,
         last_report_context: Option<serde_json::Value>,
     ) -> Result<Self::Exhaustion, Self::Error> {
+        warn!(
+            event_name = "candidate_loop_exhausted",
+            log_type = "ops",
+            trace_id = %self.trace_id,
+            plan_kind = self.plan_kind,
+            request_id = %short_request_id(last_plan.request_id.as_str()),
+            candidate_id = ?last_plan.candidate_id,
+            provider_name = last_plan.provider_name.as_deref().unwrap_or("-"),
+            endpoint_id = %last_plan.endpoint_id,
+            key_id = %last_plan.key_id,
+            model_name = last_plan.model_name.as_deref().unwrap_or("-"),
+            "candidate loop exhausted local sync candidates"
+        );
         Ok(
             build_local_execution_exhaustion(self.state, &last_plan, last_report_context.as_ref())
                 .await,

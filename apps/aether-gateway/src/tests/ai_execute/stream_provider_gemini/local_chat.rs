@@ -1,7 +1,7 @@
 use super::{
     any, build_router_with_state, build_state_with_execution_runtime_override,
-    encrypt_python_fernet_plaintext, json, start_server, to_bytes, Arc, Body, Bytes, Digest,
-    HeaderName, HeaderValue, InMemoryAuthApiKeySnapshotRepository,
+    encrypt_python_fernet_plaintext, json, start_server, strip_sse_keepalive_comments, to_bytes,
+    Arc, Body, Bytes, Digest, HeaderName, HeaderValue, InMemoryAuthApiKeySnapshotRepository,
     InMemoryMinimalCandidateSelectionReadRepository, InMemoryProviderCatalogReadRepository,
     InMemoryRequestCandidateRepository, Json, Mutex, Request, RequestCandidateReadRepository,
     RequestCandidateStatus, Response, Router, Sha256, StatusCode, StoredAuthApiKeySnapshot,
@@ -404,7 +404,7 @@ async fn gateway_executes_gemini_chat_stream_via_local_decision_gate_with_local_
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response.text().await.expect("body should read"),
+        strip_sse_keepalive_comments(&response.text().await.expect("body should read")),
         "data: {\"candidates\":[]}\n\n"
     );
 

@@ -45,6 +45,7 @@ pub const GEMINI_CHAT_SYNC_ERROR_REPORT_KIND: &str = "gemini_chat_sync_error";
 pub const OPENAI_RESPONSES_SYNC_ERROR_REPORT_KIND: &str = "openai_responses_sync_error";
 pub const OPENAI_RESPONSES_COMPACT_SYNC_ERROR_REPORT_KIND: &str =
     "openai_responses_compact_sync_error";
+pub const OPENAI_IMAGE_SYNC_ERROR_REPORT_KIND: &str = "openai_image_sync_error";
 pub const CLAUDE_CLI_SYNC_ERROR_REPORT_KIND: &str = "claude_cli_sync_error";
 pub const GEMINI_CLI_SYNC_ERROR_REPORT_KIND: &str = "gemini_cli_sync_error";
 
@@ -95,6 +96,7 @@ pub fn core_error_background_report_kind(report_kind: &str) -> Option<&'static s
         LEGACY_OPENAI_COMPACT_SYNC_FINALIZE_REPORT_KIND => {
             Some(OPENAI_RESPONSES_COMPACT_SYNC_ERROR_REPORT_KIND)
         }
+        OPENAI_IMAGE_SYNC_FINALIZE_REPORT_KIND => Some(OPENAI_IMAGE_SYNC_ERROR_REPORT_KIND),
         CLAUDE_CLI_SYNC_FINALIZE_REPORT_KIND => Some(CLAUDE_CLI_SYNC_ERROR_REPORT_KIND),
         GEMINI_CLI_SYNC_FINALIZE_REPORT_KIND => Some(GEMINI_CLI_SYNC_ERROR_REPORT_KIND),
         _ => None,

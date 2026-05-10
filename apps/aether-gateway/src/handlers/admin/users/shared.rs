@@ -68,11 +68,21 @@ pub(super) struct AdminCreateUserRequest {
     #[serde(default)]
     pub(super) allowed_providers: Option<Vec<String>>,
     #[serde(default)]
+    pub(super) allowed_providers_mode: Option<String>,
+    #[serde(default)]
     pub(super) allowed_api_formats: Option<Vec<String>>,
+    #[serde(default)]
+    pub(super) allowed_api_formats_mode: Option<String>,
     #[serde(default)]
     pub(super) allowed_models: Option<Vec<String>>,
     #[serde(default)]
+    pub(super) allowed_models_mode: Option<String>,
+    #[serde(default)]
     pub(super) rate_limit: Option<i32>,
+    #[serde(default)]
+    pub(super) rate_limit_mode: Option<String>,
+    #[serde(default)]
+    pub(super) group_ids: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -90,11 +100,21 @@ pub(super) struct AdminUpdateUserRequest {
     #[serde(default)]
     pub(super) allowed_providers: Option<Vec<String>>,
     #[serde(default)]
+    pub(super) allowed_providers_mode: Option<String>,
+    #[serde(default)]
     pub(super) allowed_api_formats: Option<Vec<String>>,
+    #[serde(default)]
+    pub(super) allowed_api_formats_mode: Option<String>,
     #[serde(default)]
     pub(super) allowed_models: Option<Vec<String>>,
     #[serde(default)]
+    pub(super) allowed_models_mode: Option<String>,
+    #[serde(default)]
     pub(super) rate_limit: Option<i32>,
+    #[serde(default)]
+    pub(super) rate_limit_mode: Option<String>,
+    #[serde(default)]
+    pub(super) group_ids: Vec<String>,
     #[serde(default)]
     pub(super) is_active: Option<bool>,
 }
@@ -261,6 +281,48 @@ pub(crate) fn normalize_admin_user_api_formats(
         }
     }
     Ok(Some(normalized))
+}
+
+pub(crate) fn normalize_admin_list_policy_mode(value: &str) -> Result<String, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "inherit" | "unrestricted" | "specific" | "deny_all" => {
+            Ok(value.trim().to_ascii_lowercase())
+        }
+        _ => Err("权限列表模式不合法".to_string()),
+    }
+}
+
+pub(crate) fn normalize_admin_rate_limit_policy_mode(value: &str) -> Result<String, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "inherit" | "system" | "custom" => Ok(value.trim().to_ascii_lowercase()),
+        _ => Err("限速模式不合法".to_string()),
+    }
+}
+
+pub(super) fn legacy_admin_list_policy_mode(values: &Option<Vec<String>>) -> String {
+    if values.is_some() {
+        "specific".to_string()
+    } else {
+        "unrestricted".to_string()
+    }
+}
+
+pub(super) fn legacy_admin_rate_limit_policy_mode(value: Option<i32>) -> String {
+    if value.is_some() {
+        "custom".to_string()
+    } else {
+        "system".to_string()
+    }
+}
+
+pub(super) fn normalize_admin_user_group_ids(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 pub(super) fn admin_default_user_initial_gift(value: Option<&serde_json::Value>) -> f64 {

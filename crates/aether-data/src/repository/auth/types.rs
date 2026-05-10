@@ -187,7 +187,7 @@ impl ResolvedAuthApiKeySnapshot {
         }
 
         non_empty_allowed_list(self.api_key_allowed_providers.as_deref())
-            .or_else(|| non_empty_allowed_list(self.user_allowed_providers.as_deref()))
+            .or(self.user_allowed_providers.as_deref())
     }
 
     pub fn effective_allowed_api_formats(&self) -> Option<&[String]> {
@@ -196,7 +196,7 @@ impl ResolvedAuthApiKeySnapshot {
         }
 
         non_empty_allowed_list(self.api_key_allowed_api_formats.as_deref())
-            .or_else(|| non_empty_allowed_list(self.user_allowed_api_formats.as_deref()))
+            .or(self.user_allowed_api_formats.as_deref())
     }
 
     pub fn effective_allowed_models(&self) -> Option<&[String]> {
@@ -205,7 +205,20 @@ impl ResolvedAuthApiKeySnapshot {
         }
 
         non_empty_allowed_list(self.api_key_allowed_models.as_deref())
-            .or_else(|| non_empty_allowed_list(self.user_allowed_models.as_deref()))
+            .or(self.user_allowed_models.as_deref())
+    }
+
+    pub fn apply_user_policy(
+        &mut self,
+        allowed_providers: Option<Vec<String>>,
+        allowed_api_formats: Option<Vec<String>>,
+        allowed_models: Option<Vec<String>>,
+        rate_limit: Option<i32>,
+    ) {
+        self.user_allowed_providers = allowed_providers;
+        self.user_allowed_api_formats = allowed_api_formats;
+        self.user_allowed_models = allowed_models;
+        self.user_rate_limit = rate_limit;
     }
 }
 

@@ -9,6 +9,19 @@ export interface CandidateRankingMetadata {
   demoted_by?: string
 }
 
+export interface ImageProgress {
+  phase?: 'upstream_connecting' | 'upstream_streaming' | 'upstream_completed' | 'failed' | string
+  upstream_ttfb_ms?: number | null
+  upstream_sse_frame_count?: number | null
+  last_upstream_event?: string | null
+  last_upstream_frame_at_unix_ms?: number | null
+  partial_image_count?: number | null
+  last_client_visible_event?: string | null
+  downstream_heartbeat_count?: number | null
+  last_downstream_heartbeat_at_unix_ms?: number | null
+  downstream_heartbeat_interval_ms?: number | null
+}
+
 export interface CandidateResponseBoundary {
   source?: string
   status_code?: number | null
@@ -55,8 +68,10 @@ export interface CandidateRecord {
   latency_ms?: number
   concurrent_requests?: number
   ranking?: CandidateRankingMetadata | null
+  image_progress?: ImageProgress | null
   extra_data?: Record<string, unknown> & {
     upstream_response?: CandidateResponseBoundary
+    image_progress?: ImageProgress | null
   }
   created_at: string
   started_at?: string

@@ -2,7 +2,7 @@
   <Dialog
     :model-value="open"
     title="用户批量操作"
-    description="按当前选择批量调整用户状态、角色、访问控制和额度"
+    description="按当前选择批量调整用户状态、角色和额度"
     size="2xl"
     persistent
     @update:model-value="handleDialogUpdate"
@@ -19,7 +19,10 @@
               {{ selectAllFiltered ? '目标为当前筛选条件匹配的全部用户，执行前后端会重新解析。' : '目标为当前已勾选的用户，重复 ID 会自动去重。' }}
             </p>
           </div>
-          <Badge variant="secondary" class="shrink-0">
+          <Badge
+            variant="secondary"
+            class="shrink-0"
+          >
             {{ selectAllFiltered ? '全选筛选结果' : '手动选择' }}
           </Badge>
         </div>
@@ -52,6 +55,22 @@
       </div>
 
       <div class="space-y-2.5">
+        <div class="grid gap-2 rounded-xl border border-border/70 bg-muted/20 p-3 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-start">
+          <div>
+            <Label class="text-sm font-medium">按分组选择</Label>
+            <p class="mt-1 text-[11px] text-muted-foreground">
+              可与直接用户或筛选条件混合
+            </p>
+          </div>
+          <MultiSelect
+            v-model="selectedGroupIds"
+            :options="groupOptions"
+            :search-threshold="0"
+            placeholder="选择一个或多个分组"
+            empty-text="暂无用户分组"
+          />
+        </div>
+
         <div class="flex items-center justify-between gap-3">
           <Label class="text-sm font-medium">选择批量动作</Label>
           <span class="text-[11px] text-muted-foreground">只会提交当前动作对应的字段</span>
@@ -66,7 +85,10 @@
           >
             <span class="flex items-center gap-2">
               <span :class="actionIconClass(action.value)">
-                <component :is="action.icon" class="h-4 w-4" />
+                <component
+                  :is="action.icon"
+                  class="h-4 w-4"
+                />
               </span>
               <span class="font-medium text-foreground">{{ action.label }}</span>
             </span>
@@ -86,7 +108,9 @@
             <UserCog class="h-4 w-4" />
           </div>
           <div class="min-w-0 space-y-1">
-            <h4 class="text-sm font-semibold text-foreground">批量修改用户角色</h4>
+            <h4 class="text-sm font-semibold text-foreground">
+              批量修改用户角色
+            </h4>
             <p class="text-xs leading-relaxed text-muted-foreground">
               将所选用户统一调整为同一个角色。管理员角色拥有后台管理权限，请确认选择范围。
             </p>
@@ -96,15 +120,21 @@
         <div class="grid gap-3 rounded-xl border border-border/70 bg-muted/25 p-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-center">
           <div>
             <Label class="text-sm font-medium">目标角色</Label>
-            <p class="mt-1 text-[11px] text-muted-foreground">对所有目标用户生效</p>
+            <p class="mt-1 text-[11px] text-muted-foreground">
+              对所有目标用户生效
+            </p>
           </div>
           <Select v-model="targetRole">
             <SelectTrigger class="h-10 w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="user">普通用户</SelectItem>
-              <SelectItem value="admin">管理员</SelectItem>
+              <SelectItem value="user">
+                普通用户
+              </SelectItem>
+              <SelectItem value="admin">
+                管理员
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -123,151 +153,39 @@
             <ShieldCheck class="h-4 w-4" />
           </div>
           <div class="min-w-0 space-y-1">
-            <h4 class="text-sm font-semibold text-foreground">批量设置访问控制与额度</h4>
+            <h4 class="text-sm font-semibold text-foreground">
+              批量设置额度
+            </h4>
             <p class="text-xs leading-relaxed text-muted-foreground">
-              每个字段都可独立选择“不修改 / 不限制 / 指定列表”。指定列表为空表示全部禁用。
+              额度仍然属于用户账户属性；模型、端点、提供商和限速请通过用户组管理。
             </p>
           </div>
         </div>
 
-        <div class="grid gap-3">
-          <div class="rounded-xl border border-border/70 bg-muted/20 p-3">
-            <div class="grid gap-3 lg:grid-cols-[9rem_minmax(0,1fr)] lg:items-start">
-              <div>
-                <Label class="text-sm font-medium">允许的提供商</Label>
-                <p class="mt-1 text-[11px] text-muted-foreground">控制可使用的供应商</p>
-              </div>
-              <div class="grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
-                <Select v-model="providerMode">
-                  <SelectTrigger class="h-9">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="skip">不修改</SelectItem>
-                    <SelectItem value="unrestricted">不限制</SelectItem>
-                    <SelectItem value="specific">指定列表</SelectItem>
-                  </SelectContent>
-                </Select>
-                <MultiSelect
-                  v-model="allowedProviders"
-                  :options="providerOptions"
-                  :disabled="providerMode !== 'specific'"
-                  :search-threshold="0"
-                  placeholder="未选择时表示全部禁用"
-                  empty-text="暂无可用提供商"
-                />
-              </div>
+        <div class="rounded-xl border border-border/70 bg-muted/20 p-3">
+          <div class="space-y-2">
+            <div>
+              <Label class="text-sm font-medium">额度</Label>
+              <p class="mt-1 text-[11px] text-muted-foreground">
+                对所有目标用户生效
+              </p>
             </div>
-          </div>
-
-          <div class="rounded-xl border border-border/70 bg-muted/20 p-3">
-            <div class="grid gap-3 lg:grid-cols-[9rem_minmax(0,1fr)] lg:items-start">
-              <div>
-                <Label class="text-sm font-medium">允许的端点</Label>
-                <p class="mt-1 text-[11px] text-muted-foreground">控制 API 格式入口</p>
-              </div>
-              <div class="grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
-                <Select v-model="apiFormatMode">
-                  <SelectTrigger class="h-9">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="skip">不修改</SelectItem>
-                    <SelectItem value="unrestricted">不限制</SelectItem>
-                    <SelectItem value="specific">指定列表</SelectItem>
-                  </SelectContent>
-                </Select>
-                <MultiSelect
-                  v-model="allowedApiFormats"
-                  :options="apiFormatOptions"
-                  :disabled="apiFormatMode !== 'specific'"
-                  :search-threshold="0"
-                  placeholder="未选择时表示全部禁用"
-                  empty-text="暂无可用端点"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div class="rounded-xl border border-border/70 bg-muted/20 p-3">
-            <div class="grid gap-3 lg:grid-cols-[9rem_minmax(0,1fr)] lg:items-start">
-              <div>
-                <Label class="text-sm font-medium">允许的模型</Label>
-                <p class="mt-1 text-[11px] text-muted-foreground">控制模型白名单</p>
-              </div>
-              <div class="grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
-                <Select v-model="modelMode">
-                  <SelectTrigger class="h-9">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="skip">不修改</SelectItem>
-                    <SelectItem value="unrestricted">不限制</SelectItem>
-                    <SelectItem value="specific">指定列表</SelectItem>
-                  </SelectContent>
-                </Select>
-                <MultiSelect
-                  v-model="allowedModels"
-                  :options="modelOptions"
-                  :disabled="modelMode !== 'specific'"
-                  :search-threshold="0"
-                  placeholder="未选择时表示全部禁用"
-                  empty-text="暂无可用模型"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div class="grid gap-3 md:grid-cols-2">
-            <div class="rounded-xl border border-border/70 bg-muted/20 p-3">
-              <div class="space-y-2">
-                <div>
-                  <Label class="text-sm font-medium">速率限制</Label>
-                  <p class="mt-1 text-[11px] text-muted-foreground">请求/分钟，0 表示不限速</p>
-                </div>
-                <div class="grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)] md:grid-cols-1 xl:grid-cols-[9rem_minmax(0,1fr)]">
-                  <Select v-model="rateLimitMode">
-                    <SelectTrigger class="h-9">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="skip">不修改</SelectItem>
-                      <SelectItem value="inherit">跟随默认</SelectItem>
-                      <SelectItem value="custom">指定数值</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    :model-value="rateLimit ?? ''"
-                    type="number"
-                    min="0"
-                    max="10000"
-                    class="h-9"
-                    :disabled="rateLimitMode !== 'custom'"
-                    placeholder="0 = 不限速"
-                    @update:model-value="(value) => rateLimit = parseNumberInput(value, { min: 0, max: 10000 })"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div class="rounded-xl border border-border/70 bg-muted/20 p-3">
-              <div class="space-y-2">
-                <div>
-                  <Label class="text-sm font-medium">额度</Label>
-                  <p class="mt-1 text-[11px] text-muted-foreground">与单用户编辑保持一致</p>
-                </div>
-                <Select v-model="quotaMode">
-                  <SelectTrigger class="h-9 w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="skip">不修改</SelectItem>
-                    <SelectItem value="wallet">按钱包余额限制</SelectItem>
-                    <SelectItem value="unlimited">无限额度</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            <Select v-model="quotaMode">
+              <SelectTrigger class="h-9 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="skip">
+                  不修改
+                </SelectItem>
+                <SelectItem value="wallet">
+                  按钱包余额限制
+                </SelectItem>
+                <SelectItem value="unlimited">
+                  无限额度
+                </SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
       </div>
@@ -314,7 +232,6 @@ import {
   Dialog,
   Button,
   Badge,
-  Input,
   Label,
   Select,
   SelectTrigger,
@@ -326,9 +243,7 @@ import { MultiSelect } from '@/components/common'
 import { useUsersStore } from '@/stores/users'
 import { useToast } from '@/composables/useToast'
 import { parseApiError } from '@/utils/errorParser'
-import { parseNumberInput } from '@/utils/form'
 import { cn } from '@/lib/utils'
-import { useUserAccessControlOptions } from '@/features/users/composables/useUserAccessControlOptions'
 import type {
   UserBatchAccessControlPayload,
   UserBatchAction,
@@ -339,10 +254,9 @@ import type {
   UserBatchSelectionFilters,
   UserBatchSelectionItem,
   UserRole,
+  UserGroup,
 } from '@/api/users'
 
-type AccessFieldMode = 'skip' | 'unrestricted' | 'specific'
-type RateLimitMode = 'skip' | 'inherit' | 'custom'
 type QuotaMode = 'skip' | 'wallet' | 'unlimited'
 
 interface ActionOption {
@@ -358,6 +272,7 @@ const props = defineProps<{
   selectAllFiltered: boolean
   selectedCount: number
   filters: UserBatchSelectionFilters
+  groups: UserGroup[]
 }>()
 
 const emit = defineEmits<{
@@ -367,12 +282,6 @@ const emit = defineEmits<{
 
 const usersStore = useUsersStore()
 const { success, warning, error } = useToast()
-const {
-  providerOptions,
-  apiFormatOptions,
-  modelOptions,
-  loadAccessControlOptions,
-} = useUserAccessControlOptions()
 
 const actionOptions: ActionOption[] = [
   {
@@ -389,8 +298,8 @@ const actionOptions: ActionOption[] = [
   },
   {
     value: 'update_access_control',
-    label: '访问控制',
-    description: '提供商、端点、模型、限速和额度',
+    label: '额度',
+    description: '批量调整用户额度模式',
     icon: ShieldCheck,
   },
   {
@@ -403,23 +312,21 @@ const actionOptions: ActionOption[] = [
 
 const selectedAction = ref<UserBatchAction>('enable')
 const targetRole = ref<UserRole>('user')
-const providerMode = ref<AccessFieldMode>('skip')
-const apiFormatMode = ref<AccessFieldMode>('skip')
-const modelMode = ref<AccessFieldMode>('skip')
-const rateLimitMode = ref<RateLimitMode>('skip')
 const quotaMode = ref<QuotaMode>('skip')
-const allowedProviders = ref<string[]>([])
-const allowedApiFormats = ref<string[]>([])
-const allowedModels = ref<string[]>([])
-const rateLimit = ref<number | undefined>(undefined)
+const selectedGroupIds = ref<string[]>([])
 const previewLoading = ref(false)
 const previewItems = ref<UserBatchSelectionItem[]>([])
 const resolvedTotal = ref<number | null>(null)
 const executing = ref(false)
 const lastResult = ref<UserBatchActionResponse | null>(null)
 
+const groupOptions = computed(() => props.groups.map((group) => ({
+  label: `${group.name}${group.is_default ? '（默认）' : ''}`,
+  value: group.id,
+})))
+const hasAnyTarget = computed(() => props.selectedCount > 0 || selectedGroupIds.value.length > 0)
 const impactCount = computed(() => resolvedTotal.value ?? props.selectedCount)
-const canExecute = computed(() => props.selectedCount > 0 && !previewLoading.value && !executing.value)
+const canExecute = computed(() => hasAnyTarget.value && !previewLoading.value && !executing.value)
 const selectedActionLabel = computed(() => (
   actionOptions.find((action) => action.value === selectedAction.value)?.label ?? '批量操作'
 ))
@@ -430,9 +337,6 @@ watch(
   (open) => {
     if (!open) return
     resetLocalState()
-    void loadAccessControlOptions().catch((err) => {
-      error(parseApiError(err, '加载访问控制选项失败'))
-    })
     void resolvePreview()
   },
 )
@@ -451,15 +355,8 @@ function handleDialogUpdate(value: boolean): void {
 function resetLocalState(): void {
   selectedAction.value = 'enable'
   targetRole.value = 'user'
-  providerMode.value = 'skip'
-  apiFormatMode.value = 'skip'
-  modelMode.value = 'skip'
-  rateLimitMode.value = 'skip'
   quotaMode.value = 'skip'
-  allowedProviders.value = []
-  allowedApiFormats.value = []
-  allowedModels.value = []
-  rateLimit.value = undefined
+  selectedGroupIds.value = []
   lastResult.value = null
 }
 
@@ -482,14 +379,15 @@ function actionIconClass(action: UserBatchAction): string {
 }
 
 function buildSelection(): UserBatchSelection {
+  const group_ids = selectedGroupIds.value.length > 0 ? [...selectedGroupIds.value] : undefined
   if (props.selectAllFiltered) {
-    return { filters: props.filters }
+    return { filters: props.filters, group_ids }
   }
-  return { user_ids: [...props.selectedIds] }
+  return { user_ids: [...props.selectedIds], group_ids }
 }
 
 async function resolvePreview(): Promise<void> {
-  if (props.selectedCount === 0) {
+  if (!hasAnyTarget.value) {
     resolvedTotal.value = 0
     previewItems.value = []
     return
@@ -508,16 +406,12 @@ async function resolvePreview(): Promise<void> {
   }
 }
 
+watch(selectedGroupIds, () => {
+  if (props.open) void resolvePreview()
+})
+
 function buildAccessControlPayload(): UserBatchAccessControlPayload | null {
   const payload: UserBatchAccessControlPayload = {}
-  if (providerMode.value === 'unrestricted') payload.allowed_providers = null
-  if (providerMode.value === 'specific') payload.allowed_providers = [...allowedProviders.value]
-  if (apiFormatMode.value === 'unrestricted') payload.allowed_api_formats = null
-  if (apiFormatMode.value === 'specific') payload.allowed_api_formats = [...allowedApiFormats.value]
-  if (modelMode.value === 'unrestricted') payload.allowed_models = null
-  if (modelMode.value === 'specific') payload.allowed_models = [...allowedModels.value]
-  if (rateLimitMode.value === 'inherit') payload.rate_limit = null
-  if (rateLimitMode.value === 'custom' && rateLimit.value != null) payload.rate_limit = rateLimit.value
   if (quotaMode.value === 'wallet') payload.unlimited = false
   if (quotaMode.value === 'unlimited') payload.unlimited = true
   return Object.keys(payload).length > 0 ? payload : null
@@ -529,16 +423,12 @@ function buildRolePayload(): UserBatchRolePayload {
 
 async function executeBatchAction(): Promise<void> {
   if (!canExecute.value) return
-  if (selectedAction.value === 'update_access_control' && rateLimitMode.value === 'custom' && rateLimit.value == null) {
-    warning('请输入速率限制数值，0 表示不限速')
-    return
-  }
   const selection = buildSelection()
   let request: UserBatchActionRequest
   if (selectedAction.value === 'update_access_control') {
     const payload = buildAccessControlPayload()
     if (payload === null) {
-      warning('请至少选择一个要修改的访问控制或额度字段')
+      warning('请选择要修改的额度')
       return
     }
     request = { selection, action: 'update_access_control', payload }

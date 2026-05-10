@@ -34,12 +34,12 @@
     />
     <div
       v-if="isOpen"
-      class="absolute z-[90] w-full mt-1 rounded-lg border bg-popover shadow-lg"
+      class="absolute z-[90] mt-1 w-full overflow-hidden rounded-2xl border border-border bg-card text-foreground shadow-2xl backdrop-blur-xl"
       :style="dropdownMinWidth ? { minWidth: dropdownMinWidth } : undefined"
     >
       <div
         v-if="showSearch"
-        class="sticky top-0 z-10 border-b bg-popover/95 p-1 backdrop-blur supports-[backdrop-filter]:bg-popover/85"
+        class="sticky top-0 z-10 border-b border-border/60 bg-card/95 p-1 backdrop-blur supports-[backdrop-filter]:bg-card/85"
       >
         <div class="relative">
           <Search
@@ -48,16 +48,16 @@
           <Input
             v-model="searchQuery"
             :placeholder="searchPlaceholder"
-            class="h-8 rounded-md border-border/60 bg-popover pl-8 text-xs"
+            class="h-9 rounded-xl border-border/60 bg-background/80 pl-9 pr-3 text-sm"
             @keydown.stop
           />
         </div>
       </div>
 
-      <div class="max-h-48 overflow-y-auto">
+      <div class="max-h-64 overflow-y-auto p-1">
         <div
           v-if="hasOptions"
-          class="sticky top-0 z-10 flex cursor-pointer items-center gap-2 border-b bg-popover/95 px-3 py-2 backdrop-blur hover:bg-muted/50 supports-[backdrop-filter]:bg-popover/85"
+          class="sticky top-0 z-10 flex cursor-pointer items-center gap-2 rounded-lg border-b border-border/60 bg-card/95 px-3 py-2 backdrop-blur hover:bg-muted/50 supports-[backdrop-filter]:bg-card/85"
           @click="toggleAll"
         >
           <input
@@ -65,7 +65,7 @@
             :checked="isAllSelected"
             :indeterminate="isPartiallySelected"
             aria-label="全选"
-            class="h-4 w-4 shrink-0 cursor-pointer rounded border-gray-300"
+            class="h-4 w-4 shrink-0 cursor-pointer rounded border-border/60 bg-card/80 text-primary shadow-sm accent-primary focus:ring-2 focus:ring-primary/40 focus:ring-offset-1"
             @click.stop
             @change="toggleAll"
           >
@@ -78,13 +78,13 @@
         <div
           v-for="item in filteredInvalidItems"
           :key="'invalid-' + item"
-          class="flex cursor-pointer items-center gap-2 bg-destructive/5 px-3 py-2 hover:bg-muted/50"
+          class="flex cursor-pointer items-center gap-2 rounded-lg bg-destructive/5 px-3 py-2 hover:bg-muted/50"
           @click="remove(item)"
         >
           <input
             type="checkbox"
             :checked="true"
-            class="h-4 w-4 shrink-0 cursor-pointer rounded border-gray-300"
+            class="h-4 w-4 shrink-0 cursor-pointer rounded border-border/60 bg-card/80 text-primary shadow-sm accent-primary focus:ring-2 focus:ring-primary/40 focus:ring-offset-1"
             @click.stop
             @change="remove(item)"
           >
@@ -95,13 +95,13 @@
         <div
           v-for="item in filteredOptions"
           :key="item.value"
-          class="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-muted/50"
+          class="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 hover:bg-muted/50"
           @click="toggle(item.value)"
         >
           <input
             type="checkbox"
             :checked="modelValue.includes(item.value)"
-            class="h-4 w-4 shrink-0 cursor-pointer rounded border-gray-300"
+            class="h-4 w-4 shrink-0 cursor-pointer rounded border-border/60 bg-card/80 text-primary shadow-sm accent-primary focus:ring-2 focus:ring-primary/40 focus:ring-offset-1"
             @click.stop
             @change="toggle(item.value)"
           >

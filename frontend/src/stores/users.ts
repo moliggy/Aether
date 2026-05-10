@@ -12,6 +12,10 @@ import {
   type ResolveUserBatchSelectionResponse,
   type UserBatchActionRequest,
   type UserBatchActionResponse,
+  type UserGroup,
+  type UserGroupMember,
+  type UpsertUserGroupRequest,
+  type ListUserGroupsResponse,
 } from '@/api/users'
 import { parseApiError } from '@/utils/errorParser'
 
@@ -20,7 +24,13 @@ export const useUsersStore = defineStore('users', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
-  async function fetchUsers(options: { cacheTtlMs?: number } = {}) {
+  async function fetchUsers(options: {
+    cacheTtlMs?: number
+    search?: string
+    role?: 'admin' | 'user'
+    is_active?: boolean
+    group_id?: string
+  } = {}) {
     loading.value = true
     error.value = null
 
@@ -108,6 +118,75 @@ export const useUsersStore = defineStore('users', () => {
       throw err
     } finally {
       loading.value = false
+    }
+  }
+
+  async function listUserGroups(): Promise<ListUserGroupsResponse> {
+    try {
+      return await usersApi.listUserGroups()
+    } catch (err: unknown) {
+      error.value = parseApiError(err, '获取用户分组失败')
+      throw err
+    }
+  }
+
+  async function createUserGroup(payload: UpsertUserGroupRequest): Promise<UserGroup> {
+    try {
+      return await usersApi.createUserGroup(payload)
+    } catch (err: unknown) {
+      error.value = parseApiError(err, '创建用户分组失败')
+      throw err
+    }
+  }
+
+  async function updateUserGroup(
+    groupId: string,
+    payload: UpsertUserGroupRequest,
+  ): Promise<UserGroup> {
+    try {
+      return await usersApi.updateUserGroup(groupId, payload)
+    } catch (err: unknown) {
+      error.value = parseApiError(err, '更新用户分组失败')
+      throw err
+    }
+  }
+
+  async function deleteUserGroup(groupId: string): Promise<void> {
+    try {
+      await usersApi.deleteUserGroup(groupId)
+    } catch (err: unknown) {
+      error.value = parseApiError(err, '删除用户分组失败')
+      throw err
+    }
+  }
+
+  async function listUserGroupMembers(groupId: string): Promise<UserGroupMember[]> {
+    try {
+      return await usersApi.listUserGroupMembers(groupId)
+    } catch (err: unknown) {
+      error.value = parseApiError(err, '获取分组成员失败')
+      throw err
+    }
+  }
+
+  async function replaceUserGroupMembers(
+    groupId: string,
+    userIds: string[],
+  ): Promise<UserGroupMember[]> {
+    try {
+      return await usersApi.replaceUserGroupMembers(groupId, userIds)
+    } catch (err: unknown) {
+      error.value = parseApiError(err, '更新分组成员失败')
+      throw err
+    }
+  }
+
+  async function setDefaultUserGroup(groupId: string | null): Promise<{ default_group_id?: string | null }> {
+    try {
+      return await usersApi.setDefaultUserGroup(groupId)
+    } catch (err: unknown) {
+      error.value = parseApiError(err, '设置默认用户组失败')
+      throw err
     }
   }
 
@@ -199,6 +278,13 @@ export const useUsersStore = defineStore('users', () => {
     deleteUser,
     resolveBatchSelection,
     batchAction,
+    listUserGroups,
+    createUserGroup,
+    updateUserGroup,
+    deleteUserGroup,
+    listUserGroupMembers,
+    replaceUserGroupMembers,
+    setDefaultUserGroup,
     getUserApiKeys,
     createApiKey,
     updateApiKey,

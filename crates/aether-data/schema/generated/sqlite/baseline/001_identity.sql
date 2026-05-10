@@ -13,10 +13,14 @@ CREATE TABLE IF NOT EXISTS users (
     is_active INTEGER NOT NULL DEFAULT 1,
     is_deleted INTEGER NOT NULL DEFAULT 0,
     allowed_models TEXT,
+    allowed_models_mode TEXT NOT NULL DEFAULT 'unrestricted',
     allowed_providers TEXT,
+    allowed_providers_mode TEXT NOT NULL DEFAULT 'unrestricted',
     allowed_api_formats TEXT,
+    allowed_api_formats_mode TEXT NOT NULL DEFAULT 'unrestricted',
     model_capability_settings TEXT,
     rate_limit INTEGER,
+    rate_limit_mode TEXT NOT NULL DEFAULT 'system',
     metadata TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -26,6 +30,34 @@ CREATE TABLE IF NOT EXISTS users (
     UNIQUE (email),
     UNIQUE (username)
 );
+
+CREATE TABLE IF NOT EXISTS user_groups (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    description TEXT,
+    priority INTEGER NOT NULL DEFAULT 0,
+    allowed_providers TEXT,
+    allowed_providers_mode TEXT NOT NULL DEFAULT 'inherit',
+    allowed_api_formats TEXT,
+    allowed_api_formats_mode TEXT NOT NULL DEFAULT 'inherit',
+    allowed_models TEXT,
+    allowed_models_mode TEXT NOT NULL DEFAULT 'inherit',
+    rate_limit INTEGER,
+    rate_limit_mode TEXT NOT NULL DEFAULT 'inherit',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (normalized_name)
+);
+CREATE INDEX IF NOT EXISTS user_groups_priority_name_idx ON user_groups (priority, name, id);
+
+CREATE TABLE IF NOT EXISTS user_group_members (
+    group_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (group_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS user_group_members_user_id_idx ON user_group_members (user_id);
 
 CREATE TABLE IF NOT EXISTS api_keys (
     id TEXT PRIMARY KEY NOT NULL,
