@@ -931,6 +931,13 @@ fn usage_effective_input_tokens(item: &StoredRequestUsageAudit) -> u64 {
     normalize_usage_input_tokens(api_format, input_tokens, cache_read_tokens) as u64
 }
 
+fn usage_total_tokens(item: &StoredRequestUsageAudit) -> u64 {
+    usage_effective_input_tokens(item)
+        .saturating_add(item.output_tokens)
+        .saturating_add(usage_cache_creation_tokens(item))
+        .saturating_add(item.cache_read_input_tokens)
+}
+
 fn usage_is_success(item: &StoredRequestUsageAudit) -> bool {
     matches!(
         item.status.as_str(),
@@ -1426,7 +1433,9 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                 .effective_input_tokens
                 .saturating_add(usage_effective_input_tokens(item));
             summary.output_tokens = summary.output_tokens.saturating_add(item.output_tokens);
-            summary.total_tokens = summary.total_tokens.saturating_add(item.total_tokens);
+            summary.total_tokens = summary
+                .total_tokens
+                .saturating_add(usage_total_tokens(item));
             summary.cache_creation_tokens = summary
                 .cache_creation_tokens
                 .saturating_add(usage_cache_creation_tokens(item));
@@ -2187,12 +2196,7 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                 entry.legacy_name = legacy_name;
             }
             entry.request_count = entry.request_count.saturating_add(1);
-            entry.total_tokens = entry.total_tokens.saturating_add(
-                item.input_tokens
-                    .saturating_add(item.output_tokens)
-                    .saturating_add(item.cache_creation_input_tokens)
-                    .saturating_add(item.cache_read_input_tokens),
-            );
+            entry.total_tokens = entry.total_tokens.saturating_add(usage_total_tokens(item));
             entry.total_cost_usd += item.total_cost_usd;
         }
         Ok(grouped.into_values().collect())
@@ -2989,7 +2993,8 @@ mod tests {
     };
     use aether_data_contracts::repository::usage::{
         usage_body_ref, ProviderApiKeyWindowUsageRequest, UsageAuditAggregationGroupBy,
-        UsageAuditAggregationQuery, UsageBodyField, UsageProviderPerformanceQuery,
+        UsageAuditAggregationQuery, UsageBodyField, UsageDashboardSummaryQuery,
+        UsageLeaderboardGroupBy, UsageLeaderboardQuery, UsageProviderPerformanceQuery,
         UsageTimeSeriesGranularity,
     };
     use serde_json::json;
@@ -4645,6 +4650,46 @@ mod tests {
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].request_id, "req-2");
+    }
+
+    #[tokio::test]
+    async fn dashboard_and_leaderboard_total_tokens_use_effective_cache_aware_tokens() {
+        let mut item = sample_usage("req-cache-aware-total", 1_711_000_000);
+        item.input_tokens = 100;
+        item.output_tokens = 20;
+        item.total_tokens = 999;
+        item.cache_creation_input_tokens = 0;
+        item.cache_creation_ephemeral_5m_input_tokens = 12;
+        item.cache_creation_ephemeral_1h_input_tokens = 8;
+        item.cache_read_input_tokens = 80;
+
+        let repository = InMemoryUsageReadRepository::seed(vec![item]);
+
+        let dashboard = repository
+            .summarize_dashboard_usage(&UsageDashboardSummaryQuery {
+                created_from_unix_secs: 1_711_000_000,
+                created_until_unix_secs: 1_711_000_001,
+                user_id: None,
+            })
+            .await
+            .expect("dashboard should summarize");
+        assert_eq!(dashboard.effective_input_tokens, 20);
+        assert_eq!(dashboard.cache_creation_tokens, 20);
+        assert_eq!(dashboard.total_tokens, 140);
+
+        let leaderboard = repository
+            .summarize_usage_leaderboard(&UsageLeaderboardQuery {
+                created_from_unix_secs: 1_711_000_000,
+                created_until_unix_secs: 1_711_000_001,
+                group_by: UsageLeaderboardGroupBy::User,
+                user_id: None,
+                provider_name: None,
+                model: None,
+            })
+            .await
+            .expect("leaderboard should summarize");
+        assert_eq!(leaderboard.len(), 1);
+        assert_eq!(leaderboard[0].total_tokens, 140);
     }
 
     #[tokio::test]

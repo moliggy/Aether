@@ -1135,7 +1135,7 @@ pub fn admin_usage_record_json(
 }
 
 pub fn admin_usage_total_tokens(item: &StoredRequestUsageAudit) -> u64 {
-    item.input_tokens
+    admin_usage_effective_input_tokens(item)
         .saturating_add(item.output_tokens)
         .saturating_add(admin_usage_cache_creation_tokens(item))
         .saturating_add(item.cache_read_input_tokens)
@@ -2292,7 +2292,7 @@ mod tests {
         admin_usage_has_fallback, admin_usage_is_failed, admin_usage_is_success,
         admin_usage_matches_search, admin_usage_matches_status, admin_usage_matches_username,
         admin_usage_record_json, admin_usage_resolve_request_capture_body,
-        admin_usage_upstream_is_stream, build_admin_usage_detail_payload,
+        admin_usage_total_tokens, admin_usage_upstream_is_stream, build_admin_usage_detail_payload,
     };
     use aether_data_contracts::repository::usage::{StoredRequestUsageAudit, UsageBodyField};
 
@@ -3052,6 +3052,22 @@ mod tests {
         assert_eq!(payload["cache_creation_ephemeral_5m_input_tokens"], 12);
         assert_eq!(payload["cache_creation_ephemeral_1h_input_tokens"], 8);
         assert_eq!(payload["total_tokens"], 50);
+    }
+
+    #[test]
+    fn admin_usage_total_tokens_uses_effective_input_for_cached_openai_usage() {
+        let item = StoredRequestUsageAudit {
+            input_tokens: 100,
+            output_tokens: 20,
+            total_tokens: 999,
+            cache_creation_input_tokens: 0,
+            cache_creation_ephemeral_5m_input_tokens: 12,
+            cache_creation_ephemeral_1h_input_tokens: 8,
+            cache_read_input_tokens: 80,
+            ..sample_usage("completed", Some(200), None)
+        };
+
+        assert_eq!(admin_usage_total_tokens(&item), 140);
     }
 
     #[test]

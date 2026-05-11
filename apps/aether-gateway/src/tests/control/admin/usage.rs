@@ -1682,7 +1682,7 @@ async fn gateway_handles_admin_usage_detail_locally_with_trusted_admin_principal
     assert_eq!(payload["provider"], "OpenAI");
     assert_eq!(payload["model"], "gpt-5");
     assert_eq!(payload["effective_input_tokens"], 115);
-    assert_eq!(payload["total_tokens"], 170);
+    assert_eq!(payload["total_tokens"], 165);
     assert_eq!(payload["cache_creation_cost"], 0.0);
     assert_eq!(payload["cache_read_cost"], 0.0);
     assert_eq!(

@@ -1,3 +1,4 @@
+use crate::observability::usage::admin_usage_total_tokens;
 use aether_data::repository::auth::StoredAuthApiKeySnapshot;
 use aether_data_contracts::repository::{
     provider_catalog::StoredProviderCatalogProvider,
@@ -1799,12 +1800,7 @@ pub fn build_user_leaderboard_items(
                     cost: 0.0,
                 });
         entry.requests = entry.requests.saturating_add(1);
-        entry.tokens = entry.tokens.saturating_add(
-            item.input_tokens
-                .saturating_add(item.output_tokens)
-                .saturating_add(item.cache_creation_input_tokens)
-                .saturating_add(item.cache_read_input_tokens),
-        );
+        entry.tokens = entry.tokens.saturating_add(admin_usage_total_tokens(item));
         entry.cost += item.total_cost_usd;
     }
 
@@ -2201,5 +2197,25 @@ mod tests {
 
         assert_eq!(leaderboard.len(), 1);
         assert_eq!(leaderboard[0].name, "alice");
+    }
+
+    #[test]
+    fn user_leaderboard_tokens_match_dashboard_effective_token_rules() {
+        let item = StoredRequestUsageAudit {
+            input_tokens: 100,
+            output_tokens: 20,
+            total_tokens: 999,
+            cache_creation_input_tokens: 0,
+            cache_creation_ephemeral_5m_input_tokens: 12,
+            cache_creation_ephemeral_1h_input_tokens: 8,
+            cache_read_input_tokens: 80,
+            ..sample_usage(Some("legacy-default"))
+        };
+
+        let leaderboard =
+            build_user_leaderboard_items(&[item], &BTreeMap::new(), false, false, false);
+
+        assert_eq!(leaderboard.len(), 1);
+        assert_eq!(leaderboard[0].tokens, 140);
     }
 }

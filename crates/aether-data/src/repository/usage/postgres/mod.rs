@@ -6019,9 +6019,30 @@ SELECT
   MAX({legacy_name_expr}) AS legacy_name,
   COUNT(*)::BIGINT AS request_count,
   COALESCE(SUM(
-    GREATEST(COALESCE("usage".input_tokens, 0), 0)
+    CASE
+      WHEN GREATEST(COALESCE("usage".input_tokens, 0), 0) <= 0 THEN 0
+      WHEN GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0) <= 0
+      THEN GREATEST(COALESCE("usage".input_tokens, 0), 0)
+      WHEN split_part(lower(COALESCE(COALESCE("usage".endpoint_api_format, "usage".api_format), '')), ':', 1)
+           IN ('openai', 'gemini', 'google')
+      THEN GREATEST(
+        GREATEST(COALESCE("usage".input_tokens, 0), 0)
+          - GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0),
+        0
+      )
+      ELSE GREATEST(COALESCE("usage".input_tokens, 0), 0)
+    END
     + GREATEST(COALESCE("usage".output_tokens, 0), 0)
-    + GREATEST(COALESCE("usage".cache_creation_input_tokens, 0), 0)
+    + CASE
+        WHEN COALESCE("usage".cache_creation_input_tokens, 0) = 0
+             AND (
+               COALESCE("usage".cache_creation_input_tokens_5m, 0)
+               + COALESCE("usage".cache_creation_input_tokens_1h, 0)
+             ) > 0
+        THEN COALESCE("usage".cache_creation_input_tokens_5m, 0)
+           + COALESCE("usage".cache_creation_input_tokens_1h, 0)
+        ELSE COALESCE("usage".cache_creation_input_tokens, 0)
+      END
     + GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0)
   ), 0)::BIGINT AS total_tokens,
   COALESCE(SUM(COALESCE(CAST("usage".total_cost_usd AS DOUBLE PRECISION), 0)), 0)
@@ -6169,42 +6190,20 @@ WHERE date >=
                 fetch_usage_leaderboard_query(builder.build(), &self.pool).await?
             }
             UsageLeaderboardGroupBy::User => {
-                let mut builder = if query.provider_name.is_some() && query.model.is_some() {
+                if query.provider_name.is_some() && query.model.is_some() {
+                    return Ok(None);
+                }
+                let mut builder = if let Some(provider_name) = query.provider_name.as_deref() {
                     let mut builder = QueryBuilder::<Postgres>::new(
                         r#"
 SELECT
   user_id AS group_key,
   MAX(NULLIF(BTRIM(username), '')) AS legacy_name,
   COALESCE(SUM(total_requests), 0)::BIGINT AS request_count,
-  COALESCE(SUM(total_tokens), 0)::BIGINT AS total_tokens,
-  CAST(COALESCE(SUM(total_cost), 0) AS DOUBLE PRECISION) AS total_cost_usd
-FROM stats_user_daily_model_provider
-WHERE date >=
-"#,
-                    );
-                    builder
-                        .push_bind(start_day_utc)
-                        .push(" AND date < ")
-                        .push_bind(end_day_utc)
-                        .push(" AND provider_name = ")
-                        .push_bind(query.provider_name.as_deref().unwrap().to_string())
-                        .push(" AND model = ")
-                        .push_bind(query.model.as_deref().unwrap().to_string());
-                    if let Some(user_id) = query.user_id.as_deref() {
-                        builder
-                            .push(" AND user_id = ")
-                            .push_bind(user_id.to_string());
-                    }
-                    builder.push(" GROUP BY user_id ORDER BY user_id ASC");
-                    builder
-                } else if let Some(provider_name) = query.provider_name.as_deref() {
-                    let mut builder = QueryBuilder::<Postgres>::new(
-                        r#"
-SELECT
-  user_id AS group_key,
-  MAX(NULLIF(BTRIM(username), '')) AS legacy_name,
-  COALESCE(SUM(total_requests), 0)::BIGINT AS request_count,
-  COALESCE(SUM(total_tokens), 0)::BIGINT AS total_tokens,
+  COALESCE(
+    SUM(effective_input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens),
+    0
+  )::BIGINT AS total_tokens,
   CAST(COALESCE(SUM(total_cost), 0) AS DOUBLE PRECISION) AS total_cost_usd
 FROM stats_user_daily_provider
 WHERE date >=
@@ -6230,7 +6229,10 @@ SELECT
   user_id AS group_key,
   MAX(NULLIF(BTRIM(username), '')) AS legacy_name,
   COALESCE(SUM(total_requests), 0)::BIGINT AS request_count,
-  COALESCE(SUM(total_tokens), 0)::BIGINT AS total_tokens,
+  COALESCE(
+    SUM(effective_input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens),
+    0
+  )::BIGINT AS total_tokens,
   CAST(COALESCE(SUM(total_cost), 0) AS DOUBLE PRECISION) AS total_cost_usd
 FROM stats_user_daily_model
 WHERE date >=
@@ -6257,7 +6259,7 @@ SELECT
   MAX(NULLIF(BTRIM(username), '')) AS legacy_name,
   COALESCE(SUM(total_requests), 0)::BIGINT AS request_count,
   COALESCE(
-    SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens),
+    SUM(effective_input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens),
     0
   )::BIGINT AS total_tokens,
   CAST(COALESCE(SUM(total_cost), 0) AS DOUBLE PRECISION) AS total_cost_usd

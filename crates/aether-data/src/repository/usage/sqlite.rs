@@ -1170,7 +1170,7 @@ ORDER BY request_id
             .expect("dashboard summary should load");
         assert_eq!(summary.total_requests, 2);
         assert_eq!(summary.error_requests, 1);
-        assert_eq!(summary.total_tokens, 14);
+        assert_eq!(summary.total_tokens, 10);
     }
 
     async fn seed_stats_targets(pool: &sqlx::SqlitePool) {
