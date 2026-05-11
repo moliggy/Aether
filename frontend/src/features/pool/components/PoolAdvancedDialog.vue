@@ -230,7 +230,7 @@
             </p>
           </div>
 
-          <div class="rounded-xl bg-muted/30 p-4">
+          <div class="grid gap-3 rounded-xl bg-muted/30 p-4 sm:grid-cols-2">
             <div class="space-y-1.5">
               <Label>
                 并发数
@@ -246,6 +246,45 @@
               <p class="text-[11px] leading-5 text-muted-foreground">
                 为空时沿用默认值；数值越大，批量操作越快，但会增加瞬时请求压力。
               </p>
+            </div>
+            <div class="space-y-1.5">
+              <Label>
+                探测并发
+              </Label>
+              <Input
+                :model-value="form.probe_concurrency ?? ''"
+                type="number"
+                min="1"
+                max="64"
+                placeholder="4"
+                @update:model-value="(v) => form.probe_concurrency = parseNum(v)"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <Label>
+                评分 Top-N
+              </Label>
+              <Input
+                :model-value="form.score_top_n ?? ''"
+                type="number"
+                min="1"
+                max="4096"
+                placeholder="128"
+                @update:model-value="(v) => form.score_top_n = parseNum(v)"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <Label>
+                回退扫描
+              </Label>
+              <Input
+                :model-value="form.score_fallback_scan_limit ?? ''"
+                type="number"
+                min="1"
+                max="100000"
+                placeholder="1024"
+                @update:model-value="(v) => form.score_fallback_scan_limit = parseNum(v)"
+              />
             </div>
           </div>
         </section>
@@ -464,6 +503,9 @@ const form = ref({
   cost_limit_per_key_tokens: null as number | null | undefined,
   cost_soft_threshold_percent: null as number | null | undefined,
   batch_concurrency: null as number | null | undefined,
+  probe_concurrency: null as number | null | undefined,
+  score_top_n: null as number | null | undefined,
+  score_fallback_scan_limit: null as number | null | undefined,
   probing_enabled: false,
   probing_interval_minutes: null as number | null | undefined,
   auto_remove_banned_keys: false,
@@ -539,6 +581,9 @@ watch(() => props.modelValue, (open) => {
     cost_limit_per_key_tokens: cfg?.cost_limit_per_key_tokens ?? null,
     cost_soft_threshold_percent: cfg?.cost_soft_threshold_percent ?? null,
     batch_concurrency: cfg?.batch_concurrency ?? null,
+    probe_concurrency: cfg?.probe_concurrency ?? null,
+    score_top_n: cfg?.score_top_n ?? null,
+    score_fallback_scan_limit: cfg?.score_fallback_scan_limit ?? null,
     probing_enabled: cfg?.probing_enabled ?? false,
     probing_interval_minutes: cfg?.probing_interval_minutes ?? null,
     auto_remove_banned_keys: cfg?.auto_remove_banned_keys ?? false,
@@ -572,6 +617,9 @@ async function handleSave() {
       overload_cooldown_seconds: form.value.overload_cooldown_seconds ?? undefined,
       health_policy_enabled: form.value.health_policy_enabled,
       batch_concurrency: form.value.batch_concurrency ?? undefined,
+      probe_concurrency: form.value.probe_concurrency ?? undefined,
+      score_top_n: form.value.score_top_n ?? undefined,
+      score_fallback_scan_limit: form.value.score_fallback_scan_limit ?? undefined,
       probing_enabled: form.value.probing_enabled,
       probing_interval_minutes: form.value.probing_enabled
         ? (form.value.probing_interval_minutes ?? undefined)

@@ -253,6 +253,21 @@ END $mig$;
 
 
 --
+-- Name: pool_member_scores pool_member_scores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+DO $mig$ BEGIN
+  ALTER TABLE ONLY public.pool_member_scores
+    ADD CONSTRAINT pool_member_scores_pkey PRIMARY KEY (id);
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN duplicate_table THEN NULL;
+  WHEN invalid_table_definition THEN NULL;
+END $mig$;
+
+
+
+--
 -- Name: provider_endpoints provider_endpoints_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 

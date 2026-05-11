@@ -14,6 +14,7 @@ use crate::repository::gemini_file_mappings::GeminiFileMappingReadRepository;
 use crate::repository::global_models::GlobalModelReadRepository;
 use crate::repository::management_tokens::ManagementTokenReadRepository;
 use crate::repository::oauth_providers::OAuthProviderReadRepository;
+use crate::repository::pool_scores::PoolScoreReadRepository;
 use crate::repository::provider_catalog::ProviderCatalogReadRepository;
 use crate::repository::proxy_nodes::ProxyNodeReadRepository;
 use crate::repository::quota::ProviderQuotaReadRepository;
@@ -34,6 +35,7 @@ pub struct DataReadRepositories {
     global_models: Option<Arc<dyn GlobalModelReadRepository>>,
     management_tokens: Option<Arc<dyn ManagementTokenReadRepository>>,
     oauth_providers: Option<Arc<dyn OAuthProviderReadRepository>>,
+    pool_scores: Option<Arc<dyn PoolScoreReadRepository>>,
     proxy_nodes: Option<Arc<dyn ProxyNodeReadRepository>>,
     minimal_candidate_selection: Option<Arc<dyn MinimalCandidateSelectionReadRepository>>,
     request_candidates: Option<Arc<dyn RequestCandidateReadRepository>>,
@@ -61,6 +63,7 @@ impl fmt::Debug for DataReadRepositories {
             .field("has_global_models", &self.global_models.is_some())
             .field("has_management_tokens", &self.management_tokens.is_some())
             .field("has_oauth_providers", &self.oauth_providers.is_some())
+            .field("has_pool_scores", &self.pool_scores.is_some())
             .field("has_proxy_nodes", &self.proxy_nodes.is_some())
             .field(
                 "has_minimal_candidate_selection",
@@ -124,6 +127,10 @@ impl DataReadRepositories {
                 .map(PostgresBackend::oauth_provider_read_repository)
                 .or_else(|| mysql.map(MysqlBackend::oauth_provider_read_repository))
                 .or_else(|| sqlite.map(SqliteBackend::oauth_provider_read_repository)),
+            pool_scores: postgres
+                .map(PostgresBackend::pool_score_read_repository)
+                .or_else(|| mysql.map(MysqlBackend::pool_score_read_repository))
+                .or_else(|| sqlite.map(SqliteBackend::pool_score_read_repository)),
             proxy_nodes: postgres
                 .map(PostgresBackend::proxy_node_read_repository)
                 .or_else(|| mysql.map(MysqlBackend::proxy_node_read_repository))
@@ -208,6 +215,10 @@ impl DataReadRepositories {
         self.oauth_providers.clone()
     }
 
+    pub fn pool_scores(&self) -> Option<Arc<dyn PoolScoreReadRepository>> {
+        self.pool_scores.clone()
+    }
+
     pub fn proxy_nodes(&self) -> Option<Arc<dyn ProxyNodeReadRepository>> {
         self.proxy_nodes.clone()
     }
@@ -257,6 +268,7 @@ impl DataReadRepositories {
             || self.global_models.is_some()
             || self.management_tokens.is_some()
             || self.oauth_providers.is_some()
+            || self.pool_scores.is_some()
             || self.proxy_nodes.is_some()
             || self.minimal_candidate_selection.is_some()
             || self.request_candidates.is_some()

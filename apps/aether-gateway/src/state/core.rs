@@ -47,6 +47,7 @@ use crate::maintenance::spawn_oauth_token_refresh_worker;
 use crate::maintenance::spawn_pending_cleanup_worker;
 use crate::maintenance::spawn_pool_monitor_worker;
 use crate::maintenance::spawn_pool_quota_probe_worker;
+use crate::maintenance::spawn_pool_score_rebuild_worker;
 use crate::maintenance::spawn_provider_checkin_worker;
 use crate::maintenance::spawn_proxy_node_metrics_cleanup_worker;
 use crate::maintenance::spawn_proxy_node_stale_cleanup_worker;
@@ -1112,6 +1113,10 @@ impl AppState {
         supervise_worker(
             crate::task_runtime::TASK_KEY_POOL_QUOTA_PROBE,
             spawn_pool_quota_probe_worker(self.clone()),
+        );
+        supervise_worker(
+            crate::task_runtime::TASK_KEY_POOL_SCORE_REBUILD,
+            spawn_pool_score_rebuild_worker(self.clone()),
         );
         supervise_worker(
             crate::task_runtime::TASK_KEY_STATS_HOURLY_AGG,

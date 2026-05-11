@@ -24,6 +24,8 @@ mod read_overview;
 mod read_presets;
 #[path = "read_routes/resolve_selection.rs"]
 mod read_resolve_selection;
+#[path = "read_routes/scores.rs"]
+mod read_scores;
 pub(crate) mod selection;
 mod support;
 
@@ -34,11 +36,11 @@ pub(crate) use self::batch_shared::{
     AdminPoolBatchImportRequest,
 };
 pub(crate) use self::support::{
-    admin_pool_provider_id_from_path, parse_admin_pool_key_sort, parse_admin_pool_page,
-    parse_admin_pool_page_size, parse_admin_pool_quick_selectors, parse_admin_pool_search,
-    parse_admin_pool_status_filter, AdminPoolKeySort, AdminPoolKeySortDirection,
-    AdminPoolKeySortField, AdminPoolResolveSelectionRequest,
-    ADMIN_POOL_BANNED_KEY_CLEANUP_EMPTY_MESSAGE,
+    admin_pool_provider_id_from_path, admin_pool_provider_id_from_scores_path,
+    parse_admin_pool_key_sort, parse_admin_pool_page, parse_admin_pool_page_size,
+    parse_admin_pool_quick_selectors, parse_admin_pool_search, parse_admin_pool_status_filter,
+    AdminPoolKeySort, AdminPoolKeySortDirection, AdminPoolKeySortField,
+    AdminPoolResolveSelectionRequest, ADMIN_POOL_BANNED_KEY_CLEANUP_EMPTY_MESSAGE,
     ADMIN_POOL_PROVIDER_CATALOG_READER_UNAVAILABLE_DETAIL,
     ADMIN_POOL_PROVIDER_CATALOG_WRITER_UNAVAILABLE_DETAIL,
 };
@@ -101,6 +103,11 @@ pub(crate) async fn maybe_build_local_admin_pool_response(
         Some("list_keys") => {
             return Ok(Some(
                 read_keys::build_admin_pool_list_keys_response(state, request_context).await?,
+            ));
+        }
+        Some("scores") => {
+            return Ok(Some(
+                read_scores::build_admin_pool_scores_response(state, request_context).await?,
             ));
         }
         Some("resolve_selection") => {

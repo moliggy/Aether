@@ -192,6 +192,66 @@ export interface PoolKeysPageResponse {
   keys: PoolKeyDetail[]
 }
 
+export type PoolScoreHardState =
+  | 'available'
+  | 'unknown'
+  | 'cooldown'
+  | 'quota_exhausted'
+  | 'auth_invalid'
+  | 'banned'
+  | 'inactive'
+
+export type PoolScoreProbeStatus = 'never' | 'ok' | 'failed' | 'stale' | 'in_progress'
+
+export interface PoolScoreKeySummary {
+  id: string
+  name: string
+  auth_type: string
+  is_active: boolean
+  internal_priority: number
+  last_used_at: number | null
+}
+
+export interface PoolMemberScoreItem {
+  id: string
+  pool_kind: string
+  pool_id: string
+  member_kind: string
+  member_id: string
+  capability: string
+  scope_kind: string
+  scope_id: string | null
+  score: number
+  hard_state: PoolScoreHardState
+  score_version: number
+  score_reason: Record<string, unknown> | null
+  last_ranked_at: number | null
+  last_scheduled_at: number | null
+  last_success_at: number | null
+  last_failure_at: number | null
+  failure_count: number
+  last_probe_attempt_at: number | null
+  last_probe_success_at: number | null
+  last_probe_failure_at: number | null
+  probe_failure_count: number
+  probe_status: PoolScoreProbeStatus
+  updated_at: number
+  key?: PoolScoreKeySummary | null
+}
+
+export interface PoolScoresResponse {
+  provider_id: string
+  page: number
+  page_size: number
+  filters: {
+    api_format?: string | null
+    model_id?: string | null
+    hard_state?: string | null
+    probe_status?: string | null
+  }
+  items: PoolMemberScoreItem[]
+}
+
 export interface PoolKeysQuery {
   page?: number
   page_size?: number
@@ -201,6 +261,15 @@ export interface PoolKeysQuery {
   search_scope?: 'name' | 'full'
   sort_by?: 'imported_at' | 'last_used_at'
   sort_order?: 'asc' | 'desc'
+}
+
+export interface PoolScoresQuery {
+  page?: number
+  page_size?: number
+  api_format?: string
+  model_id?: string
+  hard_state?: string
+  probe_status?: string
 }
 
 export interface PoolKeySelectionRequest {
@@ -287,6 +356,29 @@ export async function listPoolKeys(
     cacheKey,
     async () => {
       const response = await client.get<PoolKeysPageResponse>(`/api/admin/pool/${providerId}/keys`, { params: normalizedParams })
+      return response.data
+    },
+    options.cacheTtlMs ?? 0,
+  )
+}
+
+export async function listPoolScores(
+  providerId: string,
+  params: PoolScoresQuery = {},
+  options: PoolReadOptions = {},
+): Promise<PoolScoresResponse> {
+  const normalizedParams = { ...params }
+  const cacheKey = buildCacheKey(
+    `pool:scores:${providerId}`,
+    normalizedParams as Record<string, unknown>,
+  )
+  return cachedRequest(
+    cacheKey,
+    async () => {
+      const response = await client.get<PoolScoresResponse>(
+        `/api/admin/pool/${providerId}/scores`,
+        { params: normalizedParams },
+      )
       return response.data
     },
     options.cacheTtlMs ?? 0,

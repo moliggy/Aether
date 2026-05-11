@@ -270,6 +270,9 @@ pub(crate) fn admin_provider_pool_config_from_config_value(
             health_policy_enabled: true,
             probing_enabled: false,
             probing_interval_minutes: 10,
+            probe_concurrency: 4,
+            score_top_n: 128,
+            score_fallback_scan_limit: 1024,
             stream_timeout_threshold: 3,
             stream_timeout_window_seconds: 1800,
             stream_timeout_cooldown_seconds: 300,
@@ -333,6 +336,24 @@ pub(crate) fn admin_provider_pool_config_from_config_value(
             .filter(|value| *value > 0)
             .map(|value| value.min(1440))
             .unwrap_or(10),
+        probe_concurrency: pool_advanced
+            .get("probe_concurrency")
+            .and_then(json_u64)
+            .filter(|value| *value > 0)
+            .map(|value| value.min(64))
+            .unwrap_or(4),
+        score_top_n: pool_advanced
+            .get("score_top_n")
+            .and_then(json_u64)
+            .filter(|value| *value > 0)
+            .map(|value| value.min(4096))
+            .unwrap_or(128),
+        score_fallback_scan_limit: pool_advanced
+            .get("score_fallback_scan_limit")
+            .and_then(json_u64)
+            .filter(|value| *value > 0)
+            .map(|value| value.min(50_000))
+            .unwrap_or(1024),
         stream_timeout_threshold: pool_advanced
             .get("stream_timeout_threshold")
             .and_then(json_u64)
@@ -405,6 +426,9 @@ mod tests {
                 "health_policy_enabled": false,
                 "probing_enabled": true,
                 "probing_interval_minutes": 20,
+                "probe_concurrency": 6,
+                "score_top_n": 256,
+                "score_fallback_scan_limit": 2048,
                 "stream_timeout_threshold": 4,
                 "stream_timeout_window_seconds": 900,
                 "stream_timeout_cooldown_seconds": 180
@@ -424,6 +448,9 @@ mod tests {
         assert!(!config.health_policy_enabled);
         assert!(config.probing_enabled);
         assert_eq!(config.probing_interval_minutes, 20);
+        assert_eq!(config.probe_concurrency, 6);
+        assert_eq!(config.score_top_n, 256);
+        assert_eq!(config.score_fallback_scan_limit, 2048);
         assert_eq!(config.stream_timeout_threshold, 4);
         assert_eq!(config.stream_timeout_window_seconds, 900);
         assert_eq!(config.stream_timeout_cooldown_seconds, 180);

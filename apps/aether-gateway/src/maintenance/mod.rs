@@ -11,7 +11,7 @@ pub(crate) use runtime::{
     run_admin_system_cleanup_once, skip_proxy_upgrade_rollout_node, spawn_audit_cleanup_worker,
     spawn_db_maintenance_worker, spawn_gemini_file_mapping_cleanup_worker,
     spawn_oauth_token_refresh_worker, spawn_pending_cleanup_worker, spawn_pool_monitor_worker,
-    spawn_pool_quota_probe_worker, spawn_provider_checkin_worker,
+    spawn_pool_quota_probe_worker, spawn_pool_score_rebuild_worker, spawn_provider_checkin_worker,
     spawn_proxy_node_metrics_cleanup_worker, spawn_proxy_node_stale_cleanup_worker,
     spawn_proxy_upgrade_rollout_worker, spawn_request_candidate_cleanup_worker,
     spawn_stats_aggregation_worker, spawn_stats_hourly_aggregation_worker,

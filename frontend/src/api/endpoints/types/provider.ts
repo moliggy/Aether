@@ -548,6 +548,9 @@ export interface PoolAdvancedConfig {
   health_policy_enabled?: boolean
   unschedulable_rules?: Array<Record<string, unknown>> | null
   batch_concurrency?: number | null
+  probe_concurrency?: number | null
+  score_top_n?: number | null
+  score_fallback_scan_limit?: number | null
   probing_enabled?: boolean
   probing_interval_minutes?: number | null
   auto_remove_banned_keys?: boolean

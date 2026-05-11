@@ -130,6 +130,37 @@ CREATE TABLE IF NOT EXISTS provider_api_keys (
     KEY provider_api_keys_provider_id_idx (`provider_id`)
 );
 
+CREATE TABLE IF NOT EXISTS pool_member_scores (
+    `id` VARCHAR(192) NOT NULL,
+    `pool_kind` VARCHAR(64) NOT NULL,
+    `pool_id` VARCHAR(64) NOT NULL,
+    `member_kind` VARCHAR(64) NOT NULL,
+    `member_id` VARCHAR(64) NOT NULL,
+    `capability` VARCHAR(64) NOT NULL,
+    `scope_kind` VARCHAR(64) NOT NULL,
+    `scope_id` VARCHAR(128),
+    `score` DOUBLE NOT NULL DEFAULT 0,
+    `hard_state` VARCHAR(64) NOT NULL DEFAULT 'unknown',
+    `score_version` BIGINT NOT NULL DEFAULT 1,
+    `score_reason` JSON NOT NULL,
+    `last_ranked_at` BIGINT,
+    `last_scheduled_at` BIGINT,
+    `last_success_at` BIGINT,
+    `last_failure_at` BIGINT,
+    `failure_count` BIGINT NOT NULL DEFAULT 0,
+    `last_probe_attempt_at` BIGINT,
+    `last_probe_success_at` BIGINT,
+    `last_probe_failure_at` BIGINT,
+    `probe_failure_count` BIGINT NOT NULL DEFAULT 0,
+    `probe_status` VARCHAR(64) NOT NULL DEFAULT 'never',
+    `updated_at` BIGINT NOT NULL,
+    PRIMARY KEY (`id`),
+    KEY pool_member_scores_rank_idx (`pool_kind`, `pool_id`, `capability`, `scope_kind`, `scope_id`, `hard_state`, `score`),
+    KEY pool_member_scores_member_idx (`pool_kind`, `pool_id`, `member_kind`, `member_id`),
+    KEY pool_member_scores_probe_idx (`pool_kind`, `pool_id`, `probe_status`, `last_probe_success_at`),
+    KEY pool_member_scores_updated_at_idx (`updated_at`)
+);
+
 CREATE TABLE IF NOT EXISTS api_key_provider_mappings (
     `id` VARCHAR(64) NOT NULL,
     `api_key_id` VARCHAR(64) NOT NULL,

@@ -535,6 +535,38 @@ CREATE TABLE IF NOT EXISTS public.provider_api_keys (
 
 
 --
+-- Name: pool_member_scores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE IF NOT EXISTS public.pool_member_scores (
+    id character varying(192) NOT NULL,
+    pool_kind character varying(64) NOT NULL,
+    pool_id character varying(64) NOT NULL,
+    member_kind character varying(64) NOT NULL,
+    member_id character varying(64) NOT NULL,
+    capability character varying(64) NOT NULL,
+    scope_kind character varying(64) NOT NULL,
+    scope_id character varying(128),
+    score double precision DEFAULT 0 NOT NULL,
+    hard_state character varying(64) DEFAULT 'unknown'::character varying NOT NULL,
+    score_version bigint DEFAULT 1 NOT NULL,
+    score_reason jsonb NOT NULL,
+    last_ranked_at bigint,
+    last_scheduled_at bigint,
+    last_success_at bigint,
+    last_failure_at bigint,
+    failure_count bigint DEFAULT 0 NOT NULL,
+    last_probe_attempt_at bigint,
+    last_probe_success_at bigint,
+    last_probe_failure_at bigint,
+    probe_failure_count bigint DEFAULT 0 NOT NULL,
+    probe_status character varying(64) DEFAULT 'never'::character varying NOT NULL,
+    updated_at bigint NOT NULL
+);
+
+
+
+--
 -- Name: provider_endpoints; Type: TABLE; Schema: public; Owner: -
 --
 

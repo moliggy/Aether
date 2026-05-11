@@ -16,6 +16,7 @@ mod materialization_policy;
 mod passthrough;
 mod plan_builders;
 mod pool_scheduler;
+pub(crate) mod pool_scores;
 mod report_context;
 mod route;
 mod runtime_miss;
@@ -36,6 +37,7 @@ pub(crate) use self::plan_builders::{
     build_standard_stream_plan_from_decision, build_standard_sync_plan_from_decision,
     AiStreamAttempt, AiSyncAttempt,
 };
+pub(crate) use self::pool_scores::build_provider_key_pool_score_upsert;
 pub(crate) use self::route::is_matching_stream_request as planner_is_matching_stream_request;
 pub(crate) use self::specialized::{
     build_local_gemini_files_stream_attempt_source_for_kind,

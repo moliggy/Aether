@@ -1189,6 +1189,170 @@
       </template>
     </Card>
 
+    <Card
+      v-if="selectedProviderId"
+      variant="default"
+      class="overflow-hidden"
+    >
+      <div class="flex flex-col gap-3 border-b border-border/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-3.5">
+        <div class="min-w-0">
+          <h3 class="text-base font-semibold">
+            评分排序
+          </h3>
+          <p class="mt-1 text-xs text-muted-foreground">
+            Top {{ poolScorePage.items.length }} / page {{ poolScorePage.page || 1 }}
+          </p>
+        </div>
+        <RefreshButton
+          :loading="scoresLoading"
+          title="刷新评分"
+          @click="() => loadScores()"
+        />
+      </div>
+
+      <div class="grid gap-2 border-b border-border/60 bg-muted/20 px-4 py-3 sm:grid-cols-4 sm:px-6">
+        <Input
+          v-model="scoreApiFormatFilter"
+          class="h-8 text-xs"
+          placeholder="api_format"
+        />
+        <Input
+          v-model="scoreModelIdFilter"
+          class="h-8 text-xs"
+          placeholder="model_id"
+        />
+        <Select v-model="scoreHardStateFilter">
+          <SelectTrigger class="h-8 text-xs border-border/60">
+            <SelectValue placeholder="硬状态" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem
+              v-for="item in poolScoreHardStateOptions"
+              :key="item.value"
+              :value="item.value"
+            >
+              {{ item.label }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        <Select v-model="scoreProbeStatusFilter">
+          <SelectTrigger class="h-8 text-xs border-border/60">
+            <SelectValue placeholder="探测" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem
+              v-for="item in poolScoreProbeStatusOptions"
+              :key="item.value"
+              :value="item.value"
+            >
+              {{ item.label }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div
+        v-if="scoresLoading && poolScorePage.items.length === 0"
+        class="flex items-center justify-center py-10"
+      >
+        <div class="animate-spin rounded-full h-7 w-7 border-b-2 border-primary" />
+      </div>
+      <div
+        v-else-if="poolScorePage.items.length === 0"
+        class="flex flex-col items-center justify-center py-10 text-center"
+      >
+        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+          <SlidersHorizontal class="h-6 w-6 text-muted-foreground" />
+        </div>
+        <p class="mt-3 text-sm text-muted-foreground">
+          {{ hasPoolScoreFilters ? '未找到匹配评分' : '暂无评分数据' }}
+        </p>
+      </div>
+      <div
+        v-else
+        class="overflow-x-auto"
+      >
+        <Table class="w-full min-w-[760px] table-fixed">
+          <TableHeader>
+            <TableRow class="border-b border-border/60 hover:bg-transparent">
+              <TableHead class="w-[24%] font-semibold">
+                账号
+              </TableHead>
+              <TableHead class="w-[24%] font-semibold">
+                范围
+              </TableHead>
+              <TableHead class="w-[12%] text-center font-semibold">
+                分数
+              </TableHead>
+              <TableHead class="w-[12%] text-center font-semibold">
+                状态
+              </TableHead>
+              <TableHead class="w-[12%] text-center font-semibold">
+                探测
+              </TableHead>
+              <TableHead class="w-[16%] text-center font-semibold">
+                更新时间
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow
+              v-for="score in poolScorePage.items"
+              :key="score.id"
+              class="border-b border-border/40 last:border-b-0 hover:bg-muted/30"
+            >
+              <TableCell class="py-3">
+                <div class="min-w-0">
+                  <div class="truncate text-sm">
+                    {{ score.key?.name || score.member_id }}
+                  </div>
+                  <div class="truncate font-mono text-[10px] text-muted-foreground">
+                    {{ score.member_id }}
+                  </div>
+                </div>
+              </TableCell>
+              <TableCell class="py-3">
+                <div class="min-w-0 text-xs">
+                  <div class="truncate text-foreground/90">
+                    {{ score.capability || '-' }}
+                  </div>
+                  <div class="truncate text-[10px] text-muted-foreground">
+                    {{ score.scope_kind }}: {{ score.scope_id || '*' }}
+                  </div>
+                </div>
+              </TableCell>
+              <TableCell class="py-3 text-center">
+                <span class="font-mono text-xs tabular-nums">
+                  {{ formatPoolScore(score.score) }}
+                </span>
+              </TableCell>
+              <TableCell class="py-3 text-center">
+                <Badge
+                  variant="outline"
+                  class="text-[10px]"
+                >
+                  {{ getPoolScoreHardStateLabel(score.hard_state) }}
+                </Badge>
+              </TableCell>
+              <TableCell class="py-3 text-center">
+                <Badge
+                  variant="secondary"
+                  class="text-[10px]"
+                >
+                  {{ getPoolScoreProbeStatusLabel(score.probe_status) }}
+                </Badge>
+              </TableCell>
+              <TableCell class="py-3 text-center">
+                <span class="text-[10px] text-muted-foreground">
+                  {{ formatUnixSeconds(score.updated_at) }}
+                </span>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
+    </Card>
+
     <!-- Dialogs -->
     <OAuthAccountDialog
       v-if="selectedProviderId"
@@ -1309,6 +1473,7 @@ import {
   getPoolOverview,
   getPoolSchedulingPresets,
   listPoolKeys,
+  listPoolScores,
   clearPoolCooldown,
 } from '@/api/endpoints/pool'
 import {
@@ -1324,7 +1489,9 @@ import type {
   PoolOverviewItem,
   PoolKeyDetail,
   PoolKeysPageResponse,
+  PoolMemberScoreItem,
   PoolPresetMeta,
+  PoolScoresResponse,
 } from '@/api/endpoints/pool'
 import type {
   ClaudeCodeAdvancedConfig,
@@ -1420,17 +1587,38 @@ let overviewRequestId = 0
 let selectProviderRequestId = 0
 let providerDataRequestId = 0
 let keysRequestId = 0
+let scoresRequestId = 0
 let keysSearchDebounceTimer: number | null = null
+let scoresFilterDebounceTimer: number | null = null
 let suppressFiltersWatch = false
 let hasHydratedInitialProviderSelection = false
 const POOL_OVERVIEW_CACHE_TTL_MS = 10 * 1000
 const POOL_KEYS_CACHE_TTL_MS = 10 * 1000
+const POOL_SCORES_CACHE_TTL_MS = 10 * 1000
 const POOL_SCHEDULING_PRESETS_CACHE_TTL_MS = 5 * 60 * 1000
 const poolKeyStatusFilterOptions: Array<{ value: PoolManagementViewState['status'], label: string }> = [
   { value: 'all', label: '全部状态' },
   { value: 'active', label: '可调度' },
   { value: 'cooldown', label: '冷却中' },
   { value: 'inactive', label: '禁用' },
+]
+const poolScoreHardStateOptions = [
+  { value: 'all', label: '全部状态' },
+  { value: 'available', label: '可用' },
+  { value: 'unknown', label: '未知' },
+  { value: 'cooldown', label: '冷却' },
+  { value: 'quota_exhausted', label: '额度耗尽' },
+  { value: 'auth_invalid', label: '授权无效' },
+  { value: 'banned', label: '封禁' },
+  { value: 'inactive', label: '禁用' },
+]
+const poolScoreProbeStatusOptions = [
+  { value: 'all', label: '全部探测' },
+  { value: 'never', label: '未探测' },
+  { value: 'ok', label: '正常' },
+  { value: 'failed', label: '失败' },
+  { value: 'stale', label: '过期' },
+  { value: 'in_progress', label: '探测中' },
 ]
 
 async function loadOverview(options: { cacheTtlMs?: number } = {}) {
@@ -1488,6 +1676,7 @@ async function loadOverview(options: { cacheTtlMs?: number } = {}) {
       showAccountBatchDialog.value = false
       closeProviderProxyPopovers()
       resetKeyPage()
+      resetScorePage()
     }
   } catch (err) {
     if (requestId !== overviewRequestId) return
@@ -1720,9 +1909,11 @@ async function selectProvider(
   }
   keysLoadedOnce.value = false
   resetKeyPage(currentPage.value, pageSize.value)
+  resetScorePage()
   const keysTask = loadKeys({ cacheTtlMs: options.cacheTtlMs ?? 0 })
   // Provider summary is non-blocking for key list rendering.
   void loadProviderData(id)
+  void loadScores({ cacheTtlMs: options.cacheTtlMs ? POOL_SCORES_CACHE_TTL_MS : 0 })
   await keysTask
   if (requestId !== selectProviderRequestId) return
 }
@@ -1748,18 +1939,40 @@ function createEmptyKeyPage(page = 1, pageSizeValue = 50): PoolKeysPageResponse 
   return { total: 0, page, page_size: pageSizeValue, keys: [] }
 }
 
+function createEmptyScorePage(): PoolScoresResponse {
+  return {
+    provider_id: selectedProviderId.value || '',
+    page: 1,
+    page_size: 20,
+    filters: {},
+    items: [],
+  }
+}
+
 const keyPage = ref<PoolKeysPageResponse>(createEmptyKeyPage())
+const poolScorePage = ref<PoolScoresResponse>(createEmptyScorePage())
 const keysLoading = ref(false)
+const scoresLoading = ref(false)
 const keysLoadedOnce = ref(false)
 const refreshingCurrentPageQuota = ref(false)
 const searchQuery = ref(restoredViewState.search)
 const statusFilter = ref(restoredViewState.status)
+const scoreApiFormatFilter = ref('')
+const scoreModelIdFilter = ref('')
+const scoreHardStateFilter = ref('all')
+const scoreProbeStatusFilter = ref('all')
 const currentPage = ref(restoredViewState.page)
 const pageSize = ref(restoredViewState.pageSize)
 const sortBy = ref<PoolManagementSortBy | null>(restoredViewState.sortBy)
 const sortOrder = ref<PoolManagementSortOrder>(restoredViewState.sortOrder)
 const poolStatsMode = ref<PoolManagementStatsMode>(restoredViewState.statsMode)
 const hasPoolKeyFilters = computed(() => searchQuery.value.trim().length > 0 || statusFilter.value !== 'all')
+const hasPoolScoreFilters = computed(() => {
+  return scoreApiFormatFilter.value.trim().length > 0
+    || scoreModelIdFilter.value.trim().length > 0
+    || scoreHardStateFilter.value !== 'all'
+    || scoreProbeStatusFilter.value !== 'all'
+})
 const MANUAL_QUOTA_REFRESH_COOLDOWN_SECONDS = 5 * 60
 const refreshingOAuthKeyId = ref<string | null>(null)
 const resettingCycleKeyId = ref<string | null>(null)
@@ -2060,6 +2273,10 @@ function resetKeyPage(page = currentPage.value, pageSizeValue = pageSize.value):
   keyPage.value = createEmptyKeyPage(page, pageSizeValue)
 }
 
+function resetScorePage(): void {
+  poolScorePage.value = createEmptyScorePage()
+}
+
 function refreshOverviewInBackground(): void {
   void loadOverview()
 }
@@ -2199,6 +2416,36 @@ async function refreshCurrentPage() {
   if (!quotaDidReload) {
     await refresh()
   }
+  void loadScores()
+}
+
+async function loadScores(options: { cacheTtlMs?: number } = {}) {
+  if (!selectedProviderId.value) return
+  const requestId = ++scoresRequestId
+  const providerId = selectedProviderId.value
+  scoresLoading.value = true
+  try {
+    const nextPage = await listPoolScores(providerId, {
+      page: 1,
+      page_size: 20,
+      api_format: scoreApiFormatFilter.value.trim() || undefined,
+      model_id: scoreModelIdFilter.value.trim() || undefined,
+      hard_state: scoreHardStateFilter.value === 'all' ? undefined : scoreHardStateFilter.value,
+      probe_status: scoreProbeStatusFilter.value === 'all' ? undefined : scoreProbeStatusFilter.value,
+    }, {
+      cacheTtlMs: options.cacheTtlMs ?? 0,
+    })
+    if (requestId !== scoresRequestId || selectedProviderId.value !== providerId) return
+    poolScorePage.value = nextPage
+  } catch (err) {
+    if (requestId !== scoresRequestId || selectedProviderId.value !== providerId) return
+    resetScorePage()
+    showError(parseApiError(err, '读取评分失败'))
+  } finally {
+    if (requestId === scoresRequestId) {
+      scoresLoading.value = false
+    }
+  }
 }
 
 async function loadKeys(options: { cacheTtlMs?: number } = {}) {
@@ -2274,6 +2521,20 @@ watch(searchQuery, () => {
     keysSearchDebounceTimer = null
     void loadKeys({ cacheTtlMs: POOL_KEYS_CACHE_TTL_MS })
   }, 300)
+})
+
+watch([scoreApiFormatFilter, scoreModelIdFilter], () => {
+  if (scoresFilterDebounceTimer !== null) {
+    clearTimeout(scoresFilterDebounceTimer)
+  }
+  scoresFilterDebounceTimer = window.setTimeout(() => {
+    scoresFilterDebounceTimer = null
+    void loadScores({ cacheTtlMs: POOL_SCORES_CACHE_TTL_MS })
+  }, 300)
+})
+
+watch([scoreHardStateFilter, scoreProbeStatusFilter], () => {
+  void loadScores({ cacheTtlMs: POOL_SCORES_CACHE_TTL_MS })
 })
 
 function normalizeAuthTypeForEdit(key: PoolKeyDetail): EndpointAPIKey['auth_type'] {
@@ -3584,6 +3845,26 @@ function formatStatUsd(value: number | string | null | undefined): string {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+function formatPoolScore(value: number): string {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '0.000'
+  return n.toFixed(3)
+}
+
+function getPoolScoreHardStateLabel(value: PoolMemberScoreItem['hard_state']): string {
+  return poolScoreHardStateOptions.find(item => item.value === value)?.label || value
+}
+
+function getPoolScoreProbeStatusLabel(value: PoolMemberScoreItem['probe_status']): string {
+  return poolScoreProbeStatusOptions.find(item => item.value === value)?.label || value
+}
+
+function formatUnixSeconds(seconds: number | null | undefined): string {
+  const raw = Number(seconds ?? 0)
+  if (!Number.isFinite(raw) || raw <= 0) return '-'
+  return formatRelativeTime(new Date(raw * 1000).toISOString())
+}
+
 function formatRelativeTime(isoStr: string): string {
   const date = new Date(isoStr)
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -3611,9 +3892,14 @@ onBeforeUnmount(() => {
     clearTimeout(keysSearchDebounceTimer)
     keysSearchDebounceTimer = null
   }
+  if (scoresFilterDebounceTimer !== null) {
+    clearTimeout(scoresFilterDebounceTimer)
+    scoresFilterDebounceTimer = null
+  }
   overviewRequestId += 1
   selectProviderRequestId += 1
   providerDataRequestId += 1
   keysRequestId += 1
+  scoresRequestId += 1
 })
 </script>

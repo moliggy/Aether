@@ -149,6 +149,18 @@ pub(crate) fn admin_pool_provider_id_from_path(request_path: &str) -> Option<Str
     }
 }
 
+pub(crate) fn admin_pool_provider_id_from_scores_path(request_path: &str) -> Option<String> {
+    let raw = request_path.strip_prefix("/api/admin/pool/")?;
+    let mut segments = raw.split('/');
+    let provider_id = segments.next()?.trim();
+    let scores_segment = segments.next()?.trim_end_matches('/').trim();
+    if provider_id.is_empty() || scores_segment != "scores" {
+        None
+    } else {
+        Some(provider_id.to_string())
+    }
+}
+
 pub(crate) fn is_admin_pool_route(request_context: &AdminRequestContext<'_>) -> bool {
     let normalized_path = request_context.path().trim_end_matches('/');
     let path = if normalized_path.is_empty() {
@@ -163,6 +175,10 @@ pub(crate) fn is_admin_pool_route(request_context: &AdminRequestContext<'_>) -> 
         || (request_context.method() == http::Method::GET
             && path.starts_with("/api/admin/pool/")
             && path.ends_with("/keys")
+            && path.matches('/').count() == 5)
+        || (request_context.method() == http::Method::GET
+            && path.starts_with("/api/admin/pool/")
+            && path.ends_with("/scores")
             && path.matches('/').count() == 5)
         || (request_context.method() == http::Method::POST
             && path.starts_with("/api/admin/pool/")

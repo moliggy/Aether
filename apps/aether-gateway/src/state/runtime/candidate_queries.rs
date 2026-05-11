@@ -57,6 +57,16 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
+    pub(crate) async fn list_pool_key_candidate_rows_for_group_key_ids(
+        &self,
+        query: &candidate_selection::StoredPoolKeyCandidateRowsByKeyIdsQuery,
+    ) -> Result<Vec<candidate_selection::StoredMinimalCandidateSelectionRow>, GatewayError> {
+        self.data
+            .list_pool_key_candidate_rows_for_group_key_ids(query)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
     pub(crate) async fn read_provider_quota_snapshot(
         &self,
         provider_id: &str,

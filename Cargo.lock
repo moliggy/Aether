@@ -63,6 +63,7 @@ version = "0.1.0"
 dependencies = [
  "aether-ai-formats",
  "aether-contracts",
+ "aether-data-contracts",
  "aether-scheduler-core",
  "async-trait",
  "http",
