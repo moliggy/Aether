@@ -1963,6 +1963,34 @@ mod tests {
     }
 
     #[test]
+    fn list_policy_intersects_multiple_group_restrictions() {
+        let groups = vec![
+            sample_group(
+                "team-a",
+                10,
+                Some(vec!["gpt-5", "gpt-4.1"]),
+                "specific",
+                None,
+                "system",
+            ),
+            sample_group(
+                "team-b",
+                20,
+                Some(vec!["gpt-4.1", "gemini-2.5-pro"]),
+                "specific",
+                None,
+                "system",
+            ),
+        ];
+
+        let policy = resolve_effective_list_policy(None, "unrestricted", &groups, |group| {
+            (&group.allowed_models_mode, group.allowed_models.clone())
+        });
+
+        assert_eq!(policy, Some(vec!["gpt-4.1".to_string()]));
+    }
+
+    #[test]
     fn user_unrestricted_does_not_bypass_group_restrictions() {
         let groups = vec![sample_group(
             "restricted",

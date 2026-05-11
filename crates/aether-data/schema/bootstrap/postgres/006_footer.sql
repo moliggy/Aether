@@ -15,7 +15,7 @@ VALUES (
     '00000000-0000-0000-0000-000000000001',
     'Default',
     'default',
-    'Default unrestricted group for all users',
+    'Default group for all users',
     0,
     'unrestricted',
     'unrestricted',
@@ -29,7 +29,7 @@ VALUES (
     '00000000-0000-0000-0000-000000000002',
     'default_user_group_id',
     '"00000000-0000-0000-0000-000000000001"'::json,
-    'Default unrestricted user group'
+    'Default user group'
 )
 ON CONFLICT (key) DO NOTHING;
 

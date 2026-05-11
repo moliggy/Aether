@@ -6,7 +6,8 @@ use aether_data::repository::auth::{
 };
 use aether_data::repository::usage::InMemoryUsageReadRepository;
 use aether_data::repository::users::{
-    InMemoryUserReadRepository, StoredUserAuthRecord, StoredUserExportRow,
+    InMemoryUserReadRepository, StoredUserAuthRecord, StoredUserExportRow, UpsertUserGroupRecord,
+    UserReadRepository,
 };
 use aether_data::repository::wallet::InMemoryWalletRepository;
 use aether_data::repository::wallet::StoredWalletSnapshot;
@@ -427,6 +428,121 @@ async fn gateway_handles_admin_users_root_locally_with_trusted_admin_principal()
     assert_eq!(create_payload["unlimited"], false);
 
     create_gateway_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_allows_default_user_group_access_policy_updates() {
+    let upstream_hits = Arc::new(Mutex::new(0usize));
+    let upstream_hits_clone = Arc::clone(&upstream_hits);
+    let upstream = Router::new().fallback(any(move |_request: Request| {
+        let upstream_hits_inner = Arc::clone(&upstream_hits_clone);
+        async move {
+            *upstream_hits_inner.lock().expect("mutex should lock") += 1;
+            (StatusCode::OK, Body::from("unexpected upstream hit"))
+        }
+    }));
+
+    let user_repository = Arc::new(
+        InMemoryUserReadRepository::seed_auth_users(vec![
+            sample_admin_user("user-1"),
+            sample_admin_user_with_role("user-2", "user", "bob@example.com", "bob"),
+        ])
+        .with_export_users(vec![
+            sample_admin_export_user("user-1"),
+            sample_admin_export_user_with("user", true, "user-2", "bob@example.com", "bob"),
+        ]),
+    );
+    let group = user_repository
+        .create_user_group(UpsertUserGroupRecord {
+            name: "Baseline".to_string(),
+            description: None,
+            priority: 0,
+            allowed_providers: Some(vec!["openai".to_string()]),
+            allowed_providers_mode: "specific".to_string(),
+            allowed_api_formats: Some(vec!["openai:chat".to_string()]),
+            allowed_api_formats_mode: "specific".to_string(),
+            allowed_models: Some(vec!["gpt-4.1".to_string()]),
+            allowed_models_mode: "specific".to_string(),
+            rate_limit: Some(60),
+            rate_limit_mode: "custom".to_string(),
+        })
+        .await
+        .expect("user group should create")
+        .expect("user group should exist");
+    let group_id = group.id.clone();
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_user_reader_for_tests(user_repository.clone())
+                    .with_system_config_values_for_tests(Vec::<(String, serde_json::Value)>::new()),
+            ),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+    let client = reqwest::Client::new();
+
+    let default_response = client
+        .put(format!("{gateway_url}/api/admin/user-groups/default"))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({ "group_id": group_id }))
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(default_response.status(), StatusCode::OK);
+    let default_payload: serde_json::Value = default_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(default_payload["default_group_id"], group_id);
+
+    let members = user_repository
+        .list_user_group_members(&group_id)
+        .await
+        .expect("default members should list");
+    assert_eq!(members.len(), 2);
+
+    let update_response = client
+        .put(format!("{gateway_url}/api/admin/user-groups/{group_id}"))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "name": "Baseline Limited",
+            "allowed_providers": ["openai", "anthropic"],
+            "allowed_providers_mode": "specific",
+            "allowed_api_formats": ["openai:chat"],
+            "allowed_api_formats_mode": "specific",
+            "allowed_models": ["gpt-4.1", "claude-sonnet-4-5"],
+            "allowed_models_mode": "specific",
+            "rate_limit": 25,
+            "rate_limit_mode": "custom"
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(update_response.status(), StatusCode::OK);
+    let update_payload: serde_json::Value = update_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(update_payload["is_default"], true);
+    assert_eq!(update_payload["name"], "Baseline Limited");
+    assert_eq!(
+        update_payload["allowed_models"],
+        json!(["gpt-4.1", "claude-sonnet-4-5"])
+    );
+    assert_eq!(update_payload["rate_limit"], 25);
+
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
 }
 
 #[tokio::test]

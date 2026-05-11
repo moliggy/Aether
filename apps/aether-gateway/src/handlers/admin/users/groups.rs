@@ -118,11 +118,6 @@ pub(in super::super) async fn build_admin_update_user_group_response(
         Ok(value) => value,
         Err(detail) => return Ok(bad_request_owned(detail)),
     };
-    if read_default_user_group_id(state).await?.as_deref() == Some(group_id.as_str())
-        && !is_unrestricted_default_group_record(&record)
-    {
-        return Ok(bad_request_owned("默认用户组不能配置访问限制".to_string()));
-    }
     let group = match state.update_user_group(&group_id, record).await {
         Ok(Some(group)) => group,
         Ok(None) => return Ok(not_found("用户分组不存在")),
@@ -275,11 +270,8 @@ pub(in super::super) async fn build_admin_set_default_user_group_response(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
     if let Some(group_id) = group_id.as_deref() {
-        let Some(group) = state.find_user_group_by_id(group_id).await? else {
+        if state.find_user_group_by_id(group_id).await?.is_none() {
             return Ok(bad_request_owned("默认用户组不存在".to_string()));
-        };
-        if !is_unrestricted_default_group(&group) {
-            return Ok(bad_request_owned("默认用户组不能配置访问限制".to_string()));
         }
         state
             .upsert_system_config_json_value(
@@ -415,30 +407,6 @@ fn normalize_ids(values: Vec<String>) -> Vec<String> {
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect()
-}
-
-fn is_unrestricted_default_group(group: &aether_data::repository::users::StoredUserGroup) -> bool {
-    list_mode_has_no_restriction(&group.allowed_providers_mode)
-        && list_mode_has_no_restriction(&group.allowed_api_formats_mode)
-        && list_mode_has_no_restriction(&group.allowed_models_mode)
-        && rate_mode_has_no_restriction(&group.rate_limit_mode)
-}
-
-fn is_unrestricted_default_group_record(
-    record: &aether_data::repository::users::UpsertUserGroupRecord,
-) -> bool {
-    list_mode_has_no_restriction(&record.allowed_providers_mode)
-        && list_mode_has_no_restriction(&record.allowed_api_formats_mode)
-        && list_mode_has_no_restriction(&record.allowed_models_mode)
-        && rate_mode_has_no_restriction(&record.rate_limit_mode)
-}
-
-fn list_mode_has_no_restriction(mode: &str) -> bool {
-    matches!(mode, "inherit" | "unrestricted")
-}
-
-fn rate_mode_has_no_restriction(mode: &str) -> bool {
-    matches!(mode, "inherit" | "system")
 }
 
 fn user_group_id_from_path(request_path: &str) -> Option<String> {

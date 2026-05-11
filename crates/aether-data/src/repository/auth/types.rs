@@ -154,7 +154,7 @@ pub struct ResolvedAuthApiKeySnapshot {
 impl ResolvedAuthApiKeySnapshot {
     pub fn from_stored(snapshot: StoredAuthApiKeySnapshot, now_unix_secs: u64) -> Self {
         let currently_usable = snapshot.is_currently_usable(now_unix_secs);
-        Self {
+        let mut resolved = Self {
             user_id: snapshot.user_id,
             username: snapshot.username,
             email: snapshot.email,
@@ -178,7 +178,9 @@ impl ResolvedAuthApiKeySnapshot {
             api_key_allowed_api_formats: snapshot.api_key_allowed_api_formats,
             api_key_allowed_models: snapshot.api_key_allowed_models,
             currently_usable,
-        }
+        };
+        resolved.constrain_non_standalone_api_key_policy_to_user_policy();
+        resolved
     }
 
     pub fn effective_allowed_providers(&self) -> Option<&[String]> {
@@ -186,7 +188,8 @@ impl ResolvedAuthApiKeySnapshot {
             return non_empty_allowed_list(self.api_key_allowed_providers.as_deref());
         }
 
-        non_empty_allowed_list(self.api_key_allowed_providers.as_deref())
+        self.api_key_allowed_providers
+            .as_deref()
             .or(self.user_allowed_providers.as_deref())
     }
 
@@ -195,7 +198,8 @@ impl ResolvedAuthApiKeySnapshot {
             return non_empty_allowed_list(self.api_key_allowed_api_formats.as_deref());
         }
 
-        non_empty_allowed_list(self.api_key_allowed_api_formats.as_deref())
+        self.api_key_allowed_api_formats
+            .as_deref()
             .or(self.user_allowed_api_formats.as_deref())
     }
 
@@ -204,7 +208,8 @@ impl ResolvedAuthApiKeySnapshot {
             return non_empty_allowed_list(self.api_key_allowed_models.as_deref());
         }
 
-        non_empty_allowed_list(self.api_key_allowed_models.as_deref())
+        self.api_key_allowed_models
+            .as_deref()
             .or(self.user_allowed_models.as_deref())
     }
 
@@ -219,11 +224,53 @@ impl ResolvedAuthApiKeySnapshot {
         self.user_allowed_api_formats = allowed_api_formats;
         self.user_allowed_models = allowed_models;
         self.user_rate_limit = rate_limit;
+        self.constrain_non_standalone_api_key_policy_to_user_policy();
+    }
+
+    fn constrain_non_standalone_api_key_policy_to_user_policy(&mut self) {
+        if self.api_key_is_standalone {
+            return;
+        }
+        constrain_api_key_list_policy_to_user_policy(
+            &mut self.user_allowed_providers,
+            &mut self.api_key_allowed_providers,
+        );
+        constrain_api_key_list_policy_to_user_policy(
+            &mut self.user_allowed_api_formats,
+            &mut self.api_key_allowed_api_formats,
+        );
+        constrain_api_key_list_policy_to_user_policy(
+            &mut self.user_allowed_models,
+            &mut self.api_key_allowed_models,
+        );
     }
 }
 
 fn non_empty_allowed_list(values: Option<&[String]>) -> Option<&[String]> {
     values.filter(|items| !items.is_empty())
+}
+
+fn constrain_api_key_list_policy_to_user_policy(
+    user_policy: &mut Option<Vec<String>>,
+    api_key_policy: &mut Option<Vec<String>>,
+) {
+    let Some(api_key_values) = api_key_policy.as_ref() else {
+        return;
+    };
+    let Some(user_values) = user_policy.clone() else {
+        return;
+    };
+    let effective = intersect_allowed_lists(api_key_values, &user_values);
+    *user_policy = Some(effective.clone());
+    *api_key_policy = Some(effective);
+}
+
+fn intersect_allowed_lists(left: &[String], right: &[String]) -> Vec<String> {
+    let right_values = right.iter().collect::<std::collections::BTreeSet<_>>();
+    left.iter()
+        .filter(|value| right_values.contains(*value))
+        .cloned()
+        .collect()
 }
 
 #[async_trait]
@@ -827,7 +874,7 @@ mod tests {
     }
 
     #[test]
-    fn resolved_snapshot_prefers_api_key_lists_over_user_lists() {
+    fn non_standalone_snapshot_intersects_api_key_and_user_allowed_lists() {
         let snapshot = StoredAuthApiKeySnapshot::new(
             "user-1".to_string(),
             "alice".to_string(),
@@ -847,9 +894,9 @@ mod tests {
             Some(60),
             Some(5),
             Some(200),
-            Some(serde_json::json!(["anthropic"])),
-            None,
-            None,
+            Some(serde_json::json!(["anthropic", "openai"])),
+            Some(serde_json::json!(["claude:messages"])),
+            Some(serde_json::json!(["gpt-5"])),
         )
         .expect("snapshot should build");
 
@@ -858,16 +905,56 @@ mod tests {
         assert!(resolved.currently_usable);
         assert_eq!(
             resolved.effective_allowed_providers(),
-            Some(&["anthropic".to_string()][..])
+            Some(&["openai".to_string()][..])
+        );
+        assert_eq!(resolved.effective_allowed_api_formats(), Some(&[][..]));
+        assert_eq!(resolved.effective_allowed_models(), Some(&[][..]));
+    }
+
+    #[test]
+    fn applying_user_group_policy_keeps_non_standalone_key_at_intersection() {
+        let snapshot = StoredAuthApiKeySnapshot::new(
+            "user-1".to_string(),
+            "alice".to_string(),
+            None,
+            "user".to_string(),
+            "local".to_string(),
+            true,
+            false,
+            None,
+            None,
+            None,
+            "key-1".to_string(),
+            Some("default".to_string()),
+            true,
+            false,
+            false,
+            Some(60),
+            Some(5),
+            Some(200),
+            Some(serde_json::json!(["openai", "anthropic"])),
+            Some(serde_json::json!(["openai:chat", "claude:messages"])),
+            Some(serde_json::json!(["gpt-4.1", "claude-sonnet-4-5"])),
+        )
+        .expect("snapshot should build");
+
+        let mut resolved = ResolvedAuthApiKeySnapshot::from_stored(snapshot, 150);
+        resolved.apply_user_policy(
+            Some(vec!["openai".to_string(), "gemini".to_string()]),
+            Some(vec!["openai:chat".to_string()]),
+            Some(vec!["gpt-5".to_string()]),
+            Some(60),
+        );
+
+        assert_eq!(
+            resolved.effective_allowed_providers(),
+            Some(&["openai".to_string()][..])
         );
         assert_eq!(
             resolved.effective_allowed_api_formats(),
             Some(&["openai:chat".to_string()][..])
         );
-        assert_eq!(
-            resolved.effective_allowed_models(),
-            Some(&["gpt-4.1".to_string()][..])
-        );
+        assert_eq!(resolved.effective_allowed_models(), Some(&[][..]));
     }
 
     #[test]
@@ -990,6 +1077,40 @@ mod tests {
             resolved.effective_allowed_models(),
             Some(&["gpt-4.1".to_string()][..])
         );
+    }
+
+    #[test]
+    fn non_standalone_snapshot_keeps_empty_key_allowed_lists_as_deny_all() {
+        let snapshot = StoredAuthApiKeySnapshot::new(
+            "user-1".to_string(),
+            "alice".to_string(),
+            None,
+            "user".to_string(),
+            "local".to_string(),
+            true,
+            false,
+            Some(serde_json::json!(["openai"])),
+            Some(serde_json::json!(["openai:chat"])),
+            Some(serde_json::json!(["gpt-4.1"])),
+            "user-key".to_string(),
+            Some("default".to_string()),
+            true,
+            false,
+            false,
+            Some(60),
+            None,
+            None,
+            Some(serde_json::json!([])),
+            Some(serde_json::json!([])),
+            Some(serde_json::json!([])),
+        )
+        .expect("snapshot should build");
+
+        let resolved = ResolvedAuthApiKeySnapshot::from_stored(snapshot, 150);
+
+        assert_eq!(resolved.effective_allowed_providers(), Some(&[][..]));
+        assert_eq!(resolved.effective_allowed_api_formats(), Some(&[][..]));
+        assert_eq!(resolved.effective_allowed_models(), Some(&[][..]));
     }
 
     #[test]

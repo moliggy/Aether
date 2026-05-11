@@ -139,7 +139,6 @@
                 <div class="flex w-full items-center sm:w-auto sm:shrink-0">
                   <Switch
                     :model-value="form.allowed_providers_mode === 'unrestricted'"
-                    :disabled="selectedGroup?.is_default"
                     @update:model-value="(v) => (form.allowed_providers_mode = v ? 'unrestricted' : 'specific')"
                   />
                 </div>
@@ -148,7 +147,7 @@
                     v-model="form.allowed_providers"
                     :options="providerOptions"
                     :search-threshold="0"
-                    :disabled="selectedGroup?.is_default || form.allowed_providers_mode === 'unrestricted'"
+                    :disabled="form.allowed_providers_mode === 'unrestricted'"
                     :placeholder="form.allowed_providers_mode === 'unrestricted' ? '不限制所有选项' : '选择提供商'"
                     empty-text="暂无选项"
                   />
@@ -162,7 +161,6 @@
                 <div class="flex w-full items-center sm:w-auto sm:shrink-0">
                   <Switch
                     :model-value="form.allowed_api_formats_mode === 'unrestricted'"
-                    :disabled="selectedGroup?.is_default"
                     @update:model-value="(v) => (form.allowed_api_formats_mode = v ? 'unrestricted' : 'specific')"
                   />
                 </div>
@@ -171,7 +169,7 @@
                     v-model="form.allowed_api_formats"
                     :options="apiFormatOptions"
                     :search-threshold="0"
-                    :disabled="selectedGroup?.is_default || form.allowed_api_formats_mode === 'unrestricted'"
+                    :disabled="form.allowed_api_formats_mode === 'unrestricted'"
                     :placeholder="form.allowed_api_formats_mode === 'unrestricted' ? '不限制所有选项' : '选择端点'"
                     empty-text="暂无选项"
                   />
@@ -185,7 +183,6 @@
                 <div class="flex w-full items-center sm:w-auto sm:shrink-0">
                   <Switch
                     :model-value="form.allowed_models_mode === 'unrestricted'"
-                    :disabled="selectedGroup?.is_default"
                     @update:model-value="(v) => (form.allowed_models_mode = v ? 'unrestricted' : 'specific')"
                   />
                 </div>
@@ -194,7 +191,7 @@
                     v-model="form.allowed_models"
                     :options="modelOptions"
                     :search-threshold="0"
-                    :disabled="selectedGroup?.is_default || form.allowed_models_mode === 'unrestricted'"
+                    :disabled="form.allowed_models_mode === 'unrestricted'"
                     :placeholder="form.allowed_models_mode === 'unrestricted' ? '不限制所有选项' : '选择模型'"
                     empty-text="暂无选项"
                   />
@@ -208,7 +205,6 @@
                 <div class="flex w-full items-center sm:w-auto sm:shrink-0">
                   <Switch
                     :model-value="form.rate_limit_mode === 'system'"
-                    :disabled="selectedGroup?.is_default"
                     @update:model-value="(v) => (form.rate_limit_mode = v ? 'system' : 'custom')"
                   />
                 </div>
@@ -219,7 +215,7 @@
                     min="0"
                     max="10000"
                     class="h-10"
-                    :disabled="selectedGroup?.is_default || form.rate_limit_mode === 'system'"
+                    :disabled="form.rate_limit_mode === 'system'"
                     :placeholder="form.rate_limit_mode === 'system' ? '使用系统默认' : '0 = 不限速'"
                     @update:model-value="(value) => form.rate_limit = parseNumberInput(value, { min: 0, max: 10000 })"
                   />
@@ -240,7 +236,7 @@
         关闭
       </Button>
       <Button
-        :disabled="saving || !form.name.trim() || defaultGroupHasRestrictions"
+        :disabled="saving || !form.name.trim()"
         @click="saveGroup"
       >
         保存
@@ -299,7 +295,6 @@ const {
 const loading = ref(false)
 const saving = ref(false)
 const groups = ref<UserGroup[]>([])
-const defaultGroupId = ref<string | null>(null)
 const editingGroupId = ref<string | null>(null)
 const memberUserIds = ref<string[]>([])
 
@@ -316,13 +311,6 @@ const form = ref({
 })
 
 const selectedGroup = computed(() => groups.value.find((group) => group.id === editingGroupId.value) ?? null)
-const defaultGroupHasRestrictions = computed(() => {
-  if (!selectedGroup.value?.is_default) return false
-  return form.value.allowed_providers_mode !== 'unrestricted'
-    || form.value.allowed_api_formats_mode !== 'unrestricted'
-    || form.value.allowed_models_mode !== 'unrestricted'
-    || form.value.rate_limit_mode !== 'system'
-})
 const userOptions = computed(() => props.users.map((user) => ({
   label: `${user.username}${user.email ? ` (${user.email})` : ''}`,
   value: user.id,
@@ -348,7 +336,6 @@ async function loadDialogData(): Promise<void> {
   try {
     const response = await usersStore.listUserGroups()
     groups.value = response.items
-    defaultGroupId.value = response.default_group_id ?? null
     if (editingGroupId.value && !groups.value.some((group) => group.id === editingGroupId.value)) {
       editingGroupId.value = null
     }
