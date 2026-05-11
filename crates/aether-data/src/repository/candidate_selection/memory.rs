@@ -185,8 +185,10 @@ fn row_matches_requested_model(
     requested_model_name: &str,
     api_format: &str,
 ) -> bool {
-    row.global_model_name == requested_model_name
-        || row.model_provider_model_name == requested_model_name
+    (row_has_available_provider_model(row, api_format)
+        && row.global_model_name == requested_model_name)
+        || (row_default_provider_model_name_available(row, api_format)
+            && row.model_provider_model_name == requested_model_name)
         || row
             .model_provider_model_mappings
             .as_ref()
@@ -203,6 +205,60 @@ fn row_matches_requested_model(
                     }) && mapping.name == requested_model_name
                 })
             })
+}
+
+fn row_has_available_provider_model(
+    row: &StoredMinimalCandidateSelectionRow,
+    api_format: &str,
+) -> bool {
+    row_mapping_matches_scope(row, api_format)
+        || row_default_provider_model_name_available(row, api_format)
+}
+
+fn row_default_provider_model_name_available(
+    row: &StoredMinimalCandidateSelectionRow,
+    api_format: &str,
+) -> bool {
+    let Some(mappings) = row.model_provider_model_mappings.as_ref() else {
+        return true;
+    };
+    let mut has_explicit_default_mapping = false;
+    for mapping in mappings {
+        if mapping.name != row.model_provider_model_name {
+            continue;
+        }
+        has_explicit_default_mapping = true;
+        if mapping_scope_matches(mapping, row, api_format) {
+            return true;
+        }
+    }
+    !has_explicit_default_mapping
+}
+
+fn row_mapping_matches_scope(row: &StoredMinimalCandidateSelectionRow, api_format: &str) -> bool {
+    row.model_provider_model_mappings
+        .as_ref()
+        .is_some_and(|mappings| {
+            mappings
+                .iter()
+                .any(|mapping| mapping_scope_matches(mapping, row, api_format))
+        })
+}
+
+fn mapping_scope_matches(
+    mapping: &super::StoredProviderModelMapping,
+    row: &StoredMinimalCandidateSelectionRow,
+    api_format: &str,
+) -> bool {
+    mapping.api_formats.as_ref().is_none_or(|formats| {
+        formats
+            .iter()
+            .any(|value| api_format_matches(value, api_format))
+    }) && mapping.endpoint_ids.as_ref().is_none_or(|endpoint_ids| {
+        endpoint_ids
+            .iter()
+            .any(|endpoint_id| endpoint_id == &row.endpoint_id)
+    })
 }
 
 fn key_auth_channel_matches(row: &StoredMinimalCandidateSelectionRow, api_format: &str) -> bool {
@@ -244,7 +300,7 @@ mod tests {
     use super::InMemoryMinimalCandidateSelectionReadRepository;
     use crate::repository::candidate_selection::{
         MinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
-        StoredPoolKeyCandidateOrder, StoredPoolKeyCandidateRowsQuery,
+        StoredPoolKeyCandidateOrder, StoredPoolKeyCandidateRowsQuery, StoredProviderModelMapping,
         StoredRequestedModelCandidateRowsQuery,
     };
 
@@ -310,14 +366,12 @@ mod tests {
     async fn filters_by_exact_api_format_and_requested_model_aliases() {
         let mut mapped = sample_row("provider-1", "openai:chat", "gpt-4.1", 10);
         mapped.model_provider_model_name = "provider-gpt-4.1".to_string();
-        mapped.model_provider_model_mappings = Some(vec![
-            crate::repository::candidate_selection::StoredProviderModelMapping {
-                name: "alias-gpt-4.1".to_string(),
-                priority: 0,
-                api_formats: Some(vec!["openai:chat".to_string()]),
-                endpoint_ids: None,
-            },
-        ]);
+        mapped.model_provider_model_mappings = Some(vec![StoredProviderModelMapping {
+            name: "alias-gpt-4.1".to_string(),
+            priority: 0,
+            api_formats: Some(vec!["openai:chat".to_string()]),
+            endpoint_ids: None,
+        }]);
         let repository = InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
             mapped,
             sample_row("provider-2", "openai:chat", "gpt-4.1-mini", 20),
@@ -330,6 +384,42 @@ mod tests {
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].provider_id, "provider-1");
+    }
+
+    #[tokio::test]
+    async fn requested_model_filter_respects_endpoint_scoped_default_mapping() {
+        let mut selected = sample_row("provider-1", "openai:chat", "deepseek-v4-pro", 10);
+        selected.endpoint_id = "endpoint-openai".to_string();
+        selected.model_provider_model_name = "deepseek-v4-pro".to_string();
+        selected.model_provider_model_mappings = Some(vec![StoredProviderModelMapping {
+            name: "deepseek-v4-pro".to_string(),
+            priority: 1,
+            api_formats: None,
+            endpoint_ids: Some(vec!["endpoint-openai".to_string()]),
+        }]);
+
+        let mut scoped_out = selected.clone();
+        scoped_out.provider_id = "provider-2".to_string();
+        scoped_out.endpoint_id = "endpoint-claude".to_string();
+        scoped_out.endpoint_api_format = "claude:messages".to_string();
+        scoped_out.key_id = "key-provider-2".to_string();
+        scoped_out.key_api_formats = Some(vec!["claude:messages".to_string()]);
+
+        let repository =
+            InMemoryMinimalCandidateSelectionReadRepository::seed(vec![scoped_out, selected]);
+
+        let rows = repository
+            .list_for_exact_api_format_and_requested_model("claude:messages", "deepseek-v4-pro")
+            .await
+            .expect("list should succeed");
+        assert!(rows.is_empty());
+
+        let rows = repository
+            .list_for_exact_api_format_and_requested_model("openai:chat", "deepseek-v4-pro")
+            .await
+            .expect("list should succeed");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].endpoint_id, "endpoint-openai");
     }
 
     #[tokio::test]

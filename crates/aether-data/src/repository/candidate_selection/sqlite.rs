@@ -313,24 +313,73 @@ fn row_matches_requested_model(
     requested_model_name: &str,
     api_format: &str,
 ) -> bool {
-    row.global_model_name == requested_model_name
-        || row.model_provider_model_name == requested_model_name
+    (row_has_available_provider_model(row, api_format)
+        && row.global_model_name == requested_model_name)
+        || (row_default_provider_model_name_available(row, api_format)
+            && row.model_provider_model_name == requested_model_name)
         || row
             .model_provider_model_mappings
             .as_ref()
             .is_some_and(|mappings| {
                 mappings.iter().any(|mapping| {
-                    mapping.api_formats.as_ref().is_none_or(|formats| {
-                        formats
-                            .iter()
-                            .any(|value| api_format_matches(value, api_format))
-                    }) && mapping.endpoint_ids.as_ref().is_none_or(|endpoint_ids| {
-                        endpoint_ids
-                            .iter()
-                            .any(|endpoint_id| endpoint_id == &row.endpoint_id)
-                    }) && mapping.name == requested_model_name
+                    mapping_scope_matches(mapping, row, api_format)
+                        && mapping.name == requested_model_name
                 })
             })
+}
+
+fn row_has_available_provider_model(
+    row: &StoredMinimalCandidateSelectionRow,
+    api_format: &str,
+) -> bool {
+    row_mapping_matches_scope(row, api_format)
+        || row_default_provider_model_name_available(row, api_format)
+}
+
+fn row_default_provider_model_name_available(
+    row: &StoredMinimalCandidateSelectionRow,
+    api_format: &str,
+) -> bool {
+    let Some(mappings) = row.model_provider_model_mappings.as_ref() else {
+        return true;
+    };
+    let mut has_explicit_default_mapping = false;
+    for mapping in mappings {
+        if mapping.name != row.model_provider_model_name {
+            continue;
+        }
+        has_explicit_default_mapping = true;
+        if mapping_scope_matches(mapping, row, api_format) {
+            return true;
+        }
+    }
+    !has_explicit_default_mapping
+}
+
+fn row_mapping_matches_scope(row: &StoredMinimalCandidateSelectionRow, api_format: &str) -> bool {
+    row.model_provider_model_mappings
+        .as_ref()
+        .is_some_and(|mappings| {
+            mappings
+                .iter()
+                .any(|mapping| mapping_scope_matches(mapping, row, api_format))
+        })
+}
+
+fn mapping_scope_matches(
+    mapping: &super::StoredProviderModelMapping,
+    row: &StoredMinimalCandidateSelectionRow,
+    api_format: &str,
+) -> bool {
+    mapping.api_formats.as_ref().is_none_or(|formats| {
+        formats
+            .iter()
+            .any(|value| api_format_matches(value, api_format))
+    }) && mapping.endpoint_ids.as_ref().is_none_or(|endpoint_ids| {
+        endpoint_ids
+            .iter()
+            .any(|endpoint_id| endpoint_id == &row.endpoint_id)
+    })
 }
 
 fn key_auth_channel_matches(row: &CandidateSelectionRow, api_format: &str) -> bool {

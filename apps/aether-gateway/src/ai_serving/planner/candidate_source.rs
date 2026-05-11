@@ -735,7 +735,9 @@ mod tests {
     use crate::data::GatewayDataState;
     use crate::AppState;
     use aether_data::repository::candidate_selection::InMemoryMinimalCandidateSelectionReadRepository;
-    use aether_data_contracts::repository::candidate_selection::MinimalCandidateSelectionReadRepository;
+    use aether_data_contracts::repository::candidate_selection::{
+        MinimalCandidateSelectionReadRepository, StoredProviderModelMapping,
+    };
     use std::sync::Arc;
 
     fn unrestricted_auth_snapshot() -> GatewayAuthApiKeySnapshot {
@@ -800,6 +802,57 @@ mod tests {
         }
     }
 
+    fn opg_deepseek_row(
+        endpoint_id: &str,
+        api_format: &str,
+        key_id: &str,
+        key_name: &str,
+        key_allowed_models: Vec<&str>,
+        key_internal_priority: i32,
+    ) -> StoredMinimalCandidateSelectionRow {
+        StoredMinimalCandidateSelectionRow {
+            provider_id: "provider-opg".to_string(),
+            provider_name: "OpenCode Go".to_string(),
+            provider_type: "custom".to_string(),
+            provider_priority: 1,
+            provider_is_active: true,
+            endpoint_id: endpoint_id.to_string(),
+            endpoint_api_format: api_format.to_string(),
+            endpoint_api_family: None,
+            endpoint_kind: Some("chat".to_string()),
+            endpoint_is_active: true,
+            key_id: key_id.to_string(),
+            key_name: key_name.to_string(),
+            key_auth_type: "api_key".to_string(),
+            key_is_active: true,
+            key_api_formats: Some(vec![api_format.to_string()]),
+            key_allowed_models: Some(
+                key_allowed_models
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            ),
+            key_capabilities: None,
+            key_internal_priority,
+            key_global_priority_by_format: None,
+            model_id: "model-opg-deepseek-v4-pro".to_string(),
+            global_model_id: "global-model-deepseek-v4-pro".to_string(),
+            global_model_name: "deepseek-v4-pro".to_string(),
+            global_model_mappings: None,
+            global_model_supports_streaming: Some(true),
+            model_provider_model_name: "deepseek-v4-pro".to_string(),
+            model_provider_model_mappings: Some(vec![StoredProviderModelMapping {
+                name: "deepseek-v4-pro".to_string(),
+                priority: 1,
+                api_formats: None,
+                endpoint_ids: Some(vec!["endpoint-opg-openai".to_string()]),
+            }]),
+            model_supports_streaming: Some(true),
+            model_is_active: true,
+            model_is_available: true,
+        }
+    }
+
     #[tokio::test]
     async fn paged_preselection_falls_back_to_format_scan_for_directive_mapping_match() {
         let repository: Arc<dyn MinimalCandidateSelectionReadRepository> =
@@ -842,6 +895,62 @@ mod tests {
         assert_eq!(
             page.candidates[0].selected_provider_model_name,
             "gpt-5-upstream"
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_request_uses_cross_format_key_when_same_provider_messages_key_lacks_model() {
+        let repository: Arc<dyn MinimalCandidateSelectionReadRepository> =
+            Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed([
+                opg_deepseek_row(
+                    "endpoint-opg-claude",
+                    "claude:messages",
+                    "key-opg-messages",
+                    "OPG Key Messages",
+                    vec!["glm-5", "glm-5.1", "minimax-m2.5", "minimax-m2.7"],
+                    1,
+                ),
+                opg_deepseek_row(
+                    "endpoint-opg-openai",
+                    "openai:chat",
+                    "key-opg-completions",
+                    "OPG Key Completions",
+                    vec!["deepseek-v4-pro", "glm-5", "glm-5.1", "minimax-m2.7"],
+                    10,
+                ),
+            ]));
+        let data_state =
+            GatewayDataState::with_minimal_candidate_selection_reader_for_tests(repository);
+        let app = AppState::new()
+            .expect("gateway state should build")
+            .with_data_state_for_tests(data_state);
+        let auth_snapshot = unrestricted_auth_snapshot();
+        let mut cursor = LocalCandidatePreselectionPageCursor::new(
+            PlannerAppState::new(&app),
+            "claude:messages",
+            "deepseek-v4-pro",
+            false,
+            None,
+            &auth_snapshot,
+            None,
+            true,
+            LocalCandidatePreselectionKeyMode::ProviderEndpointKeyModelAndApiFormat,
+        )
+        .await;
+
+        let page = cursor
+            .next_page()
+            .await
+            .expect("preselection should succeed")
+            .expect("openai chat candidate should be found via conversion");
+
+        assert_eq!(page.skipped_candidates.len(), 0);
+        assert_eq!(page.candidates.len(), 1);
+        assert_eq!(page.candidates[0].endpoint_api_format, "openai:chat");
+        assert_eq!(page.candidates[0].key_name, "OPG Key Completions");
+        assert_eq!(
+            page.candidates[0].selected_provider_model_name,
+            "deepseek-v4-pro"
         );
     }
 }

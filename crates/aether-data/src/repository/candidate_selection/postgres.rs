@@ -711,13 +711,110 @@ fn requested_model_selection_sql() -> String {
         .replace(
             "AND gm.name = $2",
             r#"AND (
-    gm.name = $2
-    OR m.provider_model_name = $2
+    (
+      gm.name = $2
+      AND (
+        m.provider_model_mappings IS NULL
+        OR jsonb_typeof(m.provider_model_mappings) <> 'array'
+        OR EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(
+            CASE
+              WHEN jsonb_typeof(m.provider_model_mappings) = 'array'
+                THEN m.provider_model_mappings
+              ELSE '[]'::jsonb
+            END
+          ) AS mapping(value)
+          WHERE (
+            mapping.value -> 'api_formats' IS NULL
+            OR jsonb_typeof(mapping.value -> 'api_formats') <> 'array'
+            OR EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(mapping.value -> 'api_formats') AS fmt(value)
+              WHERE LOWER(BTRIM(fmt.value)) = ANY($3::text[])
+            )
+          )
+          AND (
+            mapping.value -> 'endpoint_ids' IS NULL
+            OR jsonb_typeof(mapping.value -> 'endpoint_ids') <> 'array'
+            OR EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(mapping.value -> 'endpoint_ids') AS endpoint(value)
+              WHERE endpoint.value = pe.id
+            )
+          )
+        )
+        OR NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(
+            CASE
+              WHEN jsonb_typeof(m.provider_model_mappings) = 'array'
+                THEN m.provider_model_mappings
+              ELSE '[]'::jsonb
+            END
+          ) AS mapping(value)
+          WHERE mapping.value ->> 'name' = m.provider_model_name
+        )
+      )
+    )
+    OR (
+      m.provider_model_name = $2
+      AND (
+        m.provider_model_mappings IS NULL
+        OR jsonb_typeof(m.provider_model_mappings) <> 'array'
+        OR NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(
+            CASE
+              WHEN jsonb_typeof(m.provider_model_mappings) = 'array'
+                THEN m.provider_model_mappings
+              ELSE '[]'::jsonb
+            END
+          ) AS mapping(value)
+          WHERE mapping.value ->> 'name' = m.provider_model_name
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(
+            CASE
+              WHEN jsonb_typeof(m.provider_model_mappings) = 'array'
+                THEN m.provider_model_mappings
+              ELSE '[]'::jsonb
+            END
+          ) AS mapping(value)
+          WHERE mapping.value ->> 'name' = m.provider_model_name
+            AND (
+              mapping.value -> 'api_formats' IS NULL
+              OR jsonb_typeof(mapping.value -> 'api_formats') <> 'array'
+              OR EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements_text(mapping.value -> 'api_formats') AS fmt(value)
+                WHERE LOWER(BTRIM(fmt.value)) = ANY($3::text[])
+              )
+            )
+            AND (
+              mapping.value -> 'endpoint_ids' IS NULL
+              OR jsonb_typeof(mapping.value -> 'endpoint_ids') <> 'array'
+              OR EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements_text(mapping.value -> 'endpoint_ids') AS endpoint(value)
+                WHERE endpoint.value = pe.id
+              )
+            )
+        )
+      )
+    )
     OR (
       jsonb_typeof(m.provider_model_mappings) = 'array'
       AND EXISTS (
         SELECT 1
-        FROM jsonb_array_elements(m.provider_model_mappings) AS mapping(value)
+        FROM jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(m.provider_model_mappings) = 'array'
+              THEN m.provider_model_mappings
+            ELSE '[]'::jsonb
+          END
+        ) AS mapping(value)
         WHERE mapping.value ->> 'name' = $2
           AND (
             mapping.value -> 'api_formats' IS NULL
@@ -1108,7 +1205,7 @@ mod tests {
         let sql = requested_model_selection_sql();
 
         assert!(sql.contains("m.provider_model_name = $2"));
-        assert!(sql.contains("jsonb_array_elements(m.provider_model_mappings)"));
+        assert!(sql.contains("jsonb_array_elements("));
         assert!(!sql.contains("json_typeof(m.provider_model_mappings)"));
         assert!(!sql.contains("json_array_elements_text(gm.config -> 'model_mappings')"));
         assert!(sql.contains("ORDER BY\n  global_model_name ASC,"));
