@@ -37,7 +37,7 @@ INSERT INTO public.user_group_members (group_id, user_id)
 SELECT '00000000-0000-0000-0000-000000000001', id
 FROM public.users
 WHERE is_deleted IS FALSE
-  AND LOWER(role) <> 'admin'
+  AND LOWER(role::text) <> 'admin'
 ON CONFLICT (group_id, user_id) DO NOTHING;
 
 SELECT pg_catalog.set_config('search_path', 'public', true);
