@@ -84,7 +84,7 @@ services:
     volumes:
       - ./logs:/app/logs
     healthcheck:
-      test: ["CMD", "aether-gateway", "health", "--url", "http://127.0.0.1:${APP_PORT:-8084}/health"]
+      test: ["CMD", "aether-gateway", "--healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
