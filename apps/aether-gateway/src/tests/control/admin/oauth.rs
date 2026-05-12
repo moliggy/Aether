@@ -165,6 +165,81 @@ fn sample_codex_access_token_with_profile_email(email: &str, account_id: &str) -
     format!("{header}.{payload}.sig")
 }
 
+fn codex_import_token_execution_result(request_id: &str) -> serde_json::Value {
+    json!({
+        "request_id": request_id,
+        "status_code": 200,
+        "headers": {
+            "content-type": "application/json"
+        },
+        "body": {
+            "json_body": {
+                "access_token": "imported-codex-access-token",
+                "refresh_token": "imported-codex-refresh-token",
+                "token_type": "Bearer",
+                "expires_in": 1800,
+                "scope": "openid email profile offline_access",
+                "email": "alice@example.com",
+                "account_id": "acct-codex-123",
+                "plan_type": "plus"
+            }
+        }
+    })
+}
+
+fn codex_quota_execution_result(request_id: &str) -> serde_json::Value {
+    json!({
+        "request_id": request_id,
+        "status_code": 200,
+        "headers": {},
+        "body": {
+            "json_body": {
+                "plan_type": "plus",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 10.0,
+                        "window_minutes": 300
+                    },
+                    "secondary_window": {
+                        "used_percent": 20.0,
+                        "window_minutes": 10080
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn assert_single_provider_oauth_refresh_token_plan<'a>(
+    plans: &'a [ExecutionPlan],
+) -> &'a ExecutionPlan {
+    let token_plans = plans
+        .iter()
+        .filter(|plan| plan.request_id == "provider-oauth:refresh-token")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        token_plans.len(),
+        1,
+        "expected exactly one provider-oauth refresh-token plan, got {:?}",
+        plans
+            .iter()
+            .map(|plan| plan.request_id.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        plans.iter().all(|plan| {
+            plan.request_id == "provider-oauth:refresh-token"
+                || plan.request_id.starts_with("codex-quota:")
+        }),
+        "unexpected execution plans: {:?}",
+        plans
+            .iter()
+            .map(|plan| plan.request_id.as_str())
+            .collect::<Vec<_>>()
+    );
+    token_plans[0]
+}
+
 #[tokio::test]
 async fn gateway_handles_admin_provider_oauth_supported_types_locally_with_trusted_admin_principal()
 {
@@ -3518,38 +3593,28 @@ async fn gateway_imports_admin_provider_oauth_refresh_token_via_execution_runtim
                 assert_eq!(timeouts.write_ms, Some(60_000));
                 assert_eq!(timeouts.pool_ms, Some(60_000));
                 assert_eq!(timeouts.total_ms, Some(60_000));
-                assert_eq!(plan.request_id, "provider-oauth:refresh-token");
-                assert_eq!(plan.method, "POST");
-                assert_eq!(plan.url, "https://oauth.example/oauth/token");
-                assert_eq!(
-                    plan.headers.get("content-type").map(String::as_str),
-                    Some("application/x-www-form-urlencoded")
-                );
-                assert_eq!(
-                    plan.headers
-                        .get(EXECUTION_REQUEST_FOLLOW_REDIRECTS_HEADER)
-                        .map(String::as_str),
-                    Some("true")
-                );
-                Json(json!({
-                    "request_id": plan.request_id,
-                    "status_code": 200,
-                    "headers": {
-                        "content-type": "application/json"
-                    },
-                    "body": {
-                        "json_body": {
-                            "access_token": "imported-codex-access-token",
-                            "refresh_token": "imported-codex-refresh-token",
-                            "token_type": "Bearer",
-                            "expires_in": 1800,
-                            "scope": "openid email profile offline_access",
-                            "email": "alice@example.com",
-                            "account_id": "acct-codex-123",
-                            "plan_type": "plus"
-                        }
-                    }
-                }))
+                if plan.request_id == "provider-oauth:refresh-token" {
+                    assert_eq!(plan.method, "POST");
+                    assert_eq!(plan.url, "https://oauth.example/oauth/token");
+                    assert_eq!(
+                        plan.headers.get("content-type").map(String::as_str),
+                        Some("application/x-www-form-urlencoded")
+                    );
+                    assert_eq!(
+                        plan.headers
+                            .get(EXECUTION_REQUEST_FOLLOW_REDIRECTS_HEADER)
+                            .map(String::as_str),
+                        Some("true")
+                    );
+                    Json(codex_import_token_execution_result(&plan.request_id))
+                } else {
+                    assert!(
+                        plan.request_id.starts_with("codex-quota:"),
+                        "unexpected execution plan: {}",
+                        plan.request_id
+                    );
+                    Json(codex_quota_execution_result(&plan.request_id))
+                }
             }
         }),
     );
@@ -3625,7 +3690,14 @@ async fn gateway_imports_admin_provider_oauth_refresh_token_via_execution_runtim
     );
 
     let plans = execution_plans.lock().expect("mutex should lock");
-    assert_eq!(plans.len(), 1);
+    let token_plan = assert_single_provider_oauth_refresh_token_plan(&plans);
+    assert_eq!(
+        token_plan
+            .proxy
+            .as_ref()
+            .and_then(|proxy| proxy.node_id.as_deref()),
+        Some("proxy-node-codex-import")
+    );
 
     gateway_handle.abort();
     execution_runtime_handle.abort();
@@ -3647,25 +3719,16 @@ async fn gateway_imports_admin_provider_oauth_refresh_token_via_execution_runtim
                     .push(plan.clone());
                 let proxy = plan.proxy.as_ref().expect("proxy snapshot should exist");
                 assert_eq!(proxy.node_id.as_deref(), Some("proxy-node-codex-provider"));
-                Json(json!({
-                    "request_id": plan.request_id,
-                    "status_code": 200,
-                    "headers": {
-                        "content-type": "application/json"
-                    },
-                    "body": {
-                        "json_body": {
-                            "access_token": "imported-codex-access-token",
-                            "refresh_token": "imported-codex-refresh-token",
-                            "token_type": "Bearer",
-                            "expires_in": 1800,
-                            "scope": "openid email profile offline_access",
-                            "email": "alice@example.com",
-                            "account_id": "acct-codex-123",
-                            "plan_type": "plus"
-                        }
-                    }
-                }))
+                if plan.request_id == "provider-oauth:refresh-token" {
+                    Json(codex_import_token_execution_result(&plan.request_id))
+                } else {
+                    assert!(
+                        plan.request_id.starts_with("codex-quota:"),
+                        "unexpected execution plan: {}",
+                        plan.request_id
+                    );
+                    Json(codex_quota_execution_result(&plan.request_id))
+                }
             }
         }),
     );
@@ -3748,9 +3811,9 @@ async fn gateway_imports_admin_provider_oauth_refresh_token_via_execution_runtim
     assert_eq!(keys[0].proxy, None);
 
     let plans = execution_plans.lock().expect("mutex should lock");
-    assert_eq!(plans.len(), 1);
+    let token_plan = assert_single_provider_oauth_refresh_token_plan(&plans);
     assert_eq!(
-        plans[0]
+        token_plan
             .proxy
             .as_ref()
             .and_then(|proxy| proxy.node_id.as_deref()),
@@ -3776,25 +3839,16 @@ async fn gateway_imports_admin_provider_oauth_refresh_token_via_execution_runtim
                     .push(plan.clone());
                 let proxy = plan.proxy.as_ref().expect("proxy snapshot should exist");
                 assert_eq!(proxy.node_id.as_deref(), Some("proxy-node-codex-system"));
-                Json(json!({
-                    "request_id": plan.request_id,
-                    "status_code": 200,
-                    "headers": {
-                        "content-type": "application/json"
-                    },
-                    "body": {
-                        "json_body": {
-                            "access_token": "imported-codex-access-token",
-                            "refresh_token": "imported-codex-refresh-token",
-                            "token_type": "Bearer",
-                            "expires_in": 1800,
-                            "scope": "openid email profile offline_access",
-                            "email": "alice@example.com",
-                            "account_id": "acct-codex-123",
-                            "plan_type": "plus"
-                        }
-                    }
-                }))
+                if plan.request_id == "provider-oauth:refresh-token" {
+                    Json(codex_import_token_execution_result(&plan.request_id))
+                } else {
+                    assert!(
+                        plan.request_id.starts_with("codex-quota:"),
+                        "unexpected execution plan: {}",
+                        plan.request_id
+                    );
+                    Json(codex_quota_execution_result(&plan.request_id))
+                }
             }
         }),
     );
@@ -3860,9 +3914,9 @@ async fn gateway_imports_admin_provider_oauth_refresh_token_via_execution_runtim
     assert_eq!(payload["provider_type"], "codex");
 
     let plans = execution_plans.lock().expect("mutex should lock");
-    assert_eq!(plans.len(), 1);
+    let token_plan = assert_single_provider_oauth_refresh_token_plan(&plans);
     assert_eq!(
-        plans[0]
+        token_plan
             .proxy
             .as_ref()
             .and_then(|proxy| proxy.node_id.as_deref()),
