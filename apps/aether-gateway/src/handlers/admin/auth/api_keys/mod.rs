@@ -18,11 +18,13 @@ use axum::{
 };
 use serde_json::json;
 
+mod install_routes;
 mod mutation_routes;
 mod read_routes;
 mod routes;
 mod shared;
 
+use self::install_routes::build_admin_create_api_key_install_session_response;
 use self::mutation_routes::{
     build_admin_create_api_key_response, build_admin_delete_api_key_response,
     build_admin_toggle_api_key_response, build_admin_update_api_key_response,
@@ -39,8 +41,14 @@ use self::shared::{
 pub(crate) async fn maybe_build_local_admin_api_keys_response(
     state: &AdminAppState<'_>,
     request_context: &AdminRequestContext<'_>,
+    request_headers: &http::HeaderMap,
     request_body: Option<&axum::body::Bytes>,
 ) -> Result<Option<Response<Body>>, GatewayError> {
-    routes::maybe_build_local_admin_api_keys_routes_response(state, request_context, request_body)
-        .await
+    routes::maybe_build_local_admin_api_keys_routes_response(
+        state,
+        request_context,
+        request_headers,
+        request_body,
+    )
+    .await
 }

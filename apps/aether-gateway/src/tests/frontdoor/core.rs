@@ -189,6 +189,34 @@ async fn gateway_serves_frontend_routes_and_assets_without_shadowing_public_api(
     assert_eq!(payload["site_name"], "Aether");
     assert_eq!(payload["site_subtitle"], "AI Gateway");
 
+    let response = client
+        .get(format!("{gateway_url}/install/4b143b471afa4d9ebc652d95"))
+        .send()
+        .await
+        .expect("install route request should succeed");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = response
+        .text()
+        .await
+        .expect("install error body should be readable");
+    assert!(!body.contains("Aether Frontend"));
+    assert!(body.contains("install code"));
+
+    let response = client
+        .get(format!(
+            "{gateway_url}/install/4b143b471afa4d9ebc652d95.ps1"
+        ))
+        .send()
+        .await
+        .expect("powershell install route request should succeed");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = response
+        .text()
+        .await
+        .expect("powershell install error body should be readable");
+    assert!(!body.contains("Aether Frontend"));
+    assert!(body.contains("install code"));
+
     gateway_handle.abort();
     let _ = fs::remove_dir_all(&static_dir);
 }

@@ -88,6 +88,8 @@ fn frontend_path_bypasses_static(path: &str) -> bool {
         || path.starts_with("/upload/")
         || path.starts_with("/_gateway/")
         || path.starts_with("/.well-known/")
+        || path.starts_with("/install/")
+        || path.starts_with("/i/")
 }
 
 fn frontend_path_targets_static_asset(path: &str) -> bool {

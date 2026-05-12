@@ -91,6 +91,17 @@ pub(super) fn admin_api_keys_id_from_path(request_path: &str) -> Option<String> 
     }
 }
 
+pub(super) fn admin_api_key_install_session_id_from_path(request_path: &str) -> Option<String> {
+    let raw = request_path
+        .strip_prefix("/api/admin/api-keys/")?
+        .trim()
+        .trim_matches('/');
+    let mut segments = raw.split('/').map(str::trim);
+    let api_key_id = segments.next()?.to_string();
+    let suffix = segments.next()?;
+    (suffix == "install-sessions" && segments.next().is_none()).then_some(api_key_id)
+}
+
 pub(super) fn admin_api_keys_operator_id(
     request_context: &AdminRequestContext<'_>,
 ) -> Option<String> {

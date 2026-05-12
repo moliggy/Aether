@@ -874,9 +874,13 @@ pub(crate) async fn proxy_request(
             request_permit.take(),
         ));
     }
-    if let Some(response) =
-        maybe_build_local_admin_proxy_response(&state, &request_context, local_proxy_body.as_ref())
-            .await?
+    if let Some(response) = maybe_build_local_admin_proxy_response(
+        &state,
+        &request_context,
+        &parts.headers,
+        local_proxy_body.as_ref(),
+    )
+    .await?
     {
         let execution_path =
             resolve_local_proxy_execution_path(&response, EXECUTION_PATH_PUBLIC_PROXY_PASSTHROUGH);

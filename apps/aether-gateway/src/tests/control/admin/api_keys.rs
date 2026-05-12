@@ -228,8 +228,13 @@ async fn gateway_handles_admin_api_keys_list_locally_with_trusted_admin_principa
     .await
     .expect("request should succeed");
 
-    assert_eq!(response.status(), StatusCode::OK);
-    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .expect("response body should be readable");
+    assert_eq!(status, StatusCode::OK, "unexpected response body: {body}");
+    let payload: serde_json::Value = serde_json::from_str(&body).expect("json body should parse");
     assert_eq!(payload["total"], json!(1));
     assert_eq!(payload["limit"], json!(10));
     assert_eq!(payload["skip"], json!(0));
@@ -300,8 +305,13 @@ async fn gateway_handles_admin_api_keys_detail_locally_with_trusted_admin_princi
     .await
     .expect("request should succeed");
 
-    assert_eq!(response.status(), StatusCode::OK);
-    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .expect("response body should be readable");
+    assert_eq!(status, StatusCode::OK, "unexpected response body: {body}");
+    let payload: serde_json::Value = serde_json::from_str(&body).expect("json body should parse");
     assert_eq!(payload["id"], json!("key-1"));
     assert_eq!(payload["user_id"], json!("user-1"));
     assert_eq!(payload["wallet"]["id"], json!("wallet-key-1"));
@@ -406,6 +416,78 @@ async fn gateway_handles_admin_api_keys_full_key_locally_with_trusted_admin_prin
     assert_eq!(response.status(), StatusCode::OK);
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(payload, json!({ "key": "sk-key-1-plaintext" }));
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_handles_admin_api_key_install_session_locally_with_trusted_admin_principal() {
+    let (upstream_url, upstream_hits, upstream_handle) =
+        start_api_keys_upstream("/api/admin/api-keys/key-1/install-sessions").await;
+    let auth_repository = Arc::new(
+        InMemoryAuthApiKeySnapshotRepository::seed(vec![(
+            None,
+            sample_standalone_api_key_snapshot("key-1", "user-1", true),
+        )])
+        .with_export_records([sample_standalone_export_record(
+            "key-1",
+            "user-1",
+            "sk-key-1-plaintext",
+            true,
+        )]),
+    );
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_auth_api_key_repository_for_tests(auth_repository)
+                    .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
+            ),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = admin_request(reqwest::Client::new().post(format!(
+        "{gateway_url}/api/admin/api-keys/key-1/install-sessions/"
+    )))
+    .header("x-forwarded-host", "aether.example")
+    .header("x-forwarded-proto", "https")
+    .json(&json!({
+        "target_cli": "codex_cli",
+        "target_system": "linux",
+    }))
+    .send()
+    .await
+    .expect("request should succeed");
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .expect("response body should be readable");
+    assert_eq!(status, StatusCode::OK, "unexpected response body: {body}");
+    let payload: serde_json::Value = serde_json::from_str(&body).expect("json body should parse");
+    let install_code = payload["install_code"]
+        .as_str()
+        .expect("install code should be returned");
+    assert_eq!(install_code.len(), 24);
+    assert_eq!(payload["expires_in_seconds"], json!(15 * 60));
+    assert_eq!(payload["target_cli"], json!("codex_cli"));
+    assert_eq!(payload["target_system"], json!("linux"));
+    assert!(payload["expires_at_unix_secs"].is_number());
+    assert_eq!(
+        payload["unix_command"],
+        json!(format!(
+            "curl -fsSL https://aether.example/install/{install_code} | sh"
+        ))
+    );
+    assert_eq!(
+        payload["powershell_command"],
+        json!(format!(
+            "irm https://aether.example/install/{install_code}.ps1 | iex"
+        ))
+    );
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();

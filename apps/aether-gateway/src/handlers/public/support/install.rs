@@ -17,7 +17,7 @@ const INSTALL_SESSION_KEY_PREFIX: &str = "install:session:";
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum InstallTargetCli {
+pub(crate) enum InstallTargetCli {
     ClaudeCode,
     CodexCli,
     GeminiCli,
@@ -25,7 +25,7 @@ enum InstallTargetCli {
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum InstallTargetSystem {
+pub(crate) enum InstallTargetSystem {
     Macos,
     Linux,
     Windows,
@@ -33,9 +33,9 @@ enum InstallTargetSystem {
 }
 
 #[derive(Debug, Deserialize)]
-struct UsersMeCreateInstallSessionRequest {
-    target_cli: InstallTargetCli,
-    target_system: InstallTargetSystem,
+pub(crate) struct CreateApiKeyInstallSessionRequest {
+    pub(crate) target_cli: InstallTargetCli,
+    pub(crate) target_system: InstallTargetSystem,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -240,20 +240,60 @@ PY
     ;;
   codex_cli)
     mkdir -p "$HOME/.codex"
-    cat > "$HOME/.codex/auth.json" <<EOF
-{{"OPENAI_API_KEY":"$AETHER_API_KEY"}}
-EOF
-    cat > "$HOME/.codex/config.toml" <<EOF
-# Managed by Aether
-model_provider = "aether"
+    python3 - "$HOME/.codex/config.toml" "$AETHER_BASE_URL" "$AETHER_API_KEY" <<'PY'
+import pathlib, re, sys
 
-[model_providers.aether]
-name = "Aether"
-base_url = "$AETHER_BASE_URL/v1"
-env_key = "OPENAI_API_KEY"
-wire_api = "chat"
-EOF
-    chmod 600 "$HOME/.codex/auth.json" "$HOME/.codex/config.toml" 2>/dev/null || true
+path = pathlib.Path(sys.argv[1])
+base_url = sys.argv[2].rstrip('/') + '/v1'
+api_key = sys.argv[3]
+text = path.read_text() if path.exists() else ''
+lines = text.splitlines()
+
+def quote_toml(value: str) -> str:
+    return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+result = []
+in_aether = False
+top_model_provider_set = False
+seen_section = False
+for line in lines:
+    stripped = line.strip()
+    if re.match(r'^\[.*\]$', stripped):
+        seen_section = True
+        in_aether = stripped == '[model_providers.aether]'
+        if in_aether:
+            continue
+    if in_aether:
+        continue
+    if not seen_section and re.match(r'^model_provider\s*=', stripped):
+        if not top_model_provider_set:
+            result.append('model_provider = "aether"')
+            top_model_provider_set = True
+        continue
+    result.append(line)
+
+if not top_model_provider_set:
+    insert_at = next((idx for idx, line in enumerate(result) if line.strip().startswith('[')), len(result))
+    while insert_at > 0 and result[insert_at - 1].strip() == '':
+        insert_at -= 1
+    result[insert_at:insert_at] = ['model_provider = "aether"', '']
+
+while result and result[-1].strip() == '':
+    result.pop()
+if result:
+    result.append('')
+result.extend([
+    '# Managed by Aether',
+    '[model_providers.aether]',
+    'name = "Aether"',
+    f'base_url = {{quote_toml(base_url)}}',
+    'wire_api = "responses"',
+    'requires_openai_auth = false',
+    f'experimental_bearer_token = {{quote_toml(api_key)}}',
+])
+path.write_text('\n'.join(result) + '\n')
+PY
+    chmod 600 "$HOME/.codex/config.toml" 2>/dev/null || true
     ;;
   gemini_cli)
     mkdir -p "$HOME/.gemini"
@@ -329,8 +369,51 @@ if ($TargetCli -eq 'claude_code') {{
   $Data | ConvertTo-Json -Depth 8 | Set-Content $Path -Encoding UTF8
 }} elseif ($TargetCli -eq 'codex_cli') {{
   $Dir = Join-Path $HomeDir '.codex'; New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-  Set-Content (Join-Path $Dir 'auth.json') -Value (@{{ OPENAI_API_KEY = $AetherApiKey }} | ConvertTo-Json) -Encoding UTF8
-  Set-Content (Join-Path $Dir 'config.toml') -Value "# Managed by Aether`nmodel_provider = \"aether\"`n`n[model_providers.aether]`nname = \"Aether\"`nbase_url = \"$AetherBaseUrl/v1\"`nenv_key = \"OPENAI_API_KEY\"`nwire_api = \"chat\"`n" -Encoding UTF8
+  $Path = Join-Path $Dir 'config.toml'
+  $Text = if (Test-Path $Path) {{ Get-Content $Path -Raw }} else {{ '' }}
+  $Lines = if ($Text.Length -gt 0) {{ $Text -split "`r?`n" }} else {{ @() }}
+  $Result = New-Object System.Collections.Generic.List[string]
+  $InAether = $false
+  $TopModelProviderSet = $false
+  $SeenSection = $false
+  foreach ($Line in $Lines) {{
+    $Stripped = $Line.Trim()
+    if ($Stripped -match '^\[.*\]$') {{
+      $SeenSection = $true
+      $InAether = $Stripped -eq '[model_providers.aether]'
+      if ($InAether) {{ continue }}
+    }}
+    if ($InAether) {{ continue }}
+    if (-not $SeenSection -and $Stripped -match '^model_provider\s*=') {{
+      if (-not $TopModelProviderSet) {{
+        $Result.Add('model_provider = "aether"')
+        $TopModelProviderSet = $true
+      }}
+      continue
+    }}
+    $Result.Add($Line)
+  }}
+  if (-not $TopModelProviderSet) {{
+    $InsertAt = $Result.Count
+    for ($Index = 0; $Index -lt $Result.Count; $Index++) {{
+      if ($Result[$Index].Trim().StartsWith('[')) {{ $InsertAt = $Index; break }}
+    }}
+    while ($InsertAt -gt 0 -and $Result[$InsertAt - 1].Trim() -eq '') {{ $InsertAt-- }}
+    $Result.Insert($InsertAt, '')
+    $Result.Insert($InsertAt, 'model_provider = "aether"')
+  }}
+  while ($Result.Count -gt 0 -and $Result[$Result.Count - 1].Trim() -eq '') {{ $Result.RemoveAt($Result.Count - 1) }}
+  if ($Result.Count -gt 0) {{ $Result.Add('') }}
+  $EscapedBaseUrl = ($AetherBaseUrl.TrimEnd('/') + '/v1').Replace('\', '\\').Replace('"', '\"')
+  $EscapedApiKey = $AetherApiKey.Replace('\', '\\').Replace('"', '\"')
+  $Result.Add('# Managed by Aether')
+  $Result.Add('[model_providers.aether]')
+  $Result.Add('name = "Aether"')
+  $Result.Add("base_url = `"$EscapedBaseUrl`"")
+  $Result.Add('wire_api = "responses"')
+  $Result.Add('requires_openai_auth = false')
+  $Result.Add("experimental_bearer_token = `"$EscapedApiKey`"")
+  Set-Content -Path $Path -Value (($Result -join "`n") + "`n") -Encoding UTF8
 }} elseif ($TargetCli -eq 'gemini_cli') {{
   $Dir = Join-Path $HomeDir '.gemini'; New-Item -ItemType Directory -Force -Path $Dir | Out-Null
   Set-Content (Join-Path $Dir '.env') -Value "GEMINI_API_KEY=$AetherApiKey`nGOOGLE_API_KEY=$AetherApiKey`nGOOGLE_GEMINI_BASE_URL=$AetherBaseUrl`nAETHER_BASE_URL=$AetherBaseUrl`n" -Encoding UTF8
@@ -375,7 +458,7 @@ pub(super) async fn handle_users_me_api_key_install_session_create(
     let Some(request_body) = request_body else {
         return build_auth_error_response(http::StatusCode::BAD_REQUEST, "请求数据验证失败", false);
     };
-    let payload = match serde_json::from_slice::<UsersMeCreateInstallSessionRequest>(request_body) {
+    let payload = match serde_json::from_slice::<CreateApiKeyInstallSessionRequest>(request_body) {
         Ok(value) => value,
         Err(_) => {
             return build_auth_error_response(
@@ -426,11 +509,32 @@ pub(super) async fn handle_users_me_api_key_install_session_create(
         );
     };
 
+    build_api_key_install_session_response(
+        state,
+        request_context,
+        headers,
+        record.api_key_id.clone(),
+        record.name.unwrap_or_else(|| "API Key".to_string()),
+        api_key,
+        payload,
+    )
+    .await
+}
+
+pub(crate) async fn build_api_key_install_session_response(
+    state: &AppState,
+    request_context: &GatewayPublicRequestContext,
+    headers: &http::HeaderMap,
+    api_key_id: String,
+    api_key_name: String,
+    api_key: String,
+    payload: CreateApiKeyInstallSessionRequest,
+) -> Response<Body> {
     let code = generate_install_code();
     let expires_at_unix_secs = unix_secs_now().saturating_add(INSTALL_SESSION_TTL_SECS);
     let session = StoredInstallSession {
-        api_key_id: record.api_key_id.clone(),
-        api_key_name: record.name.unwrap_or_else(|| "API Key".to_string()),
+        api_key_id,
+        api_key_name,
         api_key,
         base_url: base_url_from_request(headers, request_context),
         target_cli: payload.target_cli,
@@ -558,4 +662,50 @@ pub(super) async fn maybe_build_local_install_response(
         http::HeaderValue::from_static("nosniff"),
     );
     Some(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_session(target_cli: InstallTargetCli) -> StoredInstallSession {
+        StoredInstallSession {
+            api_key_id: "key-1".to_string(),
+            api_key_name: "Key 1".to_string(),
+            api_key: "sk-test".to_string(),
+            base_url: "http://localhost:8084".to_string(),
+            target_cli,
+            target_system: InstallTargetSystem::Linux,
+            expires_at_unix_secs: u64::MAX,
+        }
+    }
+
+    #[test]
+    fn codex_unix_script_preserves_config_and_uses_responses_bearer_token() {
+        let script = build_unix_script(&test_session(InstallTargetCli::CodexCli));
+
+        assert!(script.contains("path.read_text() if path.exists() else ''"));
+        assert!(script.contains("stripped == '[model_providers.aether]'"));
+        assert!(script.contains("model_provider = \"aether\""));
+        assert!(script.contains("wire_api = \"responses\""));
+        assert!(script.contains("requires_openai_auth = false"));
+        assert!(script.contains("experimental_bearer_token ="));
+        assert!(!script.contains("wire_api = \"chat\""));
+        assert!(!script.contains("cat > \"$HOME/.codex/config.toml\""));
+        assert!(!script.contains("auth.json"));
+    }
+
+    #[test]
+    fn codex_powershell_script_preserves_config_and_uses_responses_bearer_token() {
+        let script = build_powershell_script(&test_session(InstallTargetCli::CodexCli));
+
+        assert!(script.contains("Get-Content $Path -Raw"));
+        assert!(script.contains("$Stripped -eq '[model_providers.aether]'"));
+        assert!(script.contains("model_provider = \"aether\""));
+        assert!(script.contains("wire_api = \"responses\""));
+        assert!(script.contains("requires_openai_auth = false"));
+        assert!(script.contains("experimental_bearer_token ="));
+        assert!(!script.contains("wire_api = \"chat\""));
+        assert!(!script.contains("auth.json"));
+    }
 }

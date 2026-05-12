@@ -30,6 +30,7 @@ pub(super) async fn maybe_build_local_internal_proxy_response(
 pub(super) async fn maybe_build_local_admin_proxy_response(
     state: &AppState,
     request_context: &GatewayPublicRequestContext,
+    request_headers: &http::HeaderMap,
     request_body: Option<&Bytes>,
 ) -> Result<Option<Response<Body>>, GatewayError> {
     let Some(decision) = request_context.control_decision.as_ref() else {
@@ -49,6 +50,7 @@ pub(super) async fn maybe_build_local_admin_proxy_response(
     admin_api::maybe_build_local_admin_response(admin_api::AdminRouteRequest::new(
         state,
         request_context,
+        request_headers,
         request_body,
     ))
     .await

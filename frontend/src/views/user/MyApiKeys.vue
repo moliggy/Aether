@@ -589,14 +589,34 @@
         <div class="space-y-2">
           <div class="flex items-center justify-between gap-2">
             <Label class="text-sm font-semibold">复制到目标机器执行</Label>
-            <Button
-              variant="ghost"
-              size="sm"
-              :disabled="installLoading || !selectedInstallApiKey"
-              @click="refreshInstallCommand"
-            >
-              {{ installLoading ? '生成中...' : '重新生成' }}
-            </Button>
+            <div class="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                class="gap-1.5"
+                :disabled="installLoading || !installCommand"
+                :title="installCopied ? '已复制' : '一键复制安装命令'"
+                @click="copyInstallCommand"
+              >
+                <CheckCircle
+                  v-if="installCopied"
+                  class="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400"
+                />
+                <Copy
+                  v-else
+                  class="h-3.5 w-3.5"
+                />
+                {{ installCopied ? '已复制' : '一键复制' }}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                :disabled="installLoading || !selectedInstallApiKey"
+                @click="refreshInstallCommand"
+              >
+                {{ installLoading ? '生成中...' : '重新生成' }}
+              </Button>
+            </div>
           </div>
           <div class="rounded-lg border border-border/60 bg-background overflow-hidden">
             <pre class="max-h-32 overflow-x-auto whitespace-pre-wrap break-all p-3 text-xs font-mono">{{ installCommand || '正在生成短命令...' }}</pre>
@@ -618,9 +638,9 @@
         <Button
           class="h-10 px-5 shadow-lg shadow-primary/20"
           :disabled="!installCommand || installLoading"
-          @click="copyTextToClipboard(installCommand)"
+          @click="copyInstallCommand"
         >
-          复制命令
+          {{ installCopied ? '已复制' : '复制命令' }}
         </Button>
       </template>
     </Dialog>
@@ -640,8 +660,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
-import { meApi, type ApiKey, type InstallTargetCli, type InstallTargetSystem, type ApiKeyInstallSession } from '@/api/me'
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
+import { meApi, type ApiKey, type InstallSessionTargetSystem, type InstallTargetCli, type ApiKeyInstallSession } from '@/api/me'
 import Card from '@/components/ui/card.vue'
 import Button from '@/components/ui/button.vue'
 import Input from '@/components/ui/input.vue'
@@ -674,7 +694,7 @@ const installCliOptions: Array<{ value: InstallTargetCli; label: string }> = [
   { value: 'gemini_cli', label: 'Gemini CLI' }
 ]
 
-const installSystemOptions: Array<{ value: Exclude<InstallTargetSystem, 'auto'>; label: string }> = [
+const installSystemOptions: Array<{ value: InstallSessionTargetSystem; label: string }> = [
   { value: 'macos', label: 'macOS' },
   { value: 'linux', label: 'Linux' },
   { value: 'windows', label: 'Windows' }
@@ -708,9 +728,11 @@ const editingApiKey = ref<ApiKey | null>(null)
 const selectedInstallApiKey = ref<ApiKey | null>(null)
 const pendingFirstInstallApiKey = ref<ApiKey | null>(null)
 const installCli = ref<InstallTargetCli>('claude_code')
-const installSystem = ref<Exclude<InstallTargetSystem, 'auto'>>('linux')
+const installSystem = ref<InstallSessionTargetSystem>('linux')
 const installSession = ref<ApiKeyInstallSession | null>(null)
 const installLoading = ref(false)
+const installCopied = ref(false)
+let installCopiedResetTimer: ReturnType<typeof setTimeout> | null = null
 
 const installCommand = computed(() => {
   if (!installSession.value) return ''
@@ -729,6 +751,16 @@ const installCommandHint = computed(() => {
 onMounted(() => {
   installSystem.value = detectCurrentSystem()
   loadApiKeys()
+})
+
+onBeforeUnmount(() => {
+  resetInstallCopiedState()
+})
+
+watch(showInstallDialog, (isOpen) => {
+  if (!isOpen) {
+    resetInstallCopiedState()
+  }
 })
 
 watch(showKeyDialog, (isOpen) => {
@@ -756,6 +788,18 @@ async function loadApiKeys() {
   }
 }
 
+function clearInstallCopiedResetTimer() {
+  if (installCopiedResetTimer) {
+    clearTimeout(installCopiedResetTimer)
+    installCopiedResetTimer = null
+  }
+}
+
+function resetInstallCopiedState() {
+  clearInstallCopiedResetTimer()
+  installCopied.value = false
+}
+
 function openEditApiKeyDialog(apiKey: ApiKey) {
   editingApiKey.value = apiKey
   newKeyName.value = apiKey.name || ''
@@ -772,7 +816,7 @@ function openCreateApiKeyDialog() {
   showCreateDialog.value = true
 }
 
-function detectCurrentSystem(): Exclude<InstallTargetSystem, 'auto'> {
+function detectCurrentSystem(): InstallSessionTargetSystem {
   const platform = window.navigator.platform.toLowerCase()
   const userAgent = window.navigator.userAgent.toLowerCase()
   if (platform.includes('mac')) return 'macos'
@@ -783,6 +827,7 @@ function detectCurrentSystem(): Exclude<InstallTargetSystem, 'auto'> {
 async function openInstallDialog(apiKey: ApiKey) {
   selectedInstallApiKey.value = apiKey
   installSession.value = null
+  resetInstallCopiedState()
   showInstallDialog.value = true
   await refreshInstallCommand()
 }
@@ -792,7 +837,7 @@ async function selectInstallCli(value: InstallTargetCli) {
   await refreshInstallCommand()
 }
 
-async function selectInstallSystem(value: Exclude<InstallTargetSystem, 'auto'>) {
+async function selectInstallSystem(value: InstallSessionTargetSystem) {
   installSystem.value = value
   await refreshInstallCommand()
 }
@@ -801,6 +846,7 @@ async function refreshInstallCommand() {
   if (!selectedInstallApiKey.value) return
   installLoading.value = true
   installSession.value = null
+  resetInstallCopiedState()
   try {
     installSession.value = await meApi.createApiKeyInstallSession(selectedInstallApiKey.value.id, {
       target_cli: installCli.value,
@@ -812,6 +858,20 @@ async function refreshInstallCommand() {
   } finally {
     installLoading.value = false
   }
+}
+
+async function copyInstallCommand() {
+  if (!installCommand.value) return
+  const copied = await copyTextToClipboard(installCommand.value, false)
+  if (!copied) return
+
+  installCopied.value = true
+  success('安装命令已复制到剪贴板')
+  clearInstallCopiedResetTimer()
+  installCopiedResetTimer = setTimeout(() => {
+    installCopied.value = false
+    installCopiedResetTimer = null
+  }, 2000)
 }
 
 function closeCreatedKeyDialog() {
@@ -911,19 +971,22 @@ async function copyApiKey(apiKey: ApiKey) {
   try {
     // 调用后端 API 获取完整密钥
     const response = await meApi.getFullApiKey(apiKey.id)
-    await copyTextToClipboard(response.key, false) // 不显示内部提示
-    success('完整密钥已复制到剪贴板')
+    const copied = await copyTextToClipboard(response.key, false) // 不显示内部提示
+    if (copied) {
+      success('完整密钥已复制到剪贴板')
+    }
   } catch (error) {
     log.error('复制密钥失败:', error)
     showError('复制失败，请重试')
   }
 }
 
-async function copyTextToClipboard(text: string, showToast: boolean = true) {
+async function copyTextToClipboard(text: string, showToast: boolean = true): Promise<boolean> {
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text)
       if (showToast) success('已复制到剪贴板')
+      return true
     } else {
       const textArea = document.createElement('textarea')
       textArea.value = text
@@ -938,8 +1001,12 @@ async function copyTextToClipboard(text: string, showToast: boolean = true) {
         const successful = document.execCommand('copy')
         if (successful && showToast) {
           success('已复制到剪贴板')
-        } else if (!successful) {
+        }
+        if (successful) {
+          return true
+        } else {
           showError('复制失败，请手动复制')
+          return false
         }
       } finally {
         document.body.removeChild(textArea)
@@ -948,6 +1015,7 @@ async function copyTextToClipboard(text: string, showToast: boolean = true) {
   } catch (error) {
     log.error('复制失败:', error)
     showError('复制失败，请手动选择文本进行复制')
+    return false
   }
 }
 

@@ -63,6 +63,9 @@ use self::support_auth::{
     build_auth_settings_payload, extract_client_device_id, maybe_build_local_auth_response,
 };
 use self::support_dashboard::maybe_build_local_dashboard_response;
+pub(crate) use self::support_install::{
+    build_api_key_install_session_response, CreateApiKeyInstallSessionRequest,
+};
 use self::support_install::{
     handle_users_me_api_key_install_session_create, maybe_build_local_install_response,
     users_me_api_key_install_sessions_path_matches,
