@@ -173,6 +173,7 @@ export interface ApiKey {
 
 export type InstallTargetCli = 'claude_code' | 'codex_cli' | 'gemini_cli'
 export type InstallTargetSystem = 'macos' | 'linux' | 'windows' | 'auto'
+export type InstallSessionTargetSystem = Exclude<InstallTargetSystem, 'auto'>
 
 export interface ApiKeyInstallSession {
   install_code: string
@@ -287,7 +288,7 @@ export const meApi = {
 
   async createApiKeyInstallSession(
     keyId: string,
-    data: { target_cli: InstallTargetCli; target_system: InstallTargetSystem }
+    data: { target_cli: InstallTargetCli; target_system: InstallSessionTargetSystem }
   ): Promise<ApiKeyInstallSession> {
     const response = await apiClient.post<ApiKeyInstallSession>(
       `/api/users/me/api-keys/${keyId}/install-sessions`,

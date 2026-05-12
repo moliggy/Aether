@@ -1,6 +1,7 @@
 import apiClient from './client'
 import { cachedRequest, buildCacheKey } from '@/utils/cache'
 import type { BillingSummary } from './auth'
+import type { ApiKeyInstallSession, InstallSessionTargetSystem, InstallTargetCli } from './me'
 
 // LDAP 配置导出结构
 export interface LDAPConfigExport {
@@ -674,6 +675,18 @@ export const adminApi = {
     const response = await apiClient.get<{ key: string }>(
       `/api/admin/api-keys/${keyId}`,
       { params: { include_key: true } }
+    )
+    return response.data
+  },
+
+  // 创建独立余额 Key 的 CLI 安装会话
+  async createApiKeyInstallSession(
+    keyId: string,
+    data: { target_cli: InstallTargetCli; target_system: InstallSessionTargetSystem }
+  ): Promise<ApiKeyInstallSession> {
+    const response = await apiClient.post<ApiKeyInstallSession>(
+      `/api/admin/api-keys/${keyId}/install-sessions`,
+      data
     )
     return response.data
   },
