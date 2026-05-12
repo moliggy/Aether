@@ -2,8 +2,10 @@ use async_trait::async_trait;
 
 pub const POOL_KIND_PROVIDER_KEY_POOL: &str = "provider_key_pool";
 pub const POOL_MEMBER_KIND_PROVIDER_API_KEY: &str = "provider_api_key";
-pub const POOL_SCORE_CAPABILITY_API_FORMAT: &str = "api_format";
-pub const POOL_SCORE_SCOPE_KIND_MODEL: &str = "model";
+pub const POOL_SCORE_CAPABILITY_ACCOUNT: &str = "account";
+pub const POOL_SCORE_SCOPE_KIND_ACCOUNT: &str = "account";
+pub const POOL_SCORE_CAPABILITY_API_FORMAT: &str = POOL_SCORE_CAPABILITY_ACCOUNT;
+pub const POOL_SCORE_SCOPE_KIND_MODEL: &str = POOL_SCORE_SCOPE_KIND_ACCOUNT;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,

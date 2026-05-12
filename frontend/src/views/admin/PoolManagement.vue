@@ -405,6 +405,12 @@
                 >
                   最后使用
                 </SortableTableHead>
+                <TableHead
+                  class="font-semibold text-center whitespace-nowrap"
+                  :style="{ width: desktopColumnWidths.score }"
+                >
+                  分数
+                </TableHead>
                 <SortableTableHead
                   class="font-semibold text-center whitespace-nowrap"
                   column-key="status"
@@ -664,6 +670,64 @@
                   <span class="text-[10px] text-muted-foreground whitespace-nowrap">
                     {{ keyUiStateMap[key.key_id]?.lastUsedRelative || '-' }}
                   </span>
+                </TableCell>
+                <TableCell class="py-3 text-center align-middle">
+                  <div class="inline-flex items-center justify-center gap-1">
+                    <span class="font-mono text-xs tabular-nums text-foreground/90">
+                      {{ formatPoolScore(key.pool_score?.score) }}
+                    </span>
+                    <Popover
+                      v-if="key.pool_score"
+                      :open="scorePopoverOpenKeyId === key.key_id"
+                      @update:open="(open: boolean) => handleScorePopoverToggle(key.key_id, open)"
+                    >
+                      <PopoverTrigger as-child>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          class="h-5 w-5 rounded-full text-muted-foreground hover:text-foreground"
+                          title="查看评分计算结果"
+                          aria-label="查看评分计算结果"
+                          @click.stop
+                        >
+                          <CircleHelp class="h-3.5 w-3.5" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        v-if="scorePopoverOpenKeyId === key.key_id"
+                        class="w-96 max-w-[calc(100vw-2rem)] p-3"
+                        side="bottom"
+                        align="center"
+                      >
+                        <div class="space-y-2 text-left">
+                          <div class="flex items-center justify-between gap-3">
+                            <span class="text-xs font-medium">评分计算结果</span>
+                            <span class="font-mono text-xs tabular-nums">
+                              {{ formatPoolScore(key.pool_score?.score) }}
+                            </span>
+                          </div>
+                          <div class="flex flex-wrap items-center gap-1.5">
+                            <Badge
+                              variant="outline"
+                              class="text-[10px]"
+                            >
+                              {{ getPoolScoreHardStateLabel(key.pool_score?.hard_state) }}
+                            </Badge>
+                            <Badge
+                              variant="secondary"
+                              class="text-[10px]"
+                            >
+                              {{ getPoolScoreProbeStatusLabel(key.pool_score?.probe_status) }}
+                            </Badge>
+                            <span class="text-[10px] text-muted-foreground">
+                              更新 {{ formatUnixSeconds(key.pool_score?.updated_at) }}
+                            </span>
+                          </div>
+                          <pre class="max-h-64 overflow-auto rounded-lg bg-muted/40 p-3 text-[11px] leading-5 text-foreground whitespace-pre-wrap break-words">{{ formatPoolScoreReason(key.pool_score?.score_reason) }}</pre>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
                 </TableCell>
                 <TableCell class="py-3 text-center">
                   <Badge
@@ -928,6 +992,65 @@
                     <span class="text-muted-foreground">最后使用</span>
                     <span class="font-medium text-foreground/90">{{ keyUiStateMap[key.key_id]?.lastUsedRelative || '-' }}</span>
                   </div>
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-muted-foreground">分数</span>
+                    <div class="flex items-center gap-1">
+                      <span class="font-mono font-medium text-foreground/90 tabular-nums">
+                        {{ formatPoolScore(key.pool_score?.score) }}
+                      </span>
+                      <Popover
+                        v-if="key.pool_score"
+                        :open="scorePopoverOpenKeyId === key.key_id"
+                        @update:open="(open: boolean) => handleScorePopoverToggle(key.key_id, open)"
+                      >
+                        <PopoverTrigger as-child>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            class="h-5 w-5 rounded-full text-muted-foreground hover:text-foreground"
+                            title="查看评分计算结果"
+                            aria-label="查看评分计算结果"
+                            @click.stop
+                          >
+                            <CircleHelp class="h-3.5 w-3.5" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          v-if="scorePopoverOpenKeyId === key.key_id"
+                          class="w-96 max-w-[calc(100vw-2rem)] p-3"
+                          side="bottom"
+                          align="center"
+                        >
+                          <div class="space-y-2 text-left">
+                            <div class="flex items-center justify-between gap-3">
+                              <span class="text-xs font-medium">评分计算结果</span>
+                              <span class="font-mono text-xs tabular-nums">
+                                {{ formatPoolScore(key.pool_score?.score) }}
+                              </span>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-1.5">
+                              <Badge
+                                variant="outline"
+                                class="text-[10px]"
+                              >
+                                {{ getPoolScoreHardStateLabel(key.pool_score?.hard_state) }}
+                              </Badge>
+                              <Badge
+                                variant="secondary"
+                                class="text-[10px]"
+                              >
+                                {{ getPoolScoreProbeStatusLabel(key.pool_score?.probe_status) }}
+                              </Badge>
+                              <span class="text-[10px] text-muted-foreground">
+                                更新 {{ formatUnixSeconds(key.pool_score?.updated_at) }}
+                              </span>
+                            </div>
+                            <pre class="max-h-64 overflow-auto rounded-lg bg-muted/40 p-3 text-[11px] leading-5 text-foreground whitespace-pre-wrap break-words">{{ formatPoolScoreReason(key.pool_score?.score_reason) }}</pre>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1189,170 +1312,6 @@
       </template>
     </Card>
 
-    <Card
-      v-if="selectedProviderId"
-      variant="default"
-      class="overflow-hidden"
-    >
-      <div class="flex flex-col gap-3 border-b border-border/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-3.5">
-        <div class="min-w-0">
-          <h3 class="text-base font-semibold">
-            评分排序
-          </h3>
-          <p class="mt-1 text-xs text-muted-foreground">
-            Top {{ poolScorePage.items.length }} / page {{ poolScorePage.page || 1 }}
-          </p>
-        </div>
-        <RefreshButton
-          :loading="scoresLoading"
-          title="刷新评分"
-          @click="() => loadScores()"
-        />
-      </div>
-
-      <div class="grid gap-2 border-b border-border/60 bg-muted/20 px-4 py-3 sm:grid-cols-4 sm:px-6">
-        <Input
-          v-model="scoreApiFormatFilter"
-          class="h-8 text-xs"
-          placeholder="api_format"
-        />
-        <Input
-          v-model="scoreModelIdFilter"
-          class="h-8 text-xs"
-          placeholder="model_id"
-        />
-        <Select v-model="scoreHardStateFilter">
-          <SelectTrigger class="h-8 text-xs border-border/60">
-            <SelectValue placeholder="硬状态" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem
-              v-for="item in poolScoreHardStateOptions"
-              :key="item.value"
-              :value="item.value"
-            >
-              {{ item.label }}
-            </SelectItem>
-          </SelectContent>
-        </Select>
-        <Select v-model="scoreProbeStatusFilter">
-          <SelectTrigger class="h-8 text-xs border-border/60">
-            <SelectValue placeholder="探测" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem
-              v-for="item in poolScoreProbeStatusOptions"
-              :key="item.value"
-              :value="item.value"
-            >
-              {{ item.label }}
-            </SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div
-        v-if="scoresLoading && poolScorePage.items.length === 0"
-        class="flex items-center justify-center py-10"
-      >
-        <div class="animate-spin rounded-full h-7 w-7 border-b-2 border-primary" />
-      </div>
-      <div
-        v-else-if="poolScorePage.items.length === 0"
-        class="flex flex-col items-center justify-center py-10 text-center"
-      >
-        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-          <SlidersHorizontal class="h-6 w-6 text-muted-foreground" />
-        </div>
-        <p class="mt-3 text-sm text-muted-foreground">
-          {{ hasPoolScoreFilters ? '未找到匹配评分' : '暂无评分数据' }}
-        </p>
-      </div>
-      <div
-        v-else
-        class="overflow-x-auto"
-      >
-        <Table class="w-full min-w-[760px] table-fixed">
-          <TableHeader>
-            <TableRow class="border-b border-border/60 hover:bg-transparent">
-              <TableHead class="w-[24%] font-semibold">
-                账号
-              </TableHead>
-              <TableHead class="w-[24%] font-semibold">
-                范围
-              </TableHead>
-              <TableHead class="w-[12%] text-center font-semibold">
-                分数
-              </TableHead>
-              <TableHead class="w-[12%] text-center font-semibold">
-                状态
-              </TableHead>
-              <TableHead class="w-[12%] text-center font-semibold">
-                探测
-              </TableHead>
-              <TableHead class="w-[16%] text-center font-semibold">
-                更新时间
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            <TableRow
-              v-for="score in poolScorePage.items"
-              :key="score.id"
-              class="border-b border-border/40 last:border-b-0 hover:bg-muted/30"
-            >
-              <TableCell class="py-3">
-                <div class="min-w-0">
-                  <div class="truncate text-sm">
-                    {{ score.key?.name || score.member_id }}
-                  </div>
-                  <div class="truncate font-mono text-[10px] text-muted-foreground">
-                    {{ score.member_id }}
-                  </div>
-                </div>
-              </TableCell>
-              <TableCell class="py-3">
-                <div class="min-w-0 text-xs">
-                  <div class="truncate text-foreground/90">
-                    {{ score.capability || '-' }}
-                  </div>
-                  <div class="truncate text-[10px] text-muted-foreground">
-                    {{ score.scope_kind }}: {{ score.scope_id || '*' }}
-                  </div>
-                </div>
-              </TableCell>
-              <TableCell class="py-3 text-center">
-                <span class="font-mono text-xs tabular-nums">
-                  {{ formatPoolScore(score.score) }}
-                </span>
-              </TableCell>
-              <TableCell class="py-3 text-center">
-                <Badge
-                  variant="outline"
-                  class="text-[10px]"
-                >
-                  {{ getPoolScoreHardStateLabel(score.hard_state) }}
-                </Badge>
-              </TableCell>
-              <TableCell class="py-3 text-center">
-                <Badge
-                  variant="secondary"
-                  class="text-[10px]"
-                >
-                  {{ getPoolScoreProbeStatusLabel(score.probe_status) }}
-                </Badge>
-              </TableCell>
-              <TableCell class="py-3 text-center">
-                <span class="text-[10px] text-muted-foreground">
-                  {{ formatUnixSeconds(score.updated_at) }}
-                </span>
-              </TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
-      </div>
-    </Card>
-
     <!-- Dialogs -->
     <OAuthAccountDialog
       v-if="selectedProviderId"
@@ -1437,6 +1396,7 @@ import {
   Users,
   Settings2,
   SlidersHorizontal,
+  CircleHelp,
 } from 'lucide-vue-next'
 
 import {
@@ -1473,7 +1433,6 @@ import {
   getPoolOverview,
   getPoolSchedulingPresets,
   listPoolKeys,
-  listPoolScores,
   clearPoolCooldown,
 } from '@/api/endpoints/pool'
 import {
@@ -1489,9 +1448,7 @@ import type {
   PoolOverviewItem,
   PoolKeyDetail,
   PoolKeysPageResponse,
-  PoolMemberScoreItem,
   PoolPresetMeta,
-  PoolScoresResponse,
 } from '@/api/endpoints/pool'
 import type {
   ClaudeCodeAdvancedConfig,
@@ -1558,6 +1515,8 @@ import {
   getQuotaDisplayText,
 } from '@/utils/providerKeyQuota'
 
+type PoolKeyScore = NonNullable<PoolKeyDetail['pool_score']>
+
 const { success, error: showError, warning: showWarning } = useToast()
 const { confirm } = useConfirm()
 const { copyToClipboard } = useClipboard()
@@ -1587,14 +1546,11 @@ let overviewRequestId = 0
 let selectProviderRequestId = 0
 let providerDataRequestId = 0
 let keysRequestId = 0
-let scoresRequestId = 0
 let keysSearchDebounceTimer: number | null = null
-let scoresFilterDebounceTimer: number | null = null
 let suppressFiltersWatch = false
 let hasHydratedInitialProviderSelection = false
 const POOL_OVERVIEW_CACHE_TTL_MS = 10 * 1000
 const POOL_KEYS_CACHE_TTL_MS = 10 * 1000
-const POOL_SCORES_CACHE_TTL_MS = 10 * 1000
 const POOL_SCHEDULING_PRESETS_CACHE_TTL_MS = 5 * 60 * 1000
 const poolKeyStatusFilterOptions: Array<{ value: PoolManagementViewState['status'], label: string }> = [
   { value: 'all', label: '全部状态' },
@@ -1676,7 +1632,6 @@ async function loadOverview(options: { cacheTtlMs?: number } = {}) {
       showAccountBatchDialog.value = false
       closeProviderProxyPopovers()
       resetKeyPage()
-      resetScorePage()
     }
   } catch (err) {
     if (requestId !== overviewRequestId) return
@@ -1851,23 +1806,25 @@ const showAccountQuotaColumn = computed(() => {
 const desktopColumnWidths = computed(() => {
   if (showAccountQuotaColumn.value) {
     return {
-      name: '22%',
-      quota: '21%',
-      stats: '15%',
+      name: '21%',
+      quota: '18%',
+      stats: '13%',
       imported: '10%',
-      lastUsed: '9%',
+      lastUsed: '8%',
+      score: '9%',
       status: '7%',
-      actions: '16%',
+      actions: '14%',
     }
   }
   return {
-    name: '34%',
+    name: '31%',
     quota: '0%',
-    stats: '16%',
-    imported: '12%',
-    lastUsed: '12%',
-    status: '9%',
-    actions: '17%',
+    stats: '15%',
+    imported: '11%',
+    lastUsed: '11%',
+    score: '9%',
+    status: '8%',
+    actions: '15%',
   }
 })
 
@@ -1892,6 +1849,7 @@ async function selectProvider(
   closeProviderProxyPopovers()
   proxyDesktopPopoverOpenKeyId.value = null
   proxyMobilePopoverOpenKeyId.value = null
+  scorePopoverOpenKeyId.value = null
   suppressFiltersWatch = true
   if (!options.preservePagination) {
     currentPage.value = 1
@@ -1909,11 +1867,9 @@ async function selectProvider(
   }
   keysLoadedOnce.value = false
   resetKeyPage(currentPage.value, pageSize.value)
-  resetScorePage()
   const keysTask = loadKeys({ cacheTtlMs: options.cacheTtlMs ?? 0 })
   // Provider summary is non-blocking for key list rendering.
   void loadProviderData(id)
-  void loadScores({ cacheTtlMs: options.cacheTtlMs ? POOL_SCORES_CACHE_TTL_MS : 0 })
   await keysTask
   if (requestId !== selectProviderRequestId) return
 }
@@ -1939,46 +1895,25 @@ function createEmptyKeyPage(page = 1, pageSizeValue = 50): PoolKeysPageResponse 
   return { total: 0, page, page_size: pageSizeValue, keys: [] }
 }
 
-function createEmptyScorePage(): PoolScoresResponse {
-  return {
-    provider_id: selectedProviderId.value || '',
-    page: 1,
-    page_size: 20,
-    filters: {},
-    items: [],
-  }
-}
-
 const keyPage = ref<PoolKeysPageResponse>(createEmptyKeyPage())
-const poolScorePage = ref<PoolScoresResponse>(createEmptyScorePage())
 const keysLoading = ref(false)
-const scoresLoading = ref(false)
 const keysLoadedOnce = ref(false)
 const refreshingCurrentPageQuota = ref(false)
 const searchQuery = ref(restoredViewState.search)
 const statusFilter = ref(restoredViewState.status)
-const scoreApiFormatFilter = ref('')
-const scoreModelIdFilter = ref('')
-const scoreHardStateFilter = ref('all')
-const scoreProbeStatusFilter = ref('all')
 const currentPage = ref(restoredViewState.page)
 const pageSize = ref(restoredViewState.pageSize)
 const sortBy = ref<PoolManagementSortBy | null>(restoredViewState.sortBy)
 const sortOrder = ref<PoolManagementSortOrder>(restoredViewState.sortOrder)
 const poolStatsMode = ref<PoolManagementStatsMode>(restoredViewState.statsMode)
 const hasPoolKeyFilters = computed(() => searchQuery.value.trim().length > 0 || statusFilter.value !== 'all')
-const hasPoolScoreFilters = computed(() => {
-  return scoreApiFormatFilter.value.trim().length > 0
-    || scoreModelIdFilter.value.trim().length > 0
-    || scoreHardStateFilter.value !== 'all'
-    || scoreProbeStatusFilter.value !== 'all'
-})
 const MANUAL_QUOTA_REFRESH_COOLDOWN_SECONDS = 5 * 60
 const refreshingOAuthKeyId = ref<string | null>(null)
 const resettingCycleKeyId = ref<string | null>(null)
 const savingProxyKeyId = ref<string | null>(null)
 const proxyDesktopPopoverOpenKeyId = ref<string | null>(null)
 const proxyMobilePopoverOpenKeyId = ref<string | null>(null)
+const scorePopoverOpenKeyId = ref<string | null>(null)
 const deletingKeyId = ref<string | null>(null)
 const togglingKeyId = ref<string | null>(null)
 const editingPriorityKeyId = ref<string | null>(null)
@@ -2273,10 +2208,6 @@ function resetKeyPage(page = currentPage.value, pageSizeValue = pageSize.value):
   keyPage.value = createEmptyKeyPage(page, pageSizeValue)
 }
 
-function resetScorePage(): void {
-  poolScorePage.value = createEmptyScorePage()
-}
-
 function refreshOverviewInBackground(): void {
   void loadOverview()
 }
@@ -2416,36 +2347,6 @@ async function refreshCurrentPage() {
   if (!quotaDidReload) {
     await refresh()
   }
-  void loadScores()
-}
-
-async function loadScores(options: { cacheTtlMs?: number } = {}) {
-  if (!selectedProviderId.value) return
-  const requestId = ++scoresRequestId
-  const providerId = selectedProviderId.value
-  scoresLoading.value = true
-  try {
-    const nextPage = await listPoolScores(providerId, {
-      page: 1,
-      page_size: 20,
-      api_format: scoreApiFormatFilter.value.trim() || undefined,
-      model_id: scoreModelIdFilter.value.trim() || undefined,
-      hard_state: scoreHardStateFilter.value === 'all' ? undefined : scoreHardStateFilter.value,
-      probe_status: scoreProbeStatusFilter.value === 'all' ? undefined : scoreProbeStatusFilter.value,
-    }, {
-      cacheTtlMs: options.cacheTtlMs ?? 0,
-    })
-    if (requestId !== scoresRequestId || selectedProviderId.value !== providerId) return
-    poolScorePage.value = nextPage
-  } catch (err) {
-    if (requestId !== scoresRequestId || selectedProviderId.value !== providerId) return
-    resetScorePage()
-    showError(parseApiError(err, '读取评分失败'))
-  } finally {
-    if (requestId === scoresRequestId) {
-      scoresLoading.value = false
-    }
-  }
 }
 
 async function loadKeys(options: { cacheTtlMs?: number } = {}) {
@@ -2521,20 +2422,6 @@ watch(searchQuery, () => {
     keysSearchDebounceTimer = null
     void loadKeys({ cacheTtlMs: POOL_KEYS_CACHE_TTL_MS })
   }, 300)
-})
-
-watch([scoreApiFormatFilter, scoreModelIdFilter], () => {
-  if (scoresFilterDebounceTimer !== null) {
-    clearTimeout(scoresFilterDebounceTimer)
-  }
-  scoresFilterDebounceTimer = window.setTimeout(() => {
-    scoresFilterDebounceTimer = null
-    void loadScores({ cacheTtlMs: POOL_SCORES_CACHE_TTL_MS })
-  }, 300)
-})
-
-watch([scoreHardStateFilter, scoreProbeStatusFilter], () => {
-  void loadScores({ cacheTtlMs: POOL_SCORES_CACHE_TTL_MS })
 })
 
 function normalizeAuthTypeForEdit(key: PoolKeyDetail): EndpointAPIKey['auth_type'] {
@@ -2708,6 +2595,10 @@ function getKeyProxyNodeName(key: PoolKeyDetail): string | null {
   if (!key.proxy?.node_id) return null
   const node = proxyNodesStore.nodes.find(n => n.id === key.proxy?.node_id)
   return node ? node.name : `${key.proxy.node_id.slice(0, 8)}...`
+}
+
+function handleScorePopoverToggle(keyId: string, open: boolean) {
+  scorePopoverOpenKeyId.value = open ? keyId : null
 }
 
 function handleProxyDesktopPopoverToggle(keyId: string, open: boolean) {
@@ -3845,17 +3736,28 @@ function formatStatUsd(value: number | string | null | undefined): string {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-function formatPoolScore(value: number): string {
+function formatPoolScore(value: number | null | undefined): string {
   const n = Number(value)
-  if (!Number.isFinite(n)) return '0.000'
+  if (!Number.isFinite(n)) return '-'
   return n.toFixed(3)
 }
 
-function getPoolScoreHardStateLabel(value: PoolMemberScoreItem['hard_state']): string {
+function formatPoolScoreReason(value: PoolKeyScore['score_reason'] | null | undefined): string {
+  if (!value) return '暂无计算结果'
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function getPoolScoreHardStateLabel(value: PoolKeyScore['hard_state'] | null | undefined): string {
+  if (!value) return '-'
   return poolScoreHardStateOptions.find(item => item.value === value)?.label || value
 }
 
-function getPoolScoreProbeStatusLabel(value: PoolMemberScoreItem['probe_status']): string {
+function getPoolScoreProbeStatusLabel(value: PoolKeyScore['probe_status'] | null | undefined): string {
+  if (!value) return '-'
   return poolScoreProbeStatusOptions.find(item => item.value === value)?.label || value
 }
 
@@ -3892,14 +3794,9 @@ onBeforeUnmount(() => {
     clearTimeout(keysSearchDebounceTimer)
     keysSearchDebounceTimer = null
   }
-  if (scoresFilterDebounceTimer !== null) {
-    clearTimeout(scoresFilterDebounceTimer)
-    scoresFilterDebounceTimer = null
-  }
   overviewRequestId += 1
   selectProviderRequestId += 1
   providerDataRequestId += 1
   keysRequestId += 1
-  scoresRequestId += 1
 })
 </script>

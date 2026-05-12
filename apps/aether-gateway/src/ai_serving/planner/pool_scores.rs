@@ -3,7 +3,7 @@ use aether_ai_serving::{
 };
 use aether_data_contracts::repository::pool_scores::{
     PoolMemberIdentity, PoolMemberProbeStatus, PoolScoreScope, UpsertPoolMemberScore,
-    POOL_SCORE_SCOPE_KIND_MODEL,
+    POOL_SCORE_CAPABILITY_ACCOUNT, POOL_SCORE_SCOPE_KIND_ACCOUNT,
 };
 use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 use serde_json::Value;
@@ -13,14 +13,12 @@ use crate::handlers::shared::{provider_key_health_summary, provider_key_status_s
 pub(crate) fn build_provider_key_pool_score_upsert(
     key: &StoredProviderCatalogKey,
     provider_type: &str,
-    api_format: &str,
-    model_id: Option<&str>,
     existing: Option<&aether_data_contracts::repository::pool_scores::StoredPoolMemberScore>,
     now_unix_secs: u64,
     score_rules: PoolMemberScoreRules,
 ) -> UpsertPoolMemberScore {
     let identity = PoolMemberIdentity::provider_api_key(key.provider_id.clone(), key.id.clone());
-    let scope = provider_key_pool_score_scope(api_format, model_id);
+    let scope = provider_key_pool_score_scope();
     let input = provider_key_score_input(
         key,
         provider_type,
@@ -54,17 +52,11 @@ pub(crate) fn build_provider_key_pool_score_upsert(
     }
 }
 
-pub(crate) fn provider_key_pool_score_scope(
-    api_format: &str,
-    model_id: Option<&str>,
-) -> PoolScoreScope {
+pub(crate) fn provider_key_pool_score_scope() -> PoolScoreScope {
     PoolScoreScope {
-        capability: api_format.trim().to_ascii_lowercase(),
-        scope_kind: POOL_SCORE_SCOPE_KIND_MODEL.to_string(),
-        scope_id: model_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned),
+        capability: POOL_SCORE_CAPABILITY_ACCOUNT.to_string(),
+        scope_kind: POOL_SCORE_SCOPE_KIND_ACCOUNT.to_string(),
+        scope_id: None,
     }
 }
 
@@ -133,8 +125,7 @@ fn provider_key_score_input(
             .and_then(Value::as_bool)
             .unwrap_or(false),
         oauth_invalid_reason: key.oauth_invalid_reason.clone(),
-        circuit_open: any_circuit_open
-            || circuit_open_for_scope(key.circuit_breaker_by_format.as_ref(), &scope),
+        circuit_open: any_circuit_open,
         success_count: key.success_count.unwrap_or(0).into(),
         error_count: key.error_count.unwrap_or(0).into(),
         total_response_time_ms: key.total_response_time_ms.unwrap_or(0).into(),
@@ -150,21 +141,6 @@ fn provider_key_score_input(
     }
 }
 
-fn circuit_open_for_scope(circuit_by_format: Option<&Value>, scope: &PoolScoreScope) -> bool {
-    let Some(formats) = circuit_by_format.and_then(Value::as_object) else {
-        return false;
-    };
-    let keys = api_format_lookup_keys(&scope.capability);
-    keys.iter().any(|key| {
-        formats
-            .get(key)
-            .and_then(Value::as_object)
-            .and_then(|value| value.get("open"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-    })
-}
-
 fn json_f64(value: &Value) -> Option<f64> {
     value.as_f64().or_else(|| {
         value
@@ -173,17 +149,6 @@ fn json_f64(value: &Value) -> Option<f64> {
             .filter(|value| !value.is_empty())
             .and_then(|value| value.parse::<f64>().ok())
     })
-}
-
-fn api_format_lookup_keys(api_format: &str) -> Vec<String> {
-    let normalized = crate::ai_serving::normalize_api_format_alias(api_format);
-    let mut keys = crate::ai_serving::api_format_storage_aliases(&normalized);
-    if !keys.iter().any(|value| value == &normalized) {
-        keys.push(normalized);
-    }
-    keys.sort();
-    keys.dedup();
-    keys
 }
 
 fn stable_hash(bytes: &[u8]) -> u64 {

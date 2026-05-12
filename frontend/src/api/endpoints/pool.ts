@@ -132,6 +132,7 @@ export interface PoolKeyDetail {
   quota_updated_at?: number | null
   health_score?: number
   circuit_breaker_open?: boolean
+  pool_score?: PoolKeyScoreDetail | null
   api_formats?: string[]
   rate_multipliers?: Record<string, number> | null
   internal_priority?: number
@@ -192,6 +193,28 @@ export interface PoolKeysPageResponse {
   keys: PoolKeyDetail[]
 }
 
+export interface PoolKeyScoreDetail {
+  id: string
+  capability: string
+  scope_kind: string
+  scope_id: string | null
+  score: number
+  hard_state: PoolScoreHardState
+  score_version: number
+  score_reason: Record<string, unknown> | null
+  last_ranked_at: number | null
+  last_scheduled_at: number | null
+  last_success_at: number | null
+  last_failure_at: number | null
+  failure_count: number
+  last_probe_attempt_at: number | null
+  last_probe_success_at: number | null
+  last_probe_failure_at: number | null
+  probe_failure_count: number
+  probe_status: PoolScoreProbeStatus
+  updated_at: number
+}
+
 export type PoolScoreHardState =
   | 'available'
   | 'unknown'
@@ -212,30 +235,11 @@ export interface PoolScoreKeySummary {
   last_used_at: number | null
 }
 
-export interface PoolMemberScoreItem {
-  id: string
+export interface PoolMemberScoreItem extends PoolKeyScoreDetail {
   pool_kind: string
   pool_id: string
   member_kind: string
   member_id: string
-  capability: string
-  scope_kind: string
-  scope_id: string | null
-  score: number
-  hard_state: PoolScoreHardState
-  score_version: number
-  score_reason: Record<string, unknown> | null
-  last_ranked_at: number | null
-  last_scheduled_at: number | null
-  last_success_at: number | null
-  last_failure_at: number | null
-  failure_count: number
-  last_probe_attempt_at: number | null
-  last_probe_success_at: number | null
-  last_probe_failure_at: number | null
-  probe_failure_count: number
-  probe_status: PoolScoreProbeStatus
-  updated_at: number
   key?: PoolScoreKeySummary | null
 }
 

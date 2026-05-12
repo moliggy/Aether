@@ -6,6 +6,7 @@ use crate::handlers::admin::shared::{provider_key_status_snapshot_payload, unix_
 use crate::provider_key_auth::{provider_key_auth_semantics, provider_key_effective_api_formats};
 use aether_admin::provider::pool as admin_provider_pool_pure;
 use aether_admin::provider::quota as admin_provider_quota_pure;
+use aether_data_contracts::repository::pool_scores::StoredPoolMemberScore;
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
 };
@@ -906,6 +907,7 @@ pub(super) fn build_admin_pool_key_payload(
     key: &StoredProviderCatalogKey,
     runtime: &AdminProviderPoolRuntimeState,
     pool_config: Option<AdminProviderPoolConfig>,
+    pool_score: Option<&StoredPoolMemberScore>,
     codex_cycle_usage_by_code: Option<&BTreeMap<String, StoredProviderApiKeyWindowUsageSummary>>,
     now_unix_secs: u64,
 ) -> serde_json::Value {
@@ -1087,6 +1089,34 @@ pub(super) fn build_admin_pool_key_payload(
     payload.insert("status_snapshot".to_string(), status_snapshot);
     payload.insert("quota_updated_at".to_string(), json!(quota_updated_at));
     payload.insert("health_score".to_string(), json!(health_score));
+    payload.insert(
+        "pool_score".to_string(),
+        pool_score
+            .map(|score| {
+                json!({
+                    "id": score.id.clone(),
+                    "capability": score.capability.clone(),
+                    "scope_kind": score.scope_kind.clone(),
+                    "scope_id": score.scope_id.clone(),
+                    "score": score.score,
+                    "hard_state": score.hard_state.as_database(),
+                    "score_version": score.score_version,
+                    "score_reason": score.score_reason.clone(),
+                    "last_ranked_at": score.last_ranked_at,
+                    "last_scheduled_at": score.last_scheduled_at,
+                    "last_success_at": score.last_success_at,
+                    "last_failure_at": score.last_failure_at,
+                    "failure_count": score.failure_count,
+                    "last_probe_attempt_at": score.last_probe_attempt_at,
+                    "last_probe_success_at": score.last_probe_success_at,
+                    "last_probe_failure_at": score.last_probe_failure_at,
+                    "probe_failure_count": score.probe_failure_count,
+                    "probe_status": score.probe_status.as_database(),
+                    "updated_at": score.updated_at,
+                })
+            })
+            .unwrap_or(serde_json::Value::Null),
+    );
     payload.insert(
         "circuit_breaker_open".to_string(),
         json!(circuit_breaker_open),

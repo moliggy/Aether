@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use aether_data_contracts::repository::global_models::AdminProviderModelListQuery;
 use aether_data_contracts::repository::pool_scores::GetPoolMemberScoresByIdsQuery;
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
@@ -113,32 +112,11 @@ fn provider_offset_cursor_key(provider_id: &str) -> String {
     format!("{POOL_SCORE_REBUILD_PROVIDER_OFFSET_PREFIX}:{provider_id}")
 }
 
-fn score_combo_indices(
-    flat_index: usize,
-    model_count: usize,
-    key_count: usize,
-) -> (usize, usize, usize) {
-    let endpoint_stride = model_count.saturating_mul(key_count).max(1);
-    let endpoint_index = flat_index / endpoint_stride;
-    let remainder = flat_index % endpoint_stride;
-    let model_index = remainder / key_count.max(1);
-    let key_index = remainder % key_count.max(1);
-    (endpoint_index, model_index, key_index)
-}
-
-#[derive(Debug, Clone)]
-struct ProviderScoreBuildItem {
-    endpoint_index: usize,
-    model_index: usize,
-    key_index: usize,
-    score_id: String,
-}
-
 pub(crate) async fn ensure_provider_key_pool_scores_for_keys(
     state: &AppState,
     provider: &StoredProviderCatalogProvider,
     pool_config: &AdminProviderPoolConfig,
-    endpoints: &[StoredProviderCatalogEndpoint],
+    _endpoints: &[StoredProviderCatalogEndpoint],
     keys: &[StoredProviderCatalogKey],
     now_unix_secs: u64,
     max_upserts: usize,
@@ -151,63 +129,28 @@ pub(crate) async fn ensure_provider_key_pool_scores_for_keys(
         return Ok(0);
     }
 
-    let endpoints = endpoints
-        .iter()
-        .filter(|endpoint| endpoint.is_active && !endpoint.api_format.trim().is_empty())
-        .collect::<Vec<_>>();
     let keys = keys
         .iter()
         .filter(|key| key.is_active && key.provider_id == provider.id)
         .collect::<Vec<_>>();
-    if endpoints.is_empty() || keys.is_empty() {
+    if keys.is_empty() {
         return Ok(0);
     }
 
-    let models = state
-        .list_admin_provider_models(&AdminProviderModelListQuery {
-            provider_id: provider.id.clone(),
-            is_active: Some(true),
-            offset: 0,
-            limit: 10_000,
-        })
-        .await?
+    let build_items = keys
         .into_iter()
-        .filter(|model| model.is_available)
+        .take(max_upserts)
+        .map(|key| {
+            let draft = build_provider_key_pool_score_upsert(
+                key,
+                provider.provider_type.as_str(),
+                None,
+                now_unix_secs,
+                pool_config.score_rules,
+            );
+            (key, draft.id)
+        })
         .collect::<Vec<_>>();
-    if models.is_empty() {
-        return Ok(0);
-    }
-
-    let max_items = endpoints
-        .len()
-        .saturating_mul(models.len())
-        .saturating_mul(keys.len())
-        .min(max_upserts);
-    let mut build_items = Vec::with_capacity(max_items);
-    'outer: for (endpoint_index, endpoint) in endpoints.iter().enumerate() {
-        for (model_index, model) in models.iter().enumerate() {
-            for (key_index, key) in keys.iter().enumerate() {
-                let draft = build_provider_key_pool_score_upsert(
-                    key,
-                    provider.provider_type.as_str(),
-                    endpoint.api_format.trim(),
-                    Some(model.id.as_str()),
-                    None,
-                    now_unix_secs,
-                    pool_config.score_rules,
-                );
-                build_items.push(ProviderScoreBuildItem {
-                    endpoint_index,
-                    model_index,
-                    key_index,
-                    score_id: draft.id,
-                });
-                if build_items.len() >= max_upserts {
-                    break 'outer;
-                }
-            }
-        }
-    }
     if build_items.is_empty() {
         return Ok(0);
     }
@@ -217,7 +160,7 @@ pub(crate) async fn ensure_provider_key_pool_scores_for_keys(
         .get_pool_member_scores_by_ids(&GetPoolMemberScoresByIdsQuery {
             ids: build_items
                 .iter()
-                .map(|item| item.score_id.clone())
+                .map(|(_, score_id)| score_id.clone())
                 .collect(),
         })
         .await
@@ -234,18 +177,13 @@ pub(crate) async fn ensure_provider_key_pool_scores_for_keys(
         .collect::<std::collections::BTreeSet<_>>();
 
     let mut upserted = 0usize;
-    for item in &build_items {
-        if existing_score_ids.contains(&item.score_id) {
+    for (key, score_id) in &build_items {
+        if existing_score_ids.contains(score_id) {
             continue;
         }
-        let endpoint = endpoints[item.endpoint_index];
-        let model = &models[item.model_index];
-        let key = keys[item.key_index];
         let upsert = build_provider_key_pool_score_upsert(
             key,
             provider.provider_type.as_str(),
-            endpoint.api_format.trim(),
-            Some(model.id.as_str()),
             None,
             now_unix_secs,
             pool_config.score_rules,
@@ -292,19 +230,6 @@ pub(crate) async fn perform_pool_score_rebuild_once_with_config(
         .iter()
         .map(|(provider, _)| provider.id.clone())
         .collect::<Vec<_>>();
-    let mut endpoints_by_provider = BTreeMap::new();
-    for endpoint in state
-        .list_provider_catalog_endpoints_by_provider_ids(&provider_ids)
-        .await?
-        .into_iter()
-        .filter(|endpoint| endpoint.is_active)
-    {
-        endpoints_by_provider
-            .entry(endpoint.provider_id.clone())
-            .or_insert_with(Vec::new)
-            .push(endpoint);
-    }
-
     let mut keys_by_provider = BTreeMap::new();
     for key in state
         .list_provider_catalog_keys_by_provider_ids(&provider_ids)
@@ -314,6 +239,9 @@ pub(crate) async fn perform_pool_score_rebuild_once_with_config(
             .entry(key.provider_id.clone())
             .or_insert_with(Vec::new)
             .push(key);
+    }
+    for keys in keys_by_provider.values_mut() {
+        keys.sort_by(|left, right| left.id.cmp(&right.id));
     }
 
     let now = now_unix_secs();
@@ -333,75 +261,39 @@ pub(crate) async fn perform_pool_score_rebuild_once_with_config(
         }
         last_provider_index = Some(provider_index);
         let (provider, pool_config) = providers[provider_index].clone();
-        let endpoints = endpoints_by_provider
-            .remove(&provider.id)
-            .unwrap_or_default();
         let keys = keys_by_provider.remove(&provider.id).unwrap_or_default();
-        if endpoints.is_empty() || keys.is_empty() {
-            continue;
-        }
-        let models = state
-            .list_admin_provider_models(&AdminProviderModelListQuery {
-                provider_id: provider.id.clone(),
-                is_active: Some(true),
-                offset: 0,
-                limit: 10_000,
-            })
-            .await?
+        let keys = keys
             .into_iter()
-            .filter(|model| model.is_available)
+            .filter(|key| key.is_active)
             .collect::<Vec<_>>();
-        if models.is_empty() {
+        if keys.is_empty() {
             continue;
         }
-
-        let total_combinations = endpoints
-            .len()
-            .saturating_mul(models.len())
-            .saturating_mul(keys.len());
-        if total_combinations == 0 {
-            continue;
-        }
+        let total_keys = keys.len();
         let provider_cursor_key = provider_offset_cursor_key(&provider.id);
-        let provider_cursor =
-            load_runtime_usize(state, &provider_cursor_key).await % total_combinations.max(1);
+        let provider_cursor = load_runtime_usize(state, &provider_cursor_key).await % total_keys;
         let remaining_budget = config
             .max_upserts_per_tick
             .saturating_sub(summary.scores_upserted);
-        let provider_budget = remaining_budget.min(total_combinations);
+        let provider_budget = remaining_budget.min(total_keys);
         let mut build_items = Vec::with_capacity(provider_budget);
         for offset in 0..provider_budget {
-            let flat_index = (provider_cursor + offset) % total_combinations;
-            let (endpoint_index, model_index, key_index) =
-                score_combo_indices(flat_index, models.len(), keys.len());
-            let endpoint = &endpoints[endpoint_index];
-            let api_format = endpoint.api_format.trim();
-            if api_format.is_empty() {
-                continue;
-            }
-            let model = &models[model_index];
+            let key_index = (provider_cursor + offset) % total_keys;
             let key = &keys[key_index];
             let draft = build_provider_key_pool_score_upsert(
                 key,
                 provider.provider_type.as_str(),
-                api_format,
-                Some(model.id.as_str()),
                 None,
                 now,
                 pool_config.score_rules,
             );
-            build_items.push(ProviderScoreBuildItem {
-                endpoint_index,
-                model_index,
-                key_index,
-                score_id: draft.id,
-            });
+            build_items.push((key_index, draft.id));
         }
         if build_items.is_empty() {
             store_runtime_usize(
                 state,
                 &provider_cursor_key,
-                (provider_cursor + provider_budget) % total_combinations,
+                (provider_cursor + provider_budget) % total_keys,
             )
             .await;
             continue;
@@ -411,7 +303,7 @@ pub(crate) async fn perform_pool_score_rebuild_once_with_config(
             .get_pool_member_scores_by_ids(&GetPoolMemberScoresByIdsQuery {
                 ids: build_items
                     .iter()
-                    .map(|item| item.score_id.clone())
+                    .map(|(_, score_id)| score_id.clone())
                     .collect(),
             })
             .await
@@ -428,19 +320,15 @@ pub(crate) async fn perform_pool_score_rebuild_once_with_config(
             .collect::<BTreeMap<_, _>>();
         let mut provider_upserts = 0usize;
         summary.keys_seen = summary.keys_seen.saturating_add(keys.len());
-        for item in &build_items {
+        for (key_index, score_id) in &build_items {
             if summary.scores_upserted >= config.max_upserts_per_tick {
                 break;
             }
-            let endpoint = &endpoints[item.endpoint_index];
-            let model = &models[item.model_index];
-            let key = &keys[item.key_index];
-            let existing = existing_scores.get(&item.score_id);
+            let key = &keys[*key_index];
+            let existing = existing_scores.get(score_id);
             let upsert = build_provider_key_pool_score_upsert(
                 key,
                 provider.provider_type.as_str(),
-                endpoint.api_format.trim(),
-                Some(model.id.as_str()),
                 existing,
                 now,
                 pool_config.score_rules,
@@ -459,7 +347,7 @@ pub(crate) async fn perform_pool_score_rebuild_once_with_config(
         store_runtime_usize(
             state,
             &provider_cursor_key,
-            (provider_cursor + provider_budget) % total_combinations,
+            (provider_cursor + provider_budget) % total_keys,
         )
         .await;
         if provider_upserts > 0 {
@@ -527,17 +415,4 @@ pub(crate) fn spawn_pool_score_rebuild_worker(
             }
         }
     }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::score_combo_indices;
-
-    #[test]
-    fn score_combo_indices_walks_endpoint_model_key_order() {
-        assert_eq!(score_combo_indices(0, 2, 3), (0, 0, 0));
-        assert_eq!(score_combo_indices(2, 2, 3), (0, 0, 2));
-        assert_eq!(score_combo_indices(3, 2, 3), (0, 1, 0));
-        assert_eq!(score_combo_indices(6, 2, 3), (1, 0, 0));
-    }
 }

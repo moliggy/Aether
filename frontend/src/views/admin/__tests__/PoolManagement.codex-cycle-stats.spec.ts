@@ -139,6 +139,7 @@ vi.mock('lucide-vue-next', async () => {
     Users: Icon,
     Settings2: Icon,
     SlidersHorizontal: Icon,
+    CircleHelp: Icon,
   }
 })
 
@@ -521,6 +522,41 @@ describe('PoolManagement Codex cycle stats mode', () => {
     )
     expect(root.textContent).not.toContain('累计')
     expect(root.textContent).not.toContain('总计')
+  })
+
+  it('renders unified pool score in the key list with a calculation entry point', async () => {
+    const scoredKey = createPoolKey('codex', {
+      pool_score: {
+        id: 'pms-account-score',
+        capability: 'account',
+        scope_kind: 'account',
+        scope_id: null,
+        score: 0.875,
+        hard_state: 'available',
+        score_version: 1,
+        score_reason: { weights: { manual_priority: 0.3 } },
+        last_ranked_at: 1_700_000_000,
+        last_scheduled_at: 1_700_000_010,
+        last_success_at: 1_700_000_020,
+        last_failure_at: null,
+        failure_count: 0,
+        last_probe_attempt_at: 1_700_000_030,
+        last_probe_success_at: 1_700_000_040,
+        last_probe_failure_at: null,
+        probe_failure_count: 0,
+        probe_status: 'ok',
+        updated_at: 1_700_000_050,
+      },
+    })
+    endpointMocks.getPoolOverview.mockResolvedValue({ items: [createOverview('codex')] })
+    endpointMocks.listPoolKeys.mockResolvedValue(createKeyPage(scoredKey))
+    endpointMocks.getProvider.mockResolvedValue(createProvider('codex'))
+
+    const root = mountPoolManagement()
+    await settle()
+
+    expect(root.textContent).toContain('0.875')
+    expect(root.querySelectorAll('button[title="查看评分计算结果"]').length).toBeGreaterThan(0)
   })
 
   it('refreshes quota only for keys on the current page', async () => {

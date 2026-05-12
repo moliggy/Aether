@@ -41,8 +41,9 @@ pub(crate) use self::plan_builders::{
     build_standard_stream_plan_from_decision, build_standard_sync_plan_from_decision,
     AiStreamAttempt, AiSyncAttempt,
 };
-pub(crate) use self::pool_scores::build_provider_key_pool_score_upsert;
-pub(crate) use self::pool_scores::provider_key_pool_score_scope;
+pub(crate) use self::pool_scores::{
+    build_provider_key_pool_score_upsert, provider_key_pool_score_id, provider_key_pool_score_scope,
+};
 pub(crate) use self::route::is_matching_stream_request as planner_is_matching_stream_request;
 pub(crate) use self::runtime_miss::{
     apply_local_runtime_candidate_terminal_reason, record_local_runtime_candidate_skip_reason,

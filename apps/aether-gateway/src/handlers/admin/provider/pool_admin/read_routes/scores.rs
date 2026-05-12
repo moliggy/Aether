@@ -7,7 +7,7 @@ use crate::handlers::shared::query_param_value;
 use crate::GatewayError;
 use aether_data_contracts::repository::pool_scores::{
     ListPoolMemberScoresQuery, PoolMemberHardState, PoolMemberProbeStatus,
-    POOL_KIND_PROVIDER_KEY_POOL, POOL_SCORE_SCOPE_KIND_MODEL,
+    POOL_KIND_PROVIDER_KEY_POOL, POOL_SCORE_CAPABILITY_ACCOUNT, POOL_SCORE_SCOPE_KIND_ACCOUNT,
 };
 use axum::{
     body::Body,
@@ -49,9 +49,6 @@ pub(super) async fn build_admin_pool_scores_response(
         }
     };
     let offset = page.saturating_sub(1).saturating_mul(page_size);
-    let api_format = query_param_value(query, "api_format")
-        .map(|value| crate::ai_serving::normalize_api_format_alias(value.as_str()));
-    let model_id = query_param_value(query, "model_id");
     let hard_states = match parse_hard_state_filter(query) {
         Ok(value) => value,
         Err(message) => {
@@ -77,9 +74,9 @@ pub(super) async fn build_admin_pool_scores_response(
         .list_pool_member_scores(&ListPoolMemberScoresQuery {
             pool_kind: POOL_KIND_PROVIDER_KEY_POOL.to_string(),
             pool_id: provider_id.clone(),
-            capability: api_format.clone(),
-            scope_kind: Some(POOL_SCORE_SCOPE_KIND_MODEL.to_string()),
-            scope_id: model_id.clone(),
+            capability: Some(POOL_SCORE_CAPABILITY_ACCOUNT.to_string()),
+            scope_kind: Some(POOL_SCORE_SCOPE_KIND_ACCOUNT.to_string()),
+            scope_id: None,
             hard_states,
             probe_statuses,
             offset,
@@ -146,8 +143,8 @@ pub(super) async fn build_admin_pool_scores_response(
         "page": page,
         "page_size": page_size,
         "filters": {
-            "api_format": api_format,
-            "model_id": model_id,
+            "api_format": serde_json::Value::Null,
+            "model_id": serde_json::Value::Null,
             "hard_state": query_param_value(query, "hard_state"),
             "probe_status": query_param_value(query, "probe_status")
         },

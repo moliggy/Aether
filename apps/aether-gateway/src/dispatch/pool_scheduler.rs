@@ -387,10 +387,7 @@ impl<'a> PoolKeyCursor<'a> {
     }
 
     async fn next_score_candidates(&mut self) -> Option<Vec<EligibleLocalExecutionCandidate>> {
-        let scope = provider_key_pool_score_scope(
-            self.group.candidate.endpoint_api_format.as_str(),
-            Some(self.group.candidate.model_id.as_str()),
-        );
+        let scope = provider_key_pool_score_scope();
         let query = ListRankedPoolMembersQuery {
             pool_kind: POOL_KIND_PROVIDER_KEY_POOL.to_string(),
             pool_id: self.group.candidate.provider_id.clone(),
