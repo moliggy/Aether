@@ -5,7 +5,8 @@ use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite};
 
 use super::{
     MinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
-    StoredPoolKeyCandidateOrder, StoredPoolKeyCandidateRowsQuery, StoredProviderModelMapping,
+    StoredPoolKeyCandidateOrder, StoredPoolKeyCandidateRowsByKeyIdsQuery,
+    StoredPoolKeyCandidateRowsQuery, StoredProviderModelMapping,
     StoredRequestedModelCandidateRowsQuery,
 };
 use crate::driver::sqlite::SqlitePool;
@@ -195,6 +196,40 @@ impl MinimalCandidateSelectionReadRepository for SqliteMinimalCandidateSelection
             .take(query.limit as usize)
             .map(|item| item.row)
             .collect())
+    }
+
+    async fn list_pool_key_rows_for_group_key_ids(
+        &self,
+        query: &StoredPoolKeyCandidateRowsByKeyIdsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        if query.key_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let key_order = query
+            .key_ids
+            .iter()
+            .enumerate()
+            .map(|(index, key_id)| (key_id.as_str(), index))
+            .collect::<BTreeMap<_, _>>();
+        let mut rows = self
+            .load_rows_for_api_format(&query.api_format)
+            .await?
+            .into_iter()
+            .filter(|row| {
+                row.row.provider_id == query.provider_id
+                    && row.row.endpoint_id == query.endpoint_id
+                    && row.row.model_id == query.model_id
+                    && key_order.contains_key(row.row.key_id.as_str())
+            })
+            .map(|item| item.row)
+            .collect::<Vec<_>>();
+        rows.sort_by(|left, right| {
+            key_order
+                .get(left.key_id.as_str())
+                .cmp(&key_order.get(right.key_id.as_str()))
+                .then(left.key_id.cmp(&right.key_id))
+        });
+        Ok(dedupe_candidate_selection_rows(rows))
     }
 }
 

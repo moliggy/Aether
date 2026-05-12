@@ -9,7 +9,11 @@ use aether_ai_serving::{
 };
 use aether_data_contracts::repository::candidate_selection::{
     StoredMinimalCandidateSelectionRow, StoredPoolKeyCandidateOrder,
-    StoredPoolKeyCandidateRowsQuery,
+    StoredPoolKeyCandidateRowsByKeyIdsQuery, StoredPoolKeyCandidateRowsQuery,
+};
+use aether_data_contracts::repository::pool_scores::{
+    ListRankedPoolMembersQuery, PoolMemberHardState, PoolMemberIdentity,
+    PoolMemberScheduleFeedback, PoolScoreScope, StoredPoolMemberScore, POOL_KIND_PROVIDER_KEY_POOL,
 };
 use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 use serde_json::{Map, Value};
@@ -37,6 +41,8 @@ use crate::handlers::shared::{
 };
 use crate::orchestration::LocalExecutionCandidateMetadata;
 use crate::provider_key_auth::provider_key_auth_semantics;
+
+use super::pool_scores::provider_key_pool_score_scope;
 
 static LOAD_BALANCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const DEFAULT_POOL_KEY_PAGE_SIZE: u32 = 128;
@@ -179,6 +185,8 @@ pub(crate) struct PoolKeyCursor<'a> {
     scanned_keys: u32,
     page_size: u32,
     max_scanned_keys: u32,
+    score_top_n: u32,
+    score_phase_loaded: bool,
     skip_reason_counts: BTreeMap<&'static str, u32>,
     next_pool_key_index: u32,
     sticky_candidate_loaded: bool,
@@ -199,6 +207,17 @@ impl<'a> PoolKeyCursor<'a> {
         request_auth_channel: Option<&str>,
     ) -> Self {
         let pool_key_order = pool_key_candidate_order_for_group(&group);
+        let pool_config = pool_config_for_candidate(&group);
+        let score_top_n = pool_config
+            .as_ref()
+            .map(|config| config.score_top_n)
+            .unwrap_or(u64::from(DEFAULT_POOL_KEY_PAGE_SIZE))
+            .clamp(1, u64::from(u32::MAX)) as u32;
+        let max_scanned_keys = pool_config
+            .as_ref()
+            .map(|config| config.score_fallback_scan_limit)
+            .unwrap_or(u64::from(DEFAULT_POOL_MAX_SCANNED_KEYS))
+            .clamp(1, u64::from(u32::MAX)) as u32;
         Self {
             state,
             group,
@@ -211,7 +230,9 @@ impl<'a> PoolKeyCursor<'a> {
             next_offset: 0,
             scanned_keys: 0,
             page_size: DEFAULT_POOL_KEY_PAGE_SIZE,
-            max_scanned_keys: DEFAULT_POOL_MAX_SCANNED_KEYS,
+            max_scanned_keys,
+            score_top_n,
+            score_phase_loaded: false,
             skip_reason_counts: BTreeMap::new(),
             next_pool_key_index: 0,
             sticky_candidate_loaded: false,
@@ -310,6 +331,13 @@ impl<'a> PoolKeyCursor<'a> {
     }
 
     async fn next_page_candidates(&mut self) -> Option<Vec<EligibleLocalExecutionCandidate>> {
+        if !self.score_phase_loaded {
+            self.score_phase_loaded = true;
+            if let Some(score_candidates) = self.next_score_candidates().await {
+                return Some(score_candidates);
+            }
+        }
+
         if self.scanned_keys >= self.max_scanned_keys {
             return None;
         }
@@ -356,6 +384,82 @@ impl<'a> PoolKeyCursor<'a> {
 
         self.scanned_keys += rows.len() as u32;
         self.next_offset = self.next_offset.saturating_add(rows.len() as u32);
+        Some(self.build_page_eligible_candidates(rows).await)
+    }
+
+    async fn next_score_candidates(&mut self) -> Option<Vec<EligibleLocalExecutionCandidate>> {
+        let scope = provider_key_pool_score_scope(
+            self.group.candidate.endpoint_api_format.as_str(),
+            Some(self.group.candidate.model_id.as_str()),
+        );
+        let query = ListRankedPoolMembersQuery {
+            pool_kind: POOL_KIND_PROVIDER_KEY_POOL.to_string(),
+            pool_id: self.group.candidate.provider_id.clone(),
+            capability: scope.capability.clone(),
+            scope_kind: scope.scope_kind.clone(),
+            scope_id: scope.scope_id.clone(),
+            hard_states: vec![PoolMemberHardState::Available, PoolMemberHardState::Unknown],
+            probe_statuses: None,
+            offset: 0,
+            limit: self.score_top_n as usize,
+        };
+        let scores = match self.state.app().data.list_ranked_pool_members(&query).await {
+            Ok(scores) => scores,
+            Err(err) => {
+                warn!(
+                    event_name = "pool_group_score_load_failed",
+                    log_type = "event",
+                    provider_id = %self.group.candidate.provider_id,
+                    endpoint_id = %self.group.candidate.endpoint_id,
+                    model_id = %self.group.candidate.model_id,
+                    selected_provider_model_name = %self.group.candidate.selected_provider_model_name,
+                    error = ?err,
+                    "gateway pool scheduler failed to read ranked pool member scores"
+                );
+                return None;
+            }
+        };
+        if scores.is_empty() {
+            return None;
+        }
+
+        self.record_score_schedule_interest(&scores).await;
+
+        let key_ids = scores
+            .iter()
+            .map(|score| score.member_id.clone())
+            .collect::<Vec<_>>();
+        let rows_query = StoredPoolKeyCandidateRowsByKeyIdsQuery {
+            api_format: self.group.candidate.endpoint_api_format.clone(),
+            provider_id: self.group.candidate.provider_id.clone(),
+            endpoint_id: self.group.candidate.endpoint_id.clone(),
+            model_id: self.group.candidate.model_id.clone(),
+            selected_provider_model_name: self.group.candidate.selected_provider_model_name.clone(),
+            key_ids,
+        };
+        let rows = match self
+            .state
+            .app()
+            .list_pool_key_candidate_rows_for_group_key_ids(&rows_query)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(err) => {
+                warn!(
+                    event_name = "pool_group_score_key_load_failed",
+                    log_type = "event",
+                    provider_id = %self.group.candidate.provider_id,
+                    endpoint_id = %self.group.candidate.endpoint_id,
+                    model_id = %self.group.candidate.model_id,
+                    selected_provider_model_name = %self.group.candidate.selected_provider_model_name,
+                    score_count = scores.len(),
+                    error = ?err,
+                    "gateway pool scheduler failed to materialize ranked pool keys"
+                );
+                return None;
+            }
+        };
+        self.scanned_keys = self.scanned_keys.saturating_add(scores.len() as u32);
         Some(self.build_page_eligible_candidates(rows).await)
     }
 
@@ -516,6 +620,62 @@ impl<'a> PoolKeyCursor<'a> {
         self.record_skipped_candidates(&skipped);
         self.queued_candidates.extend(scheduled.drain(..));
         self.skipped_candidates.append(&mut skipped);
+    }
+
+    async fn record_score_schedule_interest(&self, scores: &[StoredPoolMemberScore]) {
+        if scores.is_empty() {
+            return;
+        }
+        let scheduled_at = current_unix_ms() / 1000;
+        let mut failed = 0usize;
+        for score in scores {
+            let identity = PoolMemberIdentity {
+                pool_kind: score.pool_kind.clone(),
+                pool_id: score.pool_id.clone(),
+                member_kind: score.member_kind.clone(),
+                member_id: score.member_id.clone(),
+            };
+            let scope = PoolScoreScope {
+                capability: score.capability.clone(),
+                scope_kind: score.scope_kind.clone(),
+                scope_id: score.scope_id.clone(),
+            };
+            let result = self
+                .state
+                .app()
+                .data
+                .record_pool_member_schedule_feedback(PoolMemberScheduleFeedback {
+                    identity,
+                    scope: Some(scope),
+                    scheduled_at,
+                    succeeded: None,
+                    hard_state: None,
+                    score_delta: None,
+                    score_reason_patch: Some(serde_json::json!({
+                        "last_schedule_interest": {
+                            "provider_id": self.group.candidate.provider_id.as_str(),
+                            "endpoint_id": self.group.candidate.endpoint_id.as_str(),
+                            "model_id": self.group.candidate.model_id.as_str()
+                        }
+                    })),
+                })
+                .await;
+            if result.is_err() {
+                failed += 1;
+            }
+        }
+        if failed > 0 {
+            warn!(
+                event_name = "pool_group_score_interest_update_failed",
+                log_type = "event",
+                provider_id = %self.group.candidate.provider_id,
+                endpoint_id = %self.group.candidate.endpoint_id,
+                model_id = %self.group.candidate.model_id,
+                failed_count = failed,
+                score_count = scores.len(),
+                "gateway pool scheduler failed to record some pool score schedule interests"
+            );
+        }
     }
 
     async fn build_page_eligible_candidates(

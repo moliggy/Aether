@@ -230,7 +230,7 @@
             </p>
           </div>
 
-          <div class="rounded-xl bg-muted/30 p-4">
+          <div class="grid gap-3 rounded-xl bg-muted/30 p-4 sm:grid-cols-2">
             <div class="space-y-1.5">
               <Label>
                 并发数
@@ -247,9 +247,203 @@
                 为空时沿用默认值；数值越大，批量操作越快，但会增加瞬时请求压力。
               </p>
             </div>
+            <div class="space-y-1.5">
+              <Label>
+                探测并发
+              </Label>
+              <Input
+                :model-value="form.probe_concurrency ?? ''"
+                type="number"
+                min="1"
+                max="64"
+                placeholder="4"
+                @update:model-value="(v) => form.probe_concurrency = parseNum(v)"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <Label>
+                评分 Top-N
+              </Label>
+              <Input
+                :model-value="form.score_top_n ?? ''"
+                type="number"
+                min="1"
+                max="4096"
+                placeholder="128"
+                @update:model-value="(v) => form.score_top_n = parseNum(v)"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <Label>
+                回退扫描
+              </Label>
+              <Input
+                :model-value="form.score_fallback_scan_limit ?? ''"
+                type="number"
+                min="1"
+                max="100000"
+                placeholder="1024"
+                @update:model-value="(v) => form.score_fallback_scan_limit = parseNum(v)"
+              />
+            </div>
           </div>
         </section>
       </div>
+
+      <section class="space-y-4 rounded-2xl border border-border/60 bg-card/70 p-4 sm:p-5">
+        <div class="space-y-1">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="text-sm font-semibold">
+              分数规则
+            </h3>
+            <span class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+              候选排序
+            </span>
+          </div>
+          <p class="text-xs leading-5 text-muted-foreground">
+            调整主动探测、健康、额度、延迟和使用成本进入号池候选排序时的权重。
+          </p>
+        </div>
+
+        <div class="grid gap-3 lg:grid-cols-3">
+          <div class="space-y-1.5">
+            <Label>优先级权重</Label>
+            <Input
+              :model-value="form.score_weight_manual_priority ?? ''"
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              placeholder="0.30"
+              @update:model-value="(v) => form.score_weight_manual_priority = parseNum(v)"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label>健康权重</Label>
+            <Input
+              :model-value="form.score_weight_health ?? ''"
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              placeholder="0.20"
+              @update:model-value="(v) => form.score_weight_health = parseNum(v)"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label>探测新鲜度权重</Label>
+            <Input
+              :model-value="form.score_weight_probe_freshness ?? ''"
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              placeholder="0.15"
+              @update:model-value="(v) => form.score_weight_probe_freshness = parseNum(v)"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label>额度剩余权重</Label>
+            <Input
+              :model-value="form.score_weight_quota_remaining ?? ''"
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              placeholder="0.15"
+              @update:model-value="(v) => form.score_weight_quota_remaining = parseNum(v)"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label>延迟权重</Label>
+            <Input
+              :model-value="form.score_weight_latency ?? ''"
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              placeholder="0.10"
+              @update:model-value="(v) => form.score_weight_latency = parseNum(v)"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label>成本/LRU 权重</Label>
+            <Input
+              :model-value="form.score_weight_cost_lru ?? ''"
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              placeholder="0.10"
+              @update:model-value="(v) => form.score_weight_cost_lru = parseNum(v)"
+            />
+          </div>
+        </div>
+
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div class="space-y-1.5">
+            <Label>
+              探测新鲜度 TTL
+              <span class="text-xs text-muted-foreground">(秒)</span>
+            </Label>
+            <Input
+              :model-value="form.probe_freshness_ttl_seconds ?? ''"
+              type="number"
+              min="1"
+              max="604800"
+              placeholder="1800"
+              @update:model-value="(v) => form.probe_freshness_ttl_seconds = parseNum(v)"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label>探测失败惩罚</Label>
+            <Input
+              :model-value="form.probe_failure_penalty ?? ''"
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              placeholder="0.05"
+              @update:model-value="(v) => form.probe_failure_penalty = parseNum(v)"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label>请求失败惩罚</Label>
+            <Input
+              :model-value="form.request_failure_penalty ?? ''"
+              type="number"
+              min="0"
+              max="1"
+              step="0.001"
+              placeholder="0.005"
+              @update:model-value="(v) => form.request_failure_penalty = parseNum(v)"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label>探测失败冷却阈值</Label>
+            <Input
+              :model-value="form.probe_failure_cooldown_threshold ?? ''"
+              type="number"
+              min="0"
+              max="100"
+              placeholder="3"
+              @update:model-value="(v) => form.probe_failure_cooldown_threshold = parseNum(v)"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label>不可调度分数上限</Label>
+            <Input
+              :model-value="form.unschedulable_score_cap ?? ''"
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              placeholder="0.05"
+              @update:model-value="(v) => form.unschedulable_score_cap = parseNum(v)"
+            />
+          </div>
+        </div>
+      </section>
 
       <section
         v-if="isClaudeCode"
@@ -464,6 +658,20 @@ const form = ref({
   cost_limit_per_key_tokens: null as number | null | undefined,
   cost_soft_threshold_percent: null as number | null | undefined,
   batch_concurrency: null as number | null | undefined,
+  probe_concurrency: null as number | null | undefined,
+  score_top_n: null as number | null | undefined,
+  score_fallback_scan_limit: null as number | null | undefined,
+  score_weight_manual_priority: null as number | null | undefined,
+  score_weight_health: null as number | null | undefined,
+  score_weight_probe_freshness: null as number | null | undefined,
+  score_weight_quota_remaining: null as number | null | undefined,
+  score_weight_latency: null as number | null | undefined,
+  score_weight_cost_lru: null as number | null | undefined,
+  probe_freshness_ttl_seconds: null as number | null | undefined,
+  unschedulable_score_cap: null as number | null | undefined,
+  probe_failure_penalty: null as number | null | undefined,
+  request_failure_penalty: null as number | null | undefined,
+  probe_failure_cooldown_threshold: null as number | null | undefined,
   probing_enabled: false,
   probing_interval_minutes: null as number | null | undefined,
   auto_remove_banned_keys: false,
@@ -529,6 +737,8 @@ watch(() => props.modelValue, (open) => {
   if (!open) return
 
   const cfg = props.currentConfig
+  const scoreRules = cfg?.score_rules
+  const scoreWeights = scoreRules?.weights
   form.value = {
     global_priority: cfg?.global_priority ?? null,
     sticky_session_ttl_seconds: cfg?.sticky_session_ttl_seconds ?? null,
@@ -539,6 +749,20 @@ watch(() => props.modelValue, (open) => {
     cost_limit_per_key_tokens: cfg?.cost_limit_per_key_tokens ?? null,
     cost_soft_threshold_percent: cfg?.cost_soft_threshold_percent ?? null,
     batch_concurrency: cfg?.batch_concurrency ?? null,
+    probe_concurrency: cfg?.probe_concurrency ?? null,
+    score_top_n: cfg?.score_top_n ?? null,
+    score_fallback_scan_limit: cfg?.score_fallback_scan_limit ?? null,
+    score_weight_manual_priority: scoreWeights?.manual_priority ?? null,
+    score_weight_health: scoreWeights?.health ?? null,
+    score_weight_probe_freshness: scoreWeights?.probe_freshness ?? null,
+    score_weight_quota_remaining: scoreWeights?.quota_remaining ?? null,
+    score_weight_latency: scoreWeights?.latency ?? null,
+    score_weight_cost_lru: scoreWeights?.cost_lru ?? null,
+    probe_freshness_ttl_seconds: scoreRules?.probe_freshness_ttl_seconds ?? null,
+    unschedulable_score_cap: scoreRules?.unschedulable_score_cap ?? null,
+    probe_failure_penalty: scoreRules?.probe_failure_penalty ?? null,
+    request_failure_penalty: scoreRules?.request_failure_penalty ?? null,
+    probe_failure_cooldown_threshold: scoreRules?.probe_failure_cooldown_threshold ?? null,
     probing_enabled: cfg?.probing_enabled ?? false,
     probing_interval_minutes: cfg?.probing_interval_minutes ?? null,
     auto_remove_banned_keys: cfg?.auto_remove_banned_keys ?? false,
@@ -560,6 +784,23 @@ watch(() => props.modelValue, (open) => {
 async function handleSave() {
   loading.value = true
   try {
+    const scoreRules = {
+      ...(props.currentConfig?.score_rules ?? {}),
+      weights: {
+        ...(props.currentConfig?.score_rules?.weights ?? {}),
+        manual_priority: form.value.score_weight_manual_priority ?? undefined,
+        health: form.value.score_weight_health ?? undefined,
+        probe_freshness: form.value.score_weight_probe_freshness ?? undefined,
+        quota_remaining: form.value.score_weight_quota_remaining ?? undefined,
+        latency: form.value.score_weight_latency ?? undefined,
+        cost_lru: form.value.score_weight_cost_lru ?? undefined,
+      },
+      probe_freshness_ttl_seconds: form.value.probe_freshness_ttl_seconds ?? undefined,
+      unschedulable_score_cap: form.value.unschedulable_score_cap ?? undefined,
+      probe_failure_penalty: form.value.probe_failure_penalty ?? undefined,
+      request_failure_penalty: form.value.request_failure_penalty ?? undefined,
+      probe_failure_cooldown_threshold: form.value.probe_failure_cooldown_threshold ?? undefined,
+    }
     // 合并已有配置（保留 scheduling_presets 等不在此对话框编辑的字段）
     const poolAdvanced: Record<string, unknown> = {
       ...(props.currentConfig ?? {}),
@@ -572,6 +813,10 @@ async function handleSave() {
       overload_cooldown_seconds: form.value.overload_cooldown_seconds ?? undefined,
       health_policy_enabled: form.value.health_policy_enabled,
       batch_concurrency: form.value.batch_concurrency ?? undefined,
+      probe_concurrency: form.value.probe_concurrency ?? undefined,
+      score_top_n: form.value.score_top_n ?? undefined,
+      score_fallback_scan_limit: form.value.score_fallback_scan_limit ?? undefined,
+      score_rules: scoreRules,
       probing_enabled: form.value.probing_enabled,
       probing_interval_minutes: form.value.probing_enabled
         ? (form.value.probing_interval_minutes ?? undefined)

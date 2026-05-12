@@ -300,6 +300,7 @@ fn empty_database_snapshot_covers_current_cutoff_versions() {
             20260510120000,
             20260511000000,
             20260511120000,
+            20260511130000,
         ]
     );
 }
@@ -564,7 +565,8 @@ fn mysql_and_sqlite_migrations_include_enabled_incrementals() {
             20260509000000,
             20260509120000,
             20260510120000,
-            20260511120000
+            20260511120000,
+            20260511130000,
         ]
     );
     assert_eq!(
@@ -576,7 +578,8 @@ fn mysql_and_sqlite_migrations_include_enabled_incrementals() {
             20260509000000,
             20260509120000,
             20260510120000,
-            20260511120000
+            20260511120000,
+            20260511130000,
         ]
     );
 }
@@ -1088,6 +1091,7 @@ fn pending_migrations_from_applied_skips_versions_already_applied() {
             20260510120000,
             20260511000000,
             20260511120000,
+            20260511130000,
         ]
     );
 }

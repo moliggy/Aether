@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 
 use super::{
     MinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
-    StoredPoolKeyCandidateOrder, StoredPoolKeyCandidateRowsQuery, StoredProviderModelMapping,
+    StoredPoolKeyCandidateOrder, StoredPoolKeyCandidateRowsByKeyIdsQuery,
+    StoredPoolKeyCandidateRowsQuery, StoredProviderModelMapping,
     StoredRequestedModelCandidateRowsQuery,
 };
 use crate::{error::SqlxResultExt, DataLayerError};
@@ -535,6 +536,13 @@ fn pool_key_candidate_selection_sql(order: &StoredPoolKeyCandidateOrder) -> Stri
     LIST_POOL_KEYS_FOR_GROUP_SQL.replace(default_order, &replacement)
 }
 
+fn pool_key_candidate_selection_by_key_ids_sql() -> String {
+    let default_order =
+        "ORDER BY\n  pak.internal_priority ASC,\n  pak.id ASC\nLIMIT $7\nOFFSET $8\n";
+    let replacement = "AND pak.id = ANY($7::text[])\nORDER BY\n  array_position($7::text[], pak.id) ASC,\n  pak.id ASC\n";
+    LIST_POOL_KEYS_FOR_GROUP_SQL.replace(default_order, replacement)
+}
+
 #[derive(Debug, Clone)]
 pub struct SqlxMinimalCandidateSelectionReadRepository {
     pool: PgPool,
@@ -703,6 +711,51 @@ impl SqlxMinimalCandidateSelectionReadRepository {
             );
         }
         Ok(dedupe_candidate_selection_rows(rows))
+    }
+
+    pub async fn list_pool_key_rows_for_group_key_ids(
+        &self,
+        query: &StoredPoolKeyCandidateRowsByKeyIdsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        if query.key_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut rows = Vec::new();
+        let canonical_api_format = normalize_api_format(&query.api_format);
+        let storage_aliases = api_format_aliases(&canonical_api_format);
+        let sql_match_aliases = sql_match_aliases(&storage_aliases);
+        let sql = pool_key_candidate_selection_by_key_ids_sql();
+        for api_format in storage_aliases {
+            rows.extend(
+                Self::collect_query_rows(
+                    sqlx::query(sql.as_str())
+                        .bind(api_format)
+                        .bind(query.provider_id.as_str())
+                        .bind(query.endpoint_id.as_str())
+                        .bind(query.model_id.as_str())
+                        .bind(sql_match_aliases.clone())
+                        .bind(canonical_api_format.clone())
+                        .bind(query.key_ids.clone())
+                        .fetch(&self.pool),
+                    map_candidate_selection_row,
+                )
+                .await?,
+            );
+        }
+        let key_order = query
+            .key_ids
+            .iter()
+            .enumerate()
+            .map(|(index, key_id)| (key_id.as_str(), index))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let mut rows = dedupe_candidate_selection_rows(rows);
+        rows.sort_by(|left, right| {
+            key_order
+                .get(left.key_id.as_str())
+                .cmp(&key_order.get(right.key_id.as_str()))
+                .then(left.key_id.cmp(&right.key_id))
+        });
+        Ok(rows)
     }
 }
 
@@ -916,6 +969,13 @@ impl MinimalCandidateSelectionReadRepository for SqlxMinimalCandidateSelectionRe
         query: &StoredPoolKeyCandidateRowsQuery,
     ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
         Self::list_pool_key_rows_for_group(self, query).await
+    }
+
+    async fn list_pool_key_rows_for_group_key_ids(
+        &self,
+        query: &StoredPoolKeyCandidateRowsByKeyIdsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        Self::list_pool_key_rows_for_group_key_ids(self, query).await
     }
 }
 

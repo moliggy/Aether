@@ -1,10 +1,16 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use aether_data_contracts::repository::pool_scores::{
+    ListPoolMemberProbeCandidatesQuery, PoolMemberHardState, PoolMemberIdentity,
+    PoolMemberProbeAttempt, PoolMemberProbeResult, PoolMemberProbeStatus,
+    POOL_KIND_PROVIDER_KEY_POOL,
+};
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
 use aether_runtime_state::{RuntimeLockLease, RuntimeState};
+use futures_util::{stream, StreamExt};
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
@@ -15,10 +21,13 @@ use crate::admin_api::{
 };
 use crate::{AppState, GatewayError};
 
+use super::pool_score_rebuild::ensure_provider_key_pool_scores_for_keys;
+
 const POOL_QUOTA_PROBE_REDIS_PREFIX: &str = "ap:quota_probe:last";
 const POOL_QUOTA_PROBE_DEFAULT_SCAN_INTERVAL_SECONDS: u64 = 60;
 const POOL_QUOTA_PROBE_MIN_SCAN_INTERVAL_SECONDS: u64 = 15;
 const POOL_QUOTA_PROBE_DEFAULT_MAX_KEYS_PER_PROVIDER: usize = 50;
+const POOL_QUOTA_PROBE_DEFAULT_GLOBAL_CONCURRENCY: usize = 16;
 const POOL_QUOTA_PROBE_PROVIDER_LOCK_TTL_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +59,7 @@ impl PoolQuotaProbeRunSummary {
 pub(crate) struct PoolQuotaProbeWorkerConfig {
     pub(crate) scan_interval: Duration,
     pub(crate) max_keys_per_provider: usize,
+    pub(crate) global_concurrency: usize,
 }
 
 impl PoolQuotaProbeWorkerConfig {
@@ -63,9 +73,15 @@ impl PoolQuotaProbeWorkerConfig {
             "POOL_QUOTA_PROBE_MAX_KEYS_PER_PROVIDER",
             POOL_QUOTA_PROBE_DEFAULT_MAX_KEYS_PER_PROVIDER,
         );
+        let global_concurrency = env_usize(
+            "POOL_QUOTA_PROBE_GLOBAL_CONCURRENCY",
+            POOL_QUOTA_PROBE_DEFAULT_GLOBAL_CONCURRENCY,
+        )
+        .clamp(1, 256);
         Self {
             scan_interval: Duration::from_secs(scan_interval_seconds),
             max_keys_per_provider,
+            global_concurrency,
         }
     }
 }
@@ -170,6 +186,49 @@ pub(crate) fn select_pool_quota_probe_key_ids(
         stale.truncate(limit);
     }
     stale.into_iter().map(|(_, key_id)| key_id).collect()
+}
+
+async fn select_score_probe_key_ids(
+    state: &AppState,
+    provider_id: &str,
+    now_ts: u64,
+    interval_seconds: u64,
+    limit: usize,
+) -> Vec<String> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let stale_before_unix_secs = now_ts.saturating_sub(interval_seconds);
+    let query = ListPoolMemberProbeCandidatesQuery {
+        pool_kind: POOL_KIND_PROVIDER_KEY_POOL.to_string(),
+        pool_id: provider_id.to_string(),
+        capability: None,
+        stale_before_unix_secs,
+        limit: limit.saturating_mul(4).max(limit),
+    };
+    let scores = match state.data.list_pool_member_probe_candidates(&query).await {
+        Ok(scores) => scores,
+        Err(err) => {
+            debug!(
+                provider_id,
+                error = ?err,
+                "gateway pool quota probe: failed to read score probe candidates"
+            );
+            return Vec::new();
+        }
+    };
+    let mut selected = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for score in scores {
+        if !seen.insert(score.member_id.clone()) {
+            continue;
+        }
+        selected.push(score.member_id);
+        if selected.len() >= limit {
+            break;
+        }
+    }
+    selected
 }
 
 fn probe_stamp_key(provider_id: &str, key_id: &str) -> String {
@@ -295,7 +354,28 @@ async fn select_keys_for_provider(
 
         let key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
         let probe_stamps = load_probe_timestamps(runtime, &provider.id, &key_ids).await;
-        let selected_ids = select_pool_quota_probe_key_ids(
+        let mut selected_ids = select_score_probe_key_ids(
+            state,
+            &provider.id,
+            now_ts,
+            interval_seconds,
+            max_keys_per_provider,
+        )
+        .await
+        .into_iter()
+        .filter(|key_id| key_ids.iter().any(|known_id| known_id == key_id))
+        .filter(|key_id| {
+            probe_stamps.get(key_id).is_none_or(|last_probe_ts| {
+                now_ts.saturating_sub(*last_probe_ts) >= interval_seconds
+            })
+        })
+        .collect::<Vec<_>>();
+        let mut selected_seen = selected_ids
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        let remaining = max_keys_per_provider.saturating_sub(selected_ids.len());
+        let fallback_selected_ids = select_pool_quota_probe_key_ids(
             &keys,
             provider_type,
             now_ts,
@@ -303,6 +383,14 @@ async fn select_keys_for_provider(
             &probe_stamps,
             max_keys_per_provider,
         );
+        for key_id in fallback_selected_ids {
+            if selected_ids.len() >= max_keys_per_provider || remaining == 0 {
+                break;
+            }
+            if selected_seen.insert(key_id.clone()) {
+                selected_ids.push(key_id);
+            }
+        }
         if selected_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -381,6 +469,168 @@ fn update_summary_from_payload(
         .unwrap_or(0) as usize;
 }
 
+async fn record_score_probe_results_from_payload(
+    state: &AppState,
+    provider_id: &str,
+    selected_key_ids: &[String],
+    payload: Option<&Value>,
+    attempted_at: u64,
+) {
+    let mut recorded = std::collections::BTreeSet::new();
+    if let Some(results) = payload
+        .and_then(|value| value.get("results"))
+        .and_then(Value::as_array)
+    {
+        for item in results {
+            let Some(key_id) = item
+                .get("key_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            recorded.insert(key_id.to_string());
+            record_score_probe_result_for_key(
+                state,
+                provider_id,
+                key_id,
+                attempted_at,
+                probe_result_succeeded(item),
+                probe_result_hard_state(item).or_else(|| {
+                    (!probe_result_succeeded(item)).then_some(PoolMemberHardState::Cooldown)
+                }),
+                serde_json::json!({
+                    "last_probe": {
+                        "source": "pool_quota_probe",
+                        "status": item.get("status").cloned().unwrap_or(Value::Null),
+                        "status_code": item.get("status_code").cloned().unwrap_or(Value::Null),
+                        "message": item.get("message").cloned().unwrap_or(Value::Null),
+                        "auto_removed": item.get("auto_removed").cloned().unwrap_or(Value::Null)
+                    }
+                }),
+            )
+            .await;
+        }
+    }
+
+    for key_id in selected_key_ids {
+        if recorded.contains(key_id) {
+            continue;
+        }
+        record_score_probe_result_for_key(
+            state,
+            provider_id,
+            key_id,
+            attempted_at,
+            false,
+            Some(PoolMemberHardState::Cooldown),
+            serde_json::json!({
+                "last_probe": {
+                    "source": "pool_quota_probe",
+                    "status": "missing_result"
+                }
+            }),
+        )
+        .await;
+    }
+}
+
+async fn record_score_probe_result_for_key(
+    state: &AppState,
+    provider_id: &str,
+    key_id: &str,
+    attempted_at: u64,
+    succeeded: bool,
+    hard_state: Option<PoolMemberHardState>,
+    score_reason_patch: Value,
+) {
+    let result = PoolMemberProbeResult {
+        identity: PoolMemberIdentity::provider_api_key(provider_id.to_string(), key_id.to_string()),
+        scope: None,
+        attempted_at,
+        succeeded,
+        hard_state,
+        probe_status: if succeeded {
+            PoolMemberProbeStatus::Ok
+        } else {
+            PoolMemberProbeStatus::Failed
+        },
+        score_reason_patch: Some(score_reason_patch),
+    };
+    if let Err(err) = state.data.record_pool_member_probe_result(result).await {
+        debug!(
+            provider_id,
+            key_id,
+            error = ?err,
+            "gateway pool quota probe: failed to record score probe result"
+        );
+    }
+}
+
+async fn record_score_probe_in_progress_for_key(
+    state: &AppState,
+    provider_id: &str,
+    key_id: &str,
+    attempted_at: u64,
+) {
+    let attempt = PoolMemberProbeAttempt {
+        identity: PoolMemberIdentity::provider_api_key(provider_id.to_string(), key_id.to_string()),
+        scope: None,
+        attempted_at,
+        score_reason_patch: Some(serde_json::json!({
+            "last_probe": {
+                "source": "pool_quota_probe",
+                "status": "in_progress"
+            }
+        })),
+    };
+    if let Err(err) = state.data.mark_pool_member_probe_in_progress(attempt).await {
+        debug!(
+            provider_id,
+            key_id,
+            error = ?err,
+            "gateway pool quota probe: failed to mark score probe in progress"
+        );
+    }
+}
+
+fn probe_result_succeeded(item: &Value) -> bool {
+    item.get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| status == "success")
+}
+
+fn probe_result_hard_state(item: &Value) -> Option<PoolMemberHardState> {
+    if probe_result_succeeded(item) {
+        return Some(PoolMemberHardState::Available);
+    }
+    if item
+        .get("auto_removed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Some(PoolMemberHardState::Banned);
+    }
+    let status = item
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match status.as_str() {
+        "auth_invalid" | "forbidden" => Some(PoolMemberHardState::AuthInvalid),
+        "workspace_deactivated" => Some(PoolMemberHardState::Banned),
+        "quota_exhausted" => Some(PoolMemberHardState::QuotaExhausted),
+        _ => match item.get("status_code").and_then(Value::as_u64) {
+            Some(401 | 403) => Some(PoolMemberHardState::AuthInvalid),
+            Some(402) => Some(PoolMemberHardState::QuotaExhausted),
+            Some(429 | 500..=599) => Some(PoolMemberHardState::Cooldown),
+            _ => None,
+        },
+    }
+}
+
 pub(crate) async fn perform_pool_quota_probe_once_with_config(
     state: &AppState,
     config: PoolQuotaProbeWorkerConfig,
@@ -404,11 +654,7 @@ pub(crate) async fn perform_pool_quota_probe_once_with_config(
         .filter_map(|(provider, provider_type)| {
             let pool_config = admin_provider_pool_config(&provider)?;
             if pool_config.probing_enabled {
-                Some((
-                    provider,
-                    provider_type,
-                    pool_config.probing_interval_minutes,
-                ))
+                Some((provider, provider_type, pool_config))
             } else {
                 None
             }
@@ -441,7 +687,7 @@ pub(crate) async fn perform_pool_quota_probe_once_with_config(
         ..PoolQuotaProbeRunSummary::empty()
     };
 
-    for (provider, provider_type, interval_minutes) in providers {
+    for (provider, provider_type, pool_config) in providers {
         let endpoints = endpoints_by_provider
             .remove(&provider.id)
             .unwrap_or_default();
@@ -455,6 +701,7 @@ pub(crate) async fn perform_pool_quota_probe_once_with_config(
             continue;
         };
 
+        let interval_minutes = pool_config.probing_interval_minutes;
         let interval_seconds = interval_minutes.clamp(1, 1440).saturating_mul(60);
         let keys = select_keys_for_provider(
             state,
@@ -474,42 +721,131 @@ pub(crate) async fn perform_pool_quota_probe_once_with_config(
         summary.providers_probed += 1;
         summary.selected_keys += selected_count;
 
-        let provider_short_id = provider.id.chars().take(8).collect::<String>();
-        match refresh_provider_probe_keys(&admin_state, &provider, &endpoint, &provider_type, keys)
-            .await
+        let selected_key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
+        let score_ensure_budget = (pool_config.score_fallback_scan_limit as usize)
+            .min(50_000)
+            .max(selected_count.min(50_000));
+        match ensure_provider_key_pool_scores_for_keys(
+            state,
+            &provider,
+            &pool_config,
+            &endpoints,
+            &keys,
+            now_ts,
+            score_ensure_budget,
+        )
+        .await
         {
-            Ok(payload) => {
-                update_summary_from_payload(&mut summary, selected_count, payload.as_ref());
-                let probe_success = payload
-                    .as_ref()
-                    .and_then(|value| value.get("success"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0);
-                let probe_failed = payload
-                    .as_ref()
-                    .and_then(|value| value.get("failed"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0);
-                info!(
-                    provider_id = %provider_short_id,
-                    provider_type,
-                    selected = selected_count,
-                    success = probe_success,
-                    failed = probe_failed,
-                    "gateway pool quota probe completed"
+            Ok(upserted) if upserted > 0 => {
+                debug!(
+                    provider_id = %provider.id,
+                    key_count = selected_count,
+                    scores_upserted = upserted,
+                    "gateway pool quota probe: ensured score rows for selected probe keys"
                 );
             }
+            Ok(_) => {}
             Err(err) => {
-                summary.failed += selected_count;
                 warn!(
-                    provider_id = %provider_short_id,
-                    provider_type,
-                    selected = selected_count,
+                    provider_id = %provider.id,
+                    key_count = selected_count,
                     error = ?err,
-                    "gateway pool quota probe failed"
+                    "gateway pool quota probe: failed to ensure score rows for selected probe keys"
                 );
             }
         }
+        for key_id in &selected_key_ids {
+            record_score_probe_in_progress_for_key(state, &provider.id, key_id, now_ts).await;
+        }
+
+        let provider_short_id = provider.id.chars().take(8).collect::<String>();
+        let probe_concurrency = pool_config.probe_concurrency.clamp(1, 64) as usize;
+        let probe_concurrency = probe_concurrency.min(config.global_concurrency).max(1);
+        let probe_results = stream::iter(keys.into_iter().map(|key| {
+            let key_id = key.id.clone();
+            let admin_state = &admin_state;
+            let provider = &provider;
+            let endpoint = &endpoint;
+            let provider_type = provider_type.as_str();
+            async move {
+                let result = refresh_provider_probe_keys(
+                    admin_state,
+                    provider,
+                    endpoint,
+                    provider_type,
+                    vec![key],
+                )
+                .await;
+                (key_id, result)
+            }
+        }))
+        .buffer_unordered(probe_concurrency)
+        .collect::<Vec<_>>()
+        .await;
+
+        let mut probe_success = 0usize;
+        let mut probe_failed = 0usize;
+        for (key_id, result) in probe_results {
+            match result {
+                Ok(payload) => {
+                    update_summary_from_payload(&mut summary, 1, payload.as_ref());
+                    probe_success += payload
+                        .as_ref()
+                        .and_then(|value| value.get("success"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as usize;
+                    probe_failed += payload
+                        .as_ref()
+                        .and_then(|value| value.get("failed"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as usize;
+                    record_score_probe_results_from_payload(
+                        state,
+                        &provider.id,
+                        std::slice::from_ref(&key_id),
+                        payload.as_ref(),
+                        now_ts,
+                    )
+                    .await;
+                }
+                Err(err) => {
+                    summary.failed += 1;
+                    probe_failed += 1;
+                    record_score_probe_result_for_key(
+                        state,
+                        &provider.id,
+                        &key_id,
+                        now_ts,
+                        false,
+                        Some(PoolMemberHardState::Cooldown),
+                        serde_json::json!({
+                            "last_probe": {
+                                "source": "pool_quota_probe",
+                                "status": "worker_error",
+                                "message": format!("{err:?}")
+                            }
+                        }),
+                    )
+                    .await;
+                    warn!(
+                        provider_id = %provider_short_id,
+                        provider_type,
+                        key_id,
+                        error = ?err,
+                        "gateway pool quota probe failed"
+                    );
+                }
+            }
+        }
+        info!(
+            provider_id = %provider_short_id,
+            provider_type,
+            selected = selected_count,
+            success = probe_success,
+            failed = probe_failed,
+            concurrency = probe_concurrency,
+            "gateway pool quota probe completed"
+        );
     }
 
     Ok(summary)

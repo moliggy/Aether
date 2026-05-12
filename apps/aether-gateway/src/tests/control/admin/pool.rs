@@ -1,8 +1,13 @@
 use std::sync::{Arc, Mutex};
 
 use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY};
+use aether_data::repository::pool_scores::InMemoryPoolMemberScoreRepository;
 use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
 use aether_data::repository::usage::InMemoryUsageReadRepository;
+use aether_data_contracts::repository::pool_scores::{
+    PoolMemberHardState, PoolMemberProbeStatus, StoredPoolMemberScore, POOL_KIND_PROVIDER_KEY_POOL,
+    POOL_MEMBER_KIND_PROVIDER_API_KEY, POOL_SCORE_SCOPE_KIND_MODEL,
+};
 use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
 use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
 use axum::body::{to_bytes, Body, Bytes};
@@ -341,6 +346,94 @@ async fn gateway_handles_admin_pool_batch_import_locally_with_trusted_admin_prin
 
     gateway_handle.abort();
     upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_handles_admin_pool_scores_locally_with_trusted_admin_principal() {
+    let provider = sample_provider("provider-openai", "openai", 10).with_transport_fields(
+        true,
+        false,
+        true,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(json!({
+            "pool_advanced": {
+                "enabled": true
+            }
+        })),
+    );
+    let mut key = sample_key("key-openai-a", "provider-openai", "openai:chat", "sk-a");
+    key.name = "score key".to_string();
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        Vec::new(),
+        vec![key.clone()],
+    ));
+    let pool_score_repository = Arc::new(InMemoryPoolMemberScoreRepository::seed(vec![
+        StoredPoolMemberScore {
+            id: "pms-provider-openai-key-openai-a-openai-chat-model-1".to_string(),
+            pool_kind: POOL_KIND_PROVIDER_KEY_POOL.to_string(),
+            pool_id: "provider-openai".to_string(),
+            member_kind: POOL_MEMBER_KIND_PROVIDER_API_KEY.to_string(),
+            member_id: "key-openai-a".to_string(),
+            capability: "openai:chat".to_string(),
+            scope_kind: POOL_SCORE_SCOPE_KIND_MODEL.to_string(),
+            scope_id: Some("model-1".to_string()),
+            score: 0.875,
+            hard_state: PoolMemberHardState::Available,
+            score_version: 1,
+            score_reason: json!({ "weights": { "manual_priority": 0.3 } }),
+            last_ranked_at: Some(1_700_000_000),
+            last_scheduled_at: Some(1_700_000_010),
+            last_success_at: Some(1_700_000_020),
+            last_failure_at: None,
+            failure_count: 0,
+            last_probe_attempt_at: Some(1_700_000_030),
+            last_probe_success_at: Some(1_700_000_040),
+            last_probe_failure_at: None,
+            probe_failure_count: 0,
+            probe_status: PoolMemberProbeStatus::Ok,
+            updated_at: 1_700_000_050,
+        },
+    ]));
+
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(Arc::clone(
+                    &provider_catalog_repository,
+                ))
+                .with_pool_score_repository_for_tests(Arc::clone(&pool_score_repository)),
+            ),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{gateway_url}/api/admin/pool/provider-openai/scores?api_format=openai:chat&model_id=model-1"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(
+        payload["items"].as_array().map(|items| items.len()),
+        Some(1)
+    );
+    assert_eq!(payload["items"][0]["member_id"], json!("key-openai-a"));
+    assert_eq!(payload["items"][0]["key"]["name"], json!("score key"));
+    assert_eq!(payload["items"][0]["probe_status"], json!("ok"));
+
+    gateway_handle.abort();
 }
 
 #[tokio::test]

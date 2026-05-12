@@ -1,6 +1,7 @@
 use crate::handlers::admin::provider::shared::support::{
     AdminProviderPoolConfig, AdminProviderPoolSchedulingPreset, AdminProviderPoolUnschedulableRule,
 };
+use aether_ai_serving::{PoolMemberScoreRules, PoolMemberScoreWeights};
 use serde_json::{Map, Value};
 
 const POOL_ALLOWED_SCHEDULING_PRESETS: &[&str] = &[
@@ -24,6 +25,123 @@ fn json_u64(value: &Value) -> Option<u64> {
     value
         .as_u64()
         .or_else(|| value.as_i64().and_then(|raw| u64::try_from(raw).ok()))
+}
+
+fn json_f64(value: &Value) -> Option<f64> {
+    value.as_f64().or_else(|| {
+        value
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .and_then(|value| value.parse::<f64>().ok())
+    })
+}
+
+fn pool_score_weight(object: &Map<String, Value>, names: &[&str], current: f64) -> f64 {
+    names
+        .iter()
+        .find_map(|name| {
+            object
+                .get(*name)
+                .and_then(json_f64)
+                .filter(|value| value.is_finite() && *value >= 0.0)
+        })
+        .unwrap_or(current)
+}
+
+fn parse_pool_score_weights(
+    raw_weights: Option<&Map<String, Value>>,
+    current: PoolMemberScoreWeights,
+) -> PoolMemberScoreWeights {
+    let Some(raw_weights) = raw_weights else {
+        return current;
+    };
+    PoolMemberScoreWeights {
+        manual_priority: pool_score_weight(
+            raw_weights,
+            &["manual_priority", "priority", "internal_priority"],
+            current.manual_priority,
+        ),
+        health: pool_score_weight(raw_weights, &["health"], current.health),
+        probe_freshness: pool_score_weight(
+            raw_weights,
+            &["probe_freshness", "freshness", "probe"],
+            current.probe_freshness,
+        ),
+        quota_remaining: pool_score_weight(
+            raw_weights,
+            &["quota_remaining", "quota", "quota_available"],
+            current.quota_remaining,
+        ),
+        latency: pool_score_weight(raw_weights, &["latency"], current.latency),
+        cost_lru: pool_score_weight(
+            raw_weights,
+            &["cost_lru", "cost_remaining", "cost", "lru"],
+            current.cost_lru,
+        ),
+    }
+}
+
+fn parse_pool_score_rules(pool_advanced: &Map<String, Value>) -> PoolMemberScoreRules {
+    let mut rules = PoolMemberScoreRules::default();
+
+    for key in ["score_weights", "pool_score_weights", "scoring_weights"] {
+        rules.weights = parse_pool_score_weights(
+            pool_advanced.get(key).and_then(Value::as_object),
+            rules.weights,
+        );
+    }
+
+    if let Some(score_rules) = pool_advanced
+        .get("score_rules")
+        .or_else(|| pool_advanced.get("pool_score_rules"))
+        .and_then(Value::as_object)
+    {
+        rules.weights = parse_pool_score_weights(
+            score_rules.get("weights").and_then(Value::as_object),
+            rules.weights,
+        );
+        if let Some(ttl_seconds) = score_rules
+            .get("probe_freshness_ttl_seconds")
+            .or_else(|| score_rules.get("score_probe_freshness_ttl_seconds"))
+            .and_then(json_u64)
+            .filter(|value| *value > 0)
+        {
+            rules.probe_freshness_ttl_seconds = ttl_seconds.min(7 * 24 * 3600);
+        }
+        if let Some(cap) = score_rules
+            .get("unschedulable_score_cap")
+            .or_else(|| score_rules.get("hard_state_score_cap"))
+            .and_then(json_f64)
+            .filter(|value| value.is_finite())
+        {
+            rules.unschedulable_score_cap = cap.clamp(0.0, 1.0);
+        }
+        if let Some(penalty) = score_rules
+            .get("probe_failure_penalty")
+            .and_then(json_f64)
+            .filter(|value| value.is_finite())
+        {
+            rules.probe_failure_penalty = penalty.clamp(0.0, 1.0);
+        }
+        if let Some(penalty) = score_rules
+            .get("request_failure_penalty")
+            .or_else(|| score_rules.get("runtime_failure_penalty"))
+            .and_then(json_f64)
+            .filter(|value| value.is_finite())
+        {
+            rules.request_failure_penalty = penalty.clamp(0.0, 1.0);
+        }
+        if let Some(threshold) = score_rules
+            .get("probe_failure_cooldown_threshold")
+            .or_else(|| score_rules.get("probe_failure_hard_state_threshold"))
+            .and_then(json_u64)
+        {
+            rules.probe_failure_cooldown_threshold = threshold.min(100);
+        }
+    }
+
+    rules.effective()
 }
 
 fn normalize_pool_preset_mode(preset: &str, raw_mode: Option<&Value>) -> Option<String> {
@@ -270,6 +388,10 @@ pub(crate) fn admin_provider_pool_config_from_config_value(
             health_policy_enabled: true,
             probing_enabled: false,
             probing_interval_minutes: 10,
+            probe_concurrency: 4,
+            score_top_n: 128,
+            score_fallback_scan_limit: 1024,
+            score_rules: PoolMemberScoreRules::default(),
             stream_timeout_threshold: 3,
             stream_timeout_window_seconds: 1800,
             stream_timeout_cooldown_seconds: 300,
@@ -278,6 +400,7 @@ pub(crate) fn admin_provider_pool_config_from_config_value(
 
     let scheduling_presets = parse_pool_scheduling_presets(pool_advanced);
     let unschedulable_rules = parse_pool_unschedulable_rules(pool_advanced);
+    let score_rules = parse_pool_score_rules(pool_advanced);
 
     Some(AdminProviderPoolConfig {
         lru_enabled: admin_provider_pool_lru_enabled(&scheduling_presets),
@@ -333,6 +456,25 @@ pub(crate) fn admin_provider_pool_config_from_config_value(
             .filter(|value| *value > 0)
             .map(|value| value.min(1440))
             .unwrap_or(10),
+        probe_concurrency: pool_advanced
+            .get("probe_concurrency")
+            .and_then(json_u64)
+            .filter(|value| *value > 0)
+            .map(|value| value.min(64))
+            .unwrap_or(4),
+        score_top_n: pool_advanced
+            .get("score_top_n")
+            .and_then(json_u64)
+            .filter(|value| *value > 0)
+            .map(|value| value.min(4096))
+            .unwrap_or(128),
+        score_fallback_scan_limit: pool_advanced
+            .get("score_fallback_scan_limit")
+            .and_then(json_u64)
+            .filter(|value| *value > 0)
+            .map(|value| value.min(50_000))
+            .unwrap_or(1024),
+        score_rules,
         stream_timeout_threshold: pool_advanced
             .get("stream_timeout_threshold")
             .and_then(json_u64)
@@ -405,6 +547,24 @@ mod tests {
                 "health_policy_enabled": false,
                 "probing_enabled": true,
                 "probing_interval_minutes": 20,
+                "probe_concurrency": 6,
+                "score_top_n": 256,
+                "score_fallback_scan_limit": 2048,
+                "score_rules": {
+                    "weights": {
+                        "manual_priority": 0.4,
+                        "health": 0.2,
+                        "probe_freshness": 0.2,
+                        "quota_remaining": 0.1,
+                        "latency": 0.05,
+                        "cost_lru": 0.05
+                    },
+                    "probe_freshness_ttl_seconds": 1200,
+                    "unschedulable_score_cap": 0.03,
+                    "probe_failure_penalty": 0.08,
+                    "request_failure_penalty": 0.01,
+                    "probe_failure_cooldown_threshold": 2
+                },
                 "stream_timeout_threshold": 4,
                 "stream_timeout_window_seconds": 900,
                 "stream_timeout_cooldown_seconds": 180
@@ -424,6 +584,16 @@ mod tests {
         assert!(!config.health_policy_enabled);
         assert!(config.probing_enabled);
         assert_eq!(config.probing_interval_minutes, 20);
+        assert_eq!(config.probe_concurrency, 6);
+        assert_eq!(config.score_top_n, 256);
+        assert_eq!(config.score_fallback_scan_limit, 2048);
+        assert_eq!(config.score_rules.weights.manual_priority, 0.4);
+        assert_eq!(config.score_rules.weights.health, 0.2);
+        assert_eq!(config.score_rules.probe_freshness_ttl_seconds, 1200);
+        assert_eq!(config.score_rules.unschedulable_score_cap, 0.03);
+        assert_eq!(config.score_rules.probe_failure_penalty, 0.08);
+        assert_eq!(config.score_rules.request_failure_penalty, 0.01);
+        assert_eq!(config.score_rules.probe_failure_cooldown_threshold, 2);
         assert_eq!(config.stream_timeout_threshold, 4);
         assert_eq!(config.stream_timeout_window_seconds, 900);
         assert_eq!(config.stream_timeout_cooldown_seconds, 180);
@@ -460,6 +630,27 @@ mod tests {
         .expect("pool config should parse");
 
         assert_eq!(config.sticky_session_ttl_seconds, 0);
+    }
+
+    #[test]
+    fn parses_legacy_pool_score_weights_from_pool_advanced() {
+        let config = admin_provider_pool_config_from_config_value(Some(&json!({
+            "pool_advanced": {
+                "scoring_weights": {
+                    "manual_priority": 0,
+                    "health": 2,
+                    "probe": 1,
+                    "quota_remaining": 0,
+                    "latency": 0,
+                    "cost_remaining": 1
+                }
+            }
+        })))
+        .expect("pool config should parse");
+
+        assert_eq!(config.score_rules.weights.health, 0.5);
+        assert_eq!(config.score_rules.weights.probe_freshness, 0.25);
+        assert_eq!(config.score_rules.weights.cost_lru, 0.25);
     }
 
     #[test]

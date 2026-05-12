@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 
 use aether_admin::provider::quota as admin_provider_quota_pure;
 use aether_contracts::{ExecutionPlan, ExecutionTelemetry};
+use aether_data_contracts::repository::pool_scores::{
+    PoolMemberHardState, PoolMemberIdentity, PoolMemberScheduleFeedback,
+};
 use aether_scheduler_core::{
     build_scheduler_affinity_cache_key_for_api_key_id_with_client_session,
     count_recent_rpm_requests_for_provider_key, ClientSessionAffinity, SchedulerAffinityTarget,
@@ -381,6 +384,19 @@ async fn record_sync_pool_success_effect(
         resolve_ttfb_ms(payload.telemetry.as_ref()),
     )
     .await;
+    record_pool_score_schedule_feedback(
+        state,
+        context,
+        Some(true),
+        Some(PoolMemberHardState::Available),
+        Some(50),
+        serde_json::json!({
+            "last_request_feedback": {
+                "source": "sync_success"
+            }
+        }),
+    )
+    .await;
 }
 
 async fn record_adaptive_rate_limit_effect(
@@ -600,6 +616,19 @@ async fn record_stream_pool_success_effect(
         resolve_ttfb_ms(payload.telemetry.as_ref()),
     )
     .await;
+    record_pool_score_schedule_feedback(
+        state,
+        context,
+        Some(true),
+        Some(PoolMemberHardState::Available),
+        Some(50),
+        serde_json::json!({
+            "last_request_feedback": {
+                "source": "stream_success"
+            }
+        }),
+    )
+    .await;
 }
 
 async fn record_pool_error_effect(
@@ -634,6 +663,21 @@ async fn record_pool_error_effect(
         effect.status_code,
         effect.error_body,
         Some(effect.headers),
+    )
+    .await;
+    record_pool_score_schedule_feedback(
+        state,
+        context,
+        Some(false),
+        pool_score_hard_state_for_status(effect.status_code, effect.error_body),
+        Some(pool_score_delta_for_status(effect.status_code)),
+        serde_json::json!({
+            "last_request_feedback": {
+                "source": "pool_error",
+                "status_code": effect.status_code,
+                "classification": format!("{:?}", effect.classification)
+            }
+        }),
     )
     .await;
 }
@@ -730,6 +774,21 @@ async fn record_oauth_invalidation_effect(
             plan.provider_id, plan.endpoint_id, plan.key_id, err
         );
     }
+    record_pool_score_schedule_feedback(
+        state,
+        context,
+        Some(false),
+        Some(PoolMemberHardState::AuthInvalid),
+        Some(-2_000),
+        serde_json::json!({
+            "last_request_feedback": {
+                "source": "oauth_invalidation",
+                "status_code": effect.status_code,
+                "reason": invalid_reason
+            }
+        }),
+    )
+    .await;
 }
 
 fn resolve_local_oauth_invalid_reason(
@@ -792,6 +851,92 @@ async fn record_pool_stream_timeout_effect(
         &pool_context.pool_config,
     )
     .await;
+    record_pool_score_schedule_feedback(
+        state,
+        context,
+        Some(false),
+        Some(PoolMemberHardState::Cooldown),
+        Some(-250),
+        serde_json::json!({
+            "last_request_feedback": {
+                "source": "stream_timeout"
+            }
+        }),
+    )
+    .await;
+}
+
+async fn record_pool_score_schedule_feedback(
+    state: &AppState,
+    context: LocalExecutionEffectContext<'_>,
+    succeeded: Option<bool>,
+    hard_state: Option<PoolMemberHardState>,
+    score_delta: Option<i32>,
+    score_reason_patch: Value,
+) {
+    if context.plan.provider_id.trim().is_empty() || context.plan.key_id.trim().is_empty() {
+        return;
+    }
+    let feedback = PoolMemberScheduleFeedback {
+        identity: PoolMemberIdentity::provider_api_key(
+            context.plan.provider_id.clone(),
+            context.plan.key_id.clone(),
+        ),
+        scope: None,
+        scheduled_at: current_unix_secs(),
+        succeeded,
+        hard_state,
+        score_delta,
+        score_reason_patch: Some(score_reason_patch),
+    };
+    if let Err(err) = state
+        .data
+        .record_pool_member_schedule_feedback(feedback)
+        .await
+    {
+        warn!(
+            provider_id = %context.plan.provider_id,
+            key_id = %context.plan.key_id,
+            error = ?err,
+            "gateway orchestration effects: failed to record pool score schedule feedback"
+        );
+    }
+}
+
+fn pool_score_hard_state_for_status(
+    status_code: u16,
+    error_body: Option<&str>,
+) -> Option<PoolMemberHardState> {
+    match status_code {
+        401 | 403 => Some(PoolMemberHardState::AuthInvalid),
+        402 => Some(PoolMemberHardState::QuotaExhausted),
+        429 | 500..=599 => Some(PoolMemberHardState::Cooldown),
+        _ => {
+            let body = error_body.unwrap_or_default().to_ascii_lowercase();
+            if body.contains("quota") && body.contains("exceed") {
+                Some(PoolMemberHardState::QuotaExhausted)
+            } else if body.contains("invalid") && body.contains("token") {
+                Some(PoolMemberHardState::AuthInvalid)
+            } else if body.contains("banned")
+                || body.contains("suspended")
+                || body.contains("blocked")
+            {
+                Some(PoolMemberHardState::Banned)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn pool_score_delta_for_status(status_code: u16) -> i32 {
+    match status_code {
+        401 | 403 => -2_000,
+        402 => -1_000,
+        429 => -500,
+        500..=599 => -300,
+        _ => -100,
+    }
 }
 
 #[cfg(test)]

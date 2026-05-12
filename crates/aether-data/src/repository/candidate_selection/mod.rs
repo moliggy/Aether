@@ -7,8 +7,8 @@ mod sqlite;
 pub(crate) use aether_data_contracts::repository::candidate_selection::{
     MinimalCandidateSelectionReadRepository, MinimalCandidateSelectionRepository,
     StoredMinimalCandidateSelectionRow, StoredPoolKeyCandidateOrder,
-    StoredPoolKeyCandidateRowsQuery, StoredProviderModelMapping,
-    StoredRequestedModelCandidateRowsQuery,
+    StoredPoolKeyCandidateRowsByKeyIdsQuery, StoredPoolKeyCandidateRowsQuery,
+    StoredProviderModelMapping, StoredRequestedModelCandidateRowsQuery,
 };
 pub use memory::InMemoryMinimalCandidateSelectionReadRepository;
 pub use mysql::MysqlMinimalCandidateSelectionReadRepository;

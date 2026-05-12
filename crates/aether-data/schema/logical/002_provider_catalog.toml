@@ -579,6 +579,143 @@ type = "unix_seconds"
 name = "provider_api_keys_provider_id_idx"
 columns = ["provider_id"]
 
+[table.pool_member_scores]
+domain = "provider_catalog"
+order = 44
+primary_key = ["id"]
+
+[[table.pool_member_scores.columns]]
+name = "id"
+type = "text_id"
+length = 192
+
+[[table.pool_member_scores.columns]]
+name = "pool_kind"
+type = "text"
+length = 64
+
+[[table.pool_member_scores.columns]]
+name = "pool_id"
+type = "text_id"
+length = 64
+
+[[table.pool_member_scores.columns]]
+name = "member_kind"
+type = "text"
+length = 64
+
+[[table.pool_member_scores.columns]]
+name = "member_id"
+type = "text_id"
+length = 64
+
+[[table.pool_member_scores.columns]]
+name = "capability"
+type = "text"
+length = 64
+
+[[table.pool_member_scores.columns]]
+name = "scope_kind"
+type = "text"
+length = 64
+
+[[table.pool_member_scores.columns]]
+name = "scope_id"
+type = "text_id"
+length = 128
+nullable = true
+
+[[table.pool_member_scores.columns]]
+name = "score"
+type = "float64"
+default = 0
+
+[[table.pool_member_scores.columns]]
+name = "hard_state"
+type = "text"
+length = 64
+default = "unknown"
+
+[[table.pool_member_scores.columns]]
+name = "score_version"
+type = "int64"
+default = 1
+
+[[table.pool_member_scores.columns]]
+name = "score_reason"
+type = "json"
+
+[[table.pool_member_scores.columns]]
+name = "last_ranked_at"
+type = "unix_seconds"
+nullable = true
+
+[[table.pool_member_scores.columns]]
+name = "last_scheduled_at"
+type = "unix_seconds"
+nullable = true
+
+[[table.pool_member_scores.columns]]
+name = "last_success_at"
+type = "unix_seconds"
+nullable = true
+
+[[table.pool_member_scores.columns]]
+name = "last_failure_at"
+type = "unix_seconds"
+nullable = true
+
+[[table.pool_member_scores.columns]]
+name = "failure_count"
+type = "int64"
+default = 0
+
+[[table.pool_member_scores.columns]]
+name = "last_probe_attempt_at"
+type = "unix_seconds"
+nullable = true
+
+[[table.pool_member_scores.columns]]
+name = "last_probe_success_at"
+type = "unix_seconds"
+nullable = true
+
+[[table.pool_member_scores.columns]]
+name = "last_probe_failure_at"
+type = "unix_seconds"
+nullable = true
+
+[[table.pool_member_scores.columns]]
+name = "probe_failure_count"
+type = "int64"
+default = 0
+
+[[table.pool_member_scores.columns]]
+name = "probe_status"
+type = "text"
+length = 64
+default = "never"
+
+[[table.pool_member_scores.columns]]
+name = "updated_at"
+type = "unix_seconds"
+
+[[table.pool_member_scores.indexes]]
+name = "pool_member_scores_rank_idx"
+columns = ["pool_kind", "pool_id", "capability", "scope_kind", "scope_id", "hard_state", "score"]
+
+[[table.pool_member_scores.indexes]]
+name = "pool_member_scores_member_idx"
+columns = ["pool_kind", "pool_id", "member_kind", "member_id"]
+
+[[table.pool_member_scores.indexes]]
+name = "pool_member_scores_probe_idx"
+columns = ["pool_kind", "pool_id", "probe_status", "last_probe_success_at"]
+
+[[table.pool_member_scores.indexes]]
+name = "pool_member_scores_updated_at_idx"
+columns = ["updated_at"]
+
 [table.api_key_provider_mappings]
 domain = "provider_catalog"
 order = 45

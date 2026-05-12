@@ -240,6 +240,18 @@ pub(super) fn classify_admin_observability_family_route(
             "admin:pool",
             false,
         ))
+    } else if method == http::Method::GET
+        && normalized_path_no_trailing.starts_with("/api/admin/pool/")
+        && normalized_path_no_trailing.ends_with("/scores")
+        && normalized_path_no_trailing.matches('/').count() == 5
+    {
+        Some(classified(
+            "admin_proxy",
+            "pool_manage",
+            "scores",
+            "admin:pool",
+            false,
+        ))
     } else if method == http::Method::POST
         && normalized_path_no_trailing.starts_with("/api/admin/pool/")
         && normalized_path_no_trailing.ends_with("/keys/batch-import")

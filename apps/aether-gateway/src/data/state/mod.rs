@@ -93,7 +93,8 @@ use aether_data_contracts::repository::billing::{
 };
 use aether_data_contracts::repository::candidate_selection::{
     MinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
-    StoredPoolKeyCandidateRowsQuery, StoredRequestedModelCandidateRowsQuery,
+    StoredPoolKeyCandidateRowsByKeyIdsQuery, StoredPoolKeyCandidateRowsQuery,
+    StoredRequestedModelCandidateRowsQuery,
 };
 use aether_data_contracts::repository::candidates::{
     PublicHealthStatusCount, PublicHealthTimelineBucket, RequestCandidateReadRepository,
@@ -106,6 +107,13 @@ use aether_data_contracts::repository::global_models::{
     StoredAdminGlobalModelPage, StoredAdminProviderModel, StoredProviderActiveGlobalModel,
     StoredProviderModelStats, StoredPublicCatalogModel, StoredPublicGlobalModel,
     StoredPublicGlobalModelPage, UpdateAdminGlobalModelRecord, UpsertAdminProviderModelRecord,
+};
+use aether_data_contracts::repository::pool_scores::{
+    GetPoolMemberScoresByIdsQuery, ListPoolMemberProbeCandidatesQuery, ListPoolMemberScoresQuery,
+    ListRankedPoolMembersQuery, PoolMemberHardState, PoolMemberIdentity, PoolMemberProbeAttempt,
+    PoolMemberProbeResult, PoolMemberProbeStatus, PoolMemberScheduleFeedback,
+    PoolMemberScoreWriteRepository, PoolScoreReadRepository, PoolScoreScope, StoredPoolMemberScore,
+    UpsertPoolMemberScore,
 };
 use aether_data_contracts::repository::provider_catalog::{
     ProviderCatalogKeyListQuery, ProviderCatalogReadRepository, ProviderCatalogWriteRepository,
@@ -156,6 +164,8 @@ pub(crate) struct GatewayDataState {
     request_candidate_writer: Option<Arc<dyn RequestCandidateWriteRepository>>,
     provider_catalog_reader: Option<Arc<dyn ProviderCatalogReadRepository>>,
     provider_catalog_writer: Option<Arc<dyn ProviderCatalogWriteRepository>>,
+    pool_score_reader: Option<Arc<dyn PoolScoreReadRepository>>,
+    pool_score_writer: Option<Arc<dyn PoolMemberScoreWriteRepository>>,
     provider_quota_reader: Option<Arc<dyn ProviderQuotaReadRepository>>,
     provider_quota_writer: Option<Arc<dyn ProviderQuotaWriteRepository>>,
     usage_reader: Option<Arc<dyn UsageReadRepository>>,
@@ -257,6 +267,8 @@ impl fmt::Debug for GatewayDataState {
                 "has_provider_catalog_writer",
                 &self.provider_catalog_writer.is_some(),
             )
+            .field("has_pool_score_reader", &self.pool_score_reader.is_some())
+            .field("has_pool_score_writer", &self.pool_score_writer.is_some())
             .field(
                 "has_provider_quota_reader",
                 &self.provider_quota_reader.is_some(),
@@ -287,6 +299,7 @@ mod catalog;
 mod core;
 mod integrations;
 mod models;
+mod pool_scores;
 mod runtime;
 #[cfg(test)]
 mod testing;

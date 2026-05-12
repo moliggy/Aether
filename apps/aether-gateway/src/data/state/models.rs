@@ -2,7 +2,8 @@ use super::{
     AdminGlobalModelListQuery, AdminProviderModelListQuery, CreateAdminGlobalModelRecord,
     DataLayerError, GatewayDataState, PublicCatalogModelListQuery, PublicCatalogModelSearchQuery,
     PublicGlobalModelQuery, StoredAdminGlobalModel, StoredAdminGlobalModelPage,
-    StoredAdminProviderModel, StoredMinimalCandidateSelectionRow, StoredPoolKeyCandidateRowsQuery,
+    StoredAdminProviderModel, StoredMinimalCandidateSelectionRow,
+    StoredPoolKeyCandidateRowsByKeyIdsQuery, StoredPoolKeyCandidateRowsQuery,
     StoredProviderActiveGlobalModel, StoredProviderModelStats, StoredPublicCatalogModel,
     StoredPublicGlobalModel, StoredPublicGlobalModelPage, StoredRequestedModelCandidateRowsQuery,
     UpdateAdminGlobalModelRecord, UpsertAdminProviderModelRecord,
@@ -69,6 +70,16 @@ impl GatewayDataState {
     ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
         match &self.minimal_candidate_selection_reader {
             Some(repository) => repository.list_pool_key_rows_for_group(query).await,
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub(crate) async fn list_pool_key_candidate_rows_for_group_key_ids(
+        &self,
+        query: &StoredPoolKeyCandidateRowsByKeyIdsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        match &self.minimal_candidate_selection_reader {
+            Some(repository) => repository.list_pool_key_rows_for_group_key_ids(query).await,
             None => Ok(Vec::new()),
         }
     }

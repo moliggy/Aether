@@ -870,6 +870,38 @@ CREATE INDEX IF NOT EXISTS ix_provider_api_keys_id ON public.provider_api_keys U
 
 
 --
+-- Name: pool_member_scores_rank_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS pool_member_scores_rank_idx ON public.pool_member_scores USING btree (pool_kind, pool_id, capability, scope_kind, scope_id, hard_state, score DESC);
+
+
+
+--
+-- Name: pool_member_scores_member_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS pool_member_scores_member_idx ON public.pool_member_scores USING btree (pool_kind, pool_id, member_kind, member_id);
+
+
+
+--
+-- Name: pool_member_scores_probe_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS pool_member_scores_probe_idx ON public.pool_member_scores USING btree (pool_kind, pool_id, probe_status, last_probe_success_at);
+
+
+
+--
+-- Name: pool_member_scores_updated_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS pool_member_scores_updated_at_idx ON public.pool_member_scores USING btree (updated_at);
+
+
+
+--
 -- Name: ix_provider_endpoints_id; Type: INDEX; Schema: public; Owner: -
 --
 

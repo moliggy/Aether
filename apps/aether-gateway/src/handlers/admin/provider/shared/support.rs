@@ -1,5 +1,6 @@
 use crate::handlers::admin::request::AdminAppState;
 use crate::LocalProviderDeleteTaskState;
+use aether_ai_serving::PoolMemberScoreRules;
 use serde_json::json;
 use std::collections::BTreeMap;
 
@@ -39,6 +40,10 @@ pub(crate) struct AdminProviderPoolConfig {
     pub(crate) health_policy_enabled: bool,
     pub(crate) probing_enabled: bool,
     pub(crate) probing_interval_minutes: u64,
+    pub(crate) probe_concurrency: u64,
+    pub(crate) score_top_n: u64,
+    pub(crate) score_fallback_scan_limit: u64,
+    pub(crate) score_rules: PoolMemberScoreRules,
     pub(crate) stream_timeout_threshold: u64,
     pub(crate) stream_timeout_window_seconds: u64,
     pub(crate) stream_timeout_cooldown_seconds: u64,

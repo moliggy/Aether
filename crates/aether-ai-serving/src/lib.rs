@@ -16,6 +16,7 @@ pub mod execution_path;
 pub mod failure_diagnostic;
 pub mod plan_payload;
 pub mod pool_scheduler;
+pub mod pool_scores;
 pub mod ports;
 pub mod ranking_metadata;
 pub mod report_context;
@@ -98,6 +99,13 @@ pub use pool_scheduler::{
     AiPoolSchedulingPreset, AiPoolSkippedCandidate, AI_POOL_ACCOUNT_BLOCKED_SKIP_REASON,
     AI_POOL_ACCOUNT_EXHAUSTED_SKIP_REASON, AI_POOL_COOLDOWN_SKIP_REASON,
     AI_POOL_COST_LIMIT_REACHED_SKIP_REASON,
+};
+pub use pool_scores::{
+    probe_freshness_score, probe_freshness_score_with_ttl, score_pool_member,
+    score_pool_member_with_rules, PoolMemberScoreInput, PoolMemberScoreOutput,
+    PoolMemberScoreRules, PoolMemberScoreWeights, POOL_SCORE_VERSION,
+    PROBE_FAILURE_COOLDOWN_THRESHOLD, PROBE_FAILURE_PENALTY, PROBE_FRESHNESS_TTL_SECONDS,
+    REQUEST_FAILURE_PENALTY, UNSCHEDULABLE_SCORE_CAP,
 };
 pub use ranking_metadata::append_ai_ranking_metadata_to_object;
 pub use report_context::{

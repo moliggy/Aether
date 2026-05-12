@@ -1,6 +1,8 @@
+use crate::handlers::admin::admin_provider_pool_config;
 use crate::handlers::admin::provider::shared::paths::admin_update_key_id;
 use crate::handlers::admin::provider::shared::payloads::AdminProviderKeyUpdatePatch;
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
+use crate::maintenance::ensure_provider_key_pool_scores_for_keys;
 use crate::provider_key_auth::provider_key_effective_api_formats;
 use crate::{model_fetch::perform_model_fetch_for_key, GatewayError};
 use axum::{
@@ -121,6 +123,27 @@ pub(super) async fn maybe_handle(
     let endpoints = state
         .list_provider_catalog_endpoints_by_provider_ids(std::slice::from_ref(&provider.id))
         .await?;
+    if let Some(pool_config) = admin_provider_pool_config(&provider) {
+        let score_ensure_budget = (pool_config.score_fallback_scan_limit as usize).clamp(1, 50_000);
+        if let Err(err) = ensure_provider_key_pool_scores_for_keys(
+            state.as_ref(),
+            &provider,
+            &pool_config,
+            &endpoints,
+            std::slice::from_ref(&updated),
+            now_unix_secs,
+            score_ensure_budget,
+        )
+        .await
+        {
+            tracing::debug!(
+                provider_id = %provider.id,
+                key_id = %updated.id,
+                error = ?err,
+                "gateway admin provider key update: failed to seed pool score rows"
+            );
+        }
+    }
     let api_formats =
         provider_key_effective_api_formats(&updated, &provider.provider_type, &endpoints);
 

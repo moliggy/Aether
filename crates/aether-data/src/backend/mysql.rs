@@ -37,6 +37,9 @@ use crate::repository::management_tokens::{
 use crate::repository::oauth_providers::{
     MysqlOAuthProviderRepository, OAuthProviderReadRepository, OAuthProviderWriteRepository,
 };
+use crate::repository::pool_scores::{
+    MysqlPoolMemberScoreRepository, PoolMemberScoreWriteRepository, PoolScoreReadRepository,
+};
 use crate::repository::provider_catalog::{
     MysqlProviderCatalogReadRepository, ProviderCatalogReadRepository,
     ProviderCatalogWriteRepository,
@@ -182,6 +185,14 @@ impl MysqlBackend {
 
     pub fn provider_catalog_write_repository(&self) -> Arc<dyn ProviderCatalogWriteRepository> {
         Arc::new(MysqlProviderCatalogReadRepository::new(self.pool_clone()))
+    }
+
+    pub fn pool_score_read_repository(&self) -> Arc<dyn PoolScoreReadRepository> {
+        Arc::new(MysqlPoolMemberScoreRepository::new(self.pool_clone()))
+    }
+
+    pub fn pool_score_write_repository(&self) -> Arc<dyn PoolMemberScoreWriteRepository> {
+        Arc::new(MysqlPoolMemberScoreRepository::new(self.pool_clone()))
     }
 
     pub fn proxy_node_read_repository(&self) -> Arc<dyn ProxyNodeReadRepository> {
