@@ -42,7 +42,8 @@ pub struct AdminEmailTemplateUpdate {
 }
 
 pub const ADMIN_SYSTEM_CONFIG_EXPORT_VERSION: &str = "2.2";
-pub const ADMIN_SYSTEM_CONFIG_SUPPORTED_VERSIONS: &[&str] = &[ADMIN_SYSTEM_CONFIG_EXPORT_VERSION];
+pub const ADMIN_SYSTEM_CONFIG_SUPPORTED_VERSIONS: &[&str] =
+    &["2.0", "2.1", ADMIN_SYSTEM_CONFIG_EXPORT_VERSION];
 pub const ADMIN_SYSTEM_USERS_EXPORT_VERSION: &str = "1.4";
 pub const ADMIN_SYSTEM_USERS_SUPPORTED_VERSIONS: &[&str] =
     &["1.3", ADMIN_SYSTEM_USERS_EXPORT_VERSION];
@@ -69,6 +70,21 @@ fn invalid_request(detail: impl Into<String>) -> (http::StatusCode, serde_json::
     )
 }
 
+fn parse_finite_f64_import_value<E>(raw: &str) -> Result<f64, E>
+where
+    E: de::Error,
+{
+    let value = raw
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| E::custom("expected a finite number or numeric string"))?;
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(E::custom("expected a finite number or numeric string"))
+    }
+}
+
 fn deserialize_optional_f64_from_number<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -80,8 +96,13 @@ where
             .as_f64()
             .filter(|value| value.is_finite())
             .map(Some)
-            .ok_or_else(|| de::Error::custom("expected a finite number")),
-        Some(_) => Err(de::Error::custom("expected a finite number")),
+            .ok_or_else(|| de::Error::custom("expected a finite number or numeric string")),
+        Some(Value::String(raw)) if !raw.trim().is_empty() => {
+            parse_finite_f64_import_value::<D::Error>(&raw).map(Some)
+        }
+        Some(_) => Err(de::Error::custom(
+            "expected a finite number or numeric string",
+        )),
     }
 }
 
@@ -2182,30 +2203,29 @@ mod tests {
 
     #[test]
     fn parse_admin_system_config_import_request_accepts_supported_versions() {
-        let parsed = parse_admin_system_config_import_request(
-            json!({
-                "version": ADMIN_SYSTEM_CONFIG_EXPORT_VERSION,
-                "global_models": [],
-                "providers": [],
-            })
-            .to_string()
-            .as_bytes(),
-        )
-        .expect("current version should parse");
+        for version in ADMIN_SYSTEM_CONFIG_SUPPORTED_VERSIONS {
+            let parsed = parse_admin_system_config_import_request(
+                json!({
+                    "version": version,
+                    "global_models": [],
+                    "providers": [],
+                })
+                .to_string()
+                .as_bytes(),
+            )
+            .expect("supported version should parse");
 
-        assert_eq!(
-            parsed.request.document.version,
-            ADMIN_SYSTEM_CONFIG_EXPORT_VERSION
-        );
-        assert_eq!(parsed.request.merge_mode, AdminImportMergeMode::Skip);
-        assert!(parsed.request.document.oauth_providers.is_empty());
-        assert!(parsed.request.document.system_configs.is_empty());
-        assert!(parsed.request.document.ldap_config.is_none());
+            assert_eq!(parsed.request.document.version, *version);
+            assert_eq!(parsed.request.merge_mode, AdminImportMergeMode::Skip);
+            assert!(parsed.request.document.oauth_providers.is_empty());
+            assert!(parsed.request.document.system_configs.is_empty());
+            assert!(parsed.request.document.ldap_config.is_none());
+        }
     }
 
     #[test]
-    fn parse_admin_system_config_import_request_rejects_removed_versions() {
-        for version in ["2.0", "2.1"] {
+    fn parse_admin_system_config_import_request_rejects_unknown_versions() {
+        for version in ["1.9", "2.3"] {
             let err = parse_admin_system_config_import_request(
                 json!({
                     "version": version,
@@ -2215,7 +2235,7 @@ mod tests {
                 .to_string()
                 .as_bytes(),
             )
-            .expect_err("removed versions should fail");
+            .expect_err("unknown versions should fail");
 
             assert_eq!(err.0, http::StatusCode::BAD_REQUEST);
             assert_eq!(
@@ -2274,8 +2294,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_admin_system_config_import_request_rejects_numeric_string_fields() {
-        let err = parse_admin_system_config_import_request(
+    fn parse_admin_system_config_import_request_accepts_numeric_string_fields() {
+        let parsed = parse_admin_system_config_import_request(
             json!({
                 "version": "2.2",
                 "global_models": [{
@@ -2298,7 +2318,34 @@ mod tests {
             .to_string()
             .as_bytes(),
         )
-        .expect_err("numeric string fields should fail");
+        .expect("numeric string fields from Python exports should parse");
+
+        let global_model = &parsed.request.document.global_models[0];
+        assert_eq!(global_model.default_price_per_request, Some(1.8));
+
+        let provider = &parsed.request.document.providers[0];
+        assert_eq!(provider.monthly_quota_usd, Some(12.5));
+        assert_eq!(provider.stream_first_byte_timeout, Some(60.0));
+        assert_eq!(provider.request_timeout, Some(120.0));
+        assert_eq!(provider.models[0].price_per_request, Some(0.7));
+    }
+
+    #[test]
+    fn parse_admin_system_config_import_request_rejects_invalid_numeric_string_fields() {
+        let err = parse_admin_system_config_import_request(
+            json!({
+                "version": "2.2",
+                "global_models": [{
+                    "name": "veo3.1",
+                    "display_name": "Veo 3.1",
+                    "default_price_per_request": "not-a-number",
+                }],
+                "providers": [],
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .expect_err("invalid numeric string fields should fail");
 
         assert_eq!(err.0, http::StatusCode::BAD_REQUEST);
         let detail = err.1["detail"].as_str().expect("detail should be a string");

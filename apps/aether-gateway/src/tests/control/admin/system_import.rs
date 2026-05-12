@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use aether_contracts::ExecutionPlan;
 use aether_crypto::{
     decrypt_python_fernet_ciphertext, encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY,
 };
@@ -22,27 +23,24 @@ use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepo
 use axum::body::{Body, Bytes};
 use axum::http::HeaderMap;
 use axum::routing::{any, post};
-use axum::{extract::Request, Router};
+use axum::{extract::Request, Json, Router};
 use http::StatusCode;
 use serde_json::{json, Value};
 
 use super::super::helpers::{sample_endpoint, sample_key, sample_provider};
-use super::super::{build_router_with_state, start_server, AppState};
+use super::super::{
+    build_router_with_state, build_state_with_execution_runtime_override, start_server, AppState,
+};
 use crate::constants::{
     GATEWAY_HEADER, TRUSTED_ADMIN_SESSION_ID_HEADER, TRUSTED_ADMIN_USER_ID_HEADER,
     TRUSTED_ADMIN_USER_ROLE_HEADER,
 };
 use crate::data::GatewayDataState;
 
-fn build_empty_admin_system_data_state() -> GatewayDataState {
-    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-    ));
-    let global_model_repository = Arc::new(InMemoryGlobalModelReadRepository::seed(Vec::<
-        StoredPublicGlobalModel,
-    >::new()));
+fn build_admin_system_data_state_with_repositories(
+    provider_catalog_repository: Arc<InMemoryProviderCatalogReadRepository>,
+    global_model_repository: Arc<InMemoryGlobalModelReadRepository>,
+) -> GatewayDataState {
     let auth_module_repository = Arc::new(InMemoryAuthModuleReadRepository::seed(
         Vec::<StoredOAuthProviderModuleConfig>::new(),
         None,
@@ -57,6 +55,21 @@ fn build_empty_admin_system_data_state() -> GatewayDataState {
         .attach_oauth_provider_repository_for_tests(oauth_provider_repository)
         .with_system_config_values_for_tests(Vec::<(String, Value)>::new())
         .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY)
+}
+
+fn build_empty_admin_system_data_state() -> GatewayDataState {
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    ));
+    let global_model_repository = Arc::new(InMemoryGlobalModelReadRepository::seed(Vec::<
+        StoredPublicGlobalModel,
+    >::new()));
+    build_admin_system_data_state_with_repositories(
+        provider_catalog_repository,
+        global_model_repository,
+    )
 }
 
 fn sample_system_import_payload() -> Value {
@@ -503,7 +516,232 @@ async fn gateway_returns_503_for_admin_system_config_import_when_local_data_is_u
 }
 
 #[tokio::test]
-async fn gateway_rejects_legacy_admin_system_config_import_versions() {
+async fn gateway_imports_legacy_admin_system_config_versions_and_model_test_succeeds() {
+    for (
+        fixture_name,
+        expected_provider_name,
+        expected_model_name,
+        expected_api_key,
+        expected_base_url,
+    ) in [
+        (
+            "v20",
+            "legacy-provider-v20",
+            "legacy-gpt-5-v20",
+            "sk-legacy-v20",
+            "https://legacy-v20.example.com/v1",
+        ),
+        (
+            "v21",
+            "legacy-provider-v21",
+            "legacy-gpt-5-v21",
+            "sk-legacy-v21",
+            "https://legacy-v21.example.com/v1",
+        ),
+    ] {
+        assert_legacy_admin_system_config_import_model_test_succeeds(
+            fixture_name,
+            expected_provider_name,
+            expected_model_name,
+            expected_api_key,
+            expected_base_url,
+        )
+        .await;
+    }
+}
+
+async fn assert_legacy_admin_system_config_import_model_test_succeeds(
+    fixture_name: &str,
+    expected_provider_name: &str,
+    expected_model_name: &str,
+    expected_api_key: &str,
+    expected_base_url: &str,
+) {
+    let execution_runtime_hits = Arc::new(Mutex::new(0usize));
+    let execution_runtime_hits_clone = Arc::clone(&execution_runtime_hits);
+    let expected_base_url_for_runtime = expected_base_url.to_string();
+    let expected_model_for_runtime = expected_model_name.to_string();
+    let expected_bearer_for_runtime = format!("Bearer {expected_api_key}");
+    let execution_runtime = Router::new().route(
+        "/v1/execute/sync",
+        any(move |Json(plan): Json<ExecutionPlan>| {
+            let execution_runtime_hits_inner = Arc::clone(&execution_runtime_hits_clone);
+            let expected_base_url = expected_base_url_for_runtime.clone();
+            let expected_model = expected_model_for_runtime.clone();
+            let expected_bearer = expected_bearer_for_runtime.clone();
+            async move {
+                *execution_runtime_hits_inner
+                    .lock()
+                    .expect("mutex should lock") += 1;
+                assert_eq!(plan.provider_api_format, "openai:chat");
+                assert!(
+                    plan.url.starts_with(expected_base_url.as_str()),
+                    "unexpected execution url: {}",
+                    plan.url
+                );
+                assert_eq!(plan.model_name.as_deref(), Some(expected_model.as_str()));
+                assert_eq!(
+                    plan.headers.get("authorization").map(String::as_str),
+                    Some(expected_bearer.as_str())
+                );
+                assert_eq!(
+                    plan.body
+                        .json_body
+                        .as_ref()
+                        .and_then(|body| body.get("model"))
+                        .and_then(Value::as_str),
+                    Some(expected_model.as_str())
+                );
+                Json(json!({
+                    "request_id": plan.request_id,
+                    "candidate_id": plan.candidate_id,
+                    "status_code": 200,
+                    "headers": {
+                        "content-type": "application/json"
+                    },
+                    "body": {
+                        "json_body": {
+                            "id": "chatcmpl-legacy-import",
+                            "object": "chat.completion",
+                            "choices": [{
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "Hello from imported provider"
+                                }
+                            }]
+                        }
+                    },
+                    "telemetry": {
+                        "elapsed_ms": 17
+                    }
+                }))
+            }
+        }),
+    );
+
+    let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    ));
+    let global_model_repository = Arc::new(InMemoryGlobalModelReadRepository::seed(Vec::<
+        StoredPublicGlobalModel,
+    >::new()));
+    let data_state = build_admin_system_data_state_with_repositories(
+        Arc::clone(&provider_catalog_repository),
+        Arc::clone(&global_model_repository),
+    );
+    let gateway = build_router_with_state(
+        build_state_with_execution_runtime_override(execution_runtime_url)
+            .with_data_state_for_tests(data_state),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+    let client = reqwest::Client::new();
+
+    let import_response = client
+        .post(format!("{gateway_url}/api/admin/system/config/import"))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&fixture_system_import_payload(fixture_name))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    let import_status = import_response.status();
+    let import_payload: Value = import_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(import_status, StatusCode::OK, "payload={import_payload}");
+    assert_eq!(import_payload["stats"]["providers"]["created"], json!(1));
+    assert_eq!(import_payload["stats"]["endpoints"]["created"], json!(1));
+    assert_eq!(import_payload["stats"]["keys"]["created"], json!(1));
+    assert_eq!(import_payload["stats"]["models"]["created"], json!(1));
+
+    let providers = provider_catalog_repository
+        .list_providers(false)
+        .await
+        .expect("providers should load");
+    assert_eq!(providers.len(), 1);
+    assert_eq!(providers[0].name, expected_provider_name);
+    let provider_id = providers[0].id.clone();
+    let provider_ids = vec![provider_id.clone()];
+    let endpoints = provider_catalog_repository
+        .list_endpoints_by_provider_ids(&provider_ids)
+        .await
+        .expect("endpoints should load");
+    assert_eq!(endpoints.len(), 1);
+    assert_eq!(endpoints[0].base_url, expected_base_url);
+    let endpoint_id = endpoints[0].id.clone();
+
+    let keys = provider_catalog_repository
+        .list_keys_by_provider_ids(&provider_ids)
+        .await
+        .expect("keys should load");
+    assert_eq!(keys.len(), 1);
+    assert_eq!(
+        decrypt_python_fernet_ciphertext(
+            DEVELOPMENT_ENCRYPTION_KEY,
+            keys[0]
+                .encrypted_api_key
+                .as_deref()
+                .expect("api key should be present"),
+        )
+        .expect("api key should decrypt"),
+        expected_api_key
+    );
+
+    let provider_models = global_model_repository
+        .list_admin_provider_models(&AdminProviderModelListQuery {
+            provider_id: provider_id.clone(),
+            is_active: None,
+            offset: 0,
+            limit: 10_000,
+        })
+        .await
+        .expect("provider models should load");
+    assert_eq!(provider_models.len(), 1);
+    assert_eq!(provider_models[0].provider_model_name, expected_model_name);
+
+    let test_response = client
+        .post(format!("{gateway_url}/api/admin/provider-query/test-model"))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "provider_id": provider_id,
+            "endpoint_id": endpoint_id,
+            "model": expected_model_name,
+            "api_format": "openai:chat"
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(test_response.status(), StatusCode::OK);
+    let test_payload: Value = test_response.json().await.expect("json body should parse");
+    assert_eq!(test_payload["success"], json!(true));
+    assert_eq!(test_payload["model"], json!(expected_model_name));
+    assert_eq!(test_payload["error"], Value::Null);
+    assert_eq!(
+        test_payload["data"]["response"]["choices"][0]["message"]["content"],
+        json!("Hello from imported provider")
+    );
+    assert_eq!(
+        *execution_runtime_hits.lock().expect("mutex should lock"),
+        1
+    );
+
+    gateway_handle.abort();
+    execution_runtime_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_rejects_unknown_admin_system_config_import_versions() {
     let gateway = build_router_with_state(
         AppState::new()
             .expect("gateway should build")
@@ -512,7 +750,7 @@ async fn gateway_rejects_legacy_admin_system_config_import_versions() {
     let (gateway_url, gateway_handle) = start_server(gateway).await;
     let client = reqwest::Client::new();
 
-    for version in ["2.0", "2.1"] {
+    for version in ["1.9", "2.3"] {
         let response = client
             .post(format!("{gateway_url}/api/admin/system/config/import"))
             .header(GATEWAY_HEADER, "rust-phase3b")
@@ -535,7 +773,7 @@ async fn gateway_rejects_legacy_admin_system_config_import_versions() {
             .as_str()
             .expect("detail should be a string");
         assert!(detail.contains(&format!("不支持的配置版本: {version}")));
-        assert!(detail.contains("支持的版本: 2.2"));
+        assert!(detail.contains("支持的版本: 2.0, 2.1, 2.2"));
     }
 
     gateway_handle.abort();
@@ -842,13 +1080,8 @@ async fn gateway_imports_admin_system_config_fixture_v22() {
 }
 
 #[tokio::test]
-async fn gateway_rejects_admin_system_config_fixtures_from_removed_legacy_exports() {
+async fn gateway_imports_admin_system_config_fixtures_from_legacy_exports() {
     for fixture in ["v20", "v21"] {
-        let version = match fixture {
-            "v20" => "2.0",
-            "v21" => "2.1",
-            _ => unreachable!("unexpected fixture"),
-        };
         let gateway = build_router_with_state(
             AppState::new()
                 .expect("gateway should build")
@@ -869,18 +1102,168 @@ async fn gateway_rejects_admin_system_config_fixtures_from_removed_legacy_export
 
         assert_eq!(
             response.status(),
-            StatusCode::BAD_REQUEST,
-            "fixture {fixture} should be rejected"
+            StatusCode::OK,
+            "fixture {fixture} should be accepted for Python migration compatibility"
         );
         let payload: Value = response.json().await.expect("json body should parse");
-        let detail = payload["detail"]
-            .as_str()
-            .expect("detail should be a string");
-        assert!(detail.contains(&format!("不支持的配置版本: {version}")));
-        assert!(detail.contains("支持的版本: 2.2"));
+        assert_eq!(payload["message"], "配置导入成功");
+        assert_eq!(payload["stats"]["global_models"]["created"], json!(1));
+        assert_eq!(payload["stats"]["providers"]["created"], json!(1));
 
         gateway_handle.abort();
     }
+}
+
+#[tokio::test]
+async fn gateway_imports_python_cli_alias_export_and_model_test_smoke() {
+    let seen_plan = Arc::new(Mutex::new(None::<ExecutionPlan>));
+    let seen_plan_clone = Arc::clone(&seen_plan);
+    let execution_runtime = Router::new().route(
+        "/v1/execute/sync",
+        any(move |Json(plan): Json<ExecutionPlan>| {
+            let seen_plan_inner = Arc::clone(&seen_plan_clone);
+            async move {
+                assert_eq!(plan.provider_api_format, "claude:messages");
+                assert_eq!(plan.model_name.as_deref(), Some("claude-sonnet-python"));
+                assert_eq!(
+                    plan.body
+                        .json_body
+                        .as_ref()
+                        .and_then(|body| body.get("model")),
+                    Some(&json!("claude-sonnet-python"))
+                );
+                *seen_plan_inner.lock().expect("mutex should lock") = Some(plan.clone());
+                Json(json!({
+                    "request_id": plan.request_id,
+                    "candidate_id": plan.candidate_id,
+                    "status_code": 200,
+                    "headers": {
+                        "content-type": "application/json"
+                    },
+                    "body": {
+                        "json_body": {
+                            "id": "msg_python_alias_smoke",
+                            "type": "message",
+                            "model": "claude-sonnet-python",
+                            "content": [{
+                                "type": "text",
+                                "text": "ok"
+                            }]
+                        }
+                    },
+                    "telemetry": {
+                        "elapsed_ms": 17
+                    }
+                }))
+            }
+        }),
+    );
+    let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
+
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    ));
+    let global_model_repository = Arc::new(InMemoryGlobalModelReadRepository::seed(Vec::<
+        StoredPublicGlobalModel,
+    >::new()));
+    let data_state = build_admin_system_data_state_with_repositories(
+        Arc::clone(&provider_catalog_repository),
+        Arc::clone(&global_model_repository),
+    );
+    let gateway = build_router_with_state(
+        build_state_with_execution_runtime_override(execution_runtime_url)
+            .with_data_state_for_tests(data_state),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let mut import_payload = sample_system_import_payload();
+    import_payload["global_models"][0]["name"] = json!("claude-sonnet-python");
+    import_payload["global_models"][0]["display_name"] = json!("Claude Sonnet Python");
+    import_payload["providers"][0]["name"] = json!("python-export-claude");
+    import_payload["providers"][0]["provider_type"] = json!("custom");
+    import_payload["providers"][0]["endpoints"][0]["api_format"] = json!("claude:cli");
+    import_payload["providers"][0]["endpoints"][0]["base_url"] =
+        json!("https://python-export-claude.example.com");
+    import_payload["providers"][0]["api_keys"][0]["name"] = json!("python-alias-key");
+    import_payload["providers"][0]["api_keys"][0]["api_formats"] = json!(["claude:cli"]);
+    import_payload["providers"][0]["api_keys"][0]["api_key"] = json!("sk-python-alias");
+    import_payload["providers"][0]["models"][0]["global_model_name"] =
+        json!("claude-sonnet-python");
+    import_payload["providers"][0]["models"][0]["provider_model_name"] =
+        json!("claude-sonnet-python");
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{gateway_url}/api/admin/system/config/import"))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&import_payload)
+        .send()
+        .await
+        .expect("request should succeed");
+
+    let status = response.status();
+    let payload: Value = response.json().await.expect("json body should parse");
+    assert_eq!(status, StatusCode::OK, "payload={payload}");
+
+    let providers = provider_catalog_repository
+        .list_providers(false)
+        .await
+        .expect("providers should load");
+    assert_eq!(providers.len(), 1);
+    let provider_id = providers[0].id.clone();
+    let endpoints = provider_catalog_repository
+        .list_endpoints_by_provider_ids(std::slice::from_ref(&provider_id))
+        .await
+        .expect("endpoints should load");
+    assert_eq!(endpoints.len(), 1);
+    assert_eq!(endpoints[0].api_format, "claude:messages");
+    let keys = provider_catalog_repository
+        .list_keys_by_provider_ids(std::slice::from_ref(&provider_id))
+        .await
+        .expect("keys should load");
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].api_formats, Some(json!(["claude:messages"])));
+
+    let response = client
+        .post(format!("{gateway_url}/api/admin/provider-query/test-model"))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "provider_id": provider_id,
+            "model": "claude-sonnet-python",
+            "endpoint_id": endpoints[0].id,
+            "api_format": "claude:messages"
+        }))
+        .send()
+        .await
+        .expect("model test request should succeed");
+
+    let status = response.status();
+    let payload: Value = response.json().await.expect("json body should parse");
+    assert_eq!(status, StatusCode::OK, "payload={payload}");
+    assert_eq!(payload["success"], json!(true));
+    assert_eq!(
+        payload["attempts"][0]["endpoint_api_format"],
+        json!("claude:messages")
+    );
+    assert_eq!(
+        payload["attempts"][0]["request_body"]["model"],
+        json!("claude-sonnet-python")
+    );
+    assert!(
+        seen_plan.lock().expect("mutex should lock").is_some(),
+        "post-import model test should execute through runtime"
+    );
+
+    gateway_handle.abort();
+    execution_runtime_handle.abort();
 }
 
 #[tokio::test]
@@ -964,11 +1347,23 @@ async fn gateway_reports_field_path_for_invalid_admin_system_config_import_shape
 }
 
 #[tokio::test]
-async fn gateway_rejects_admin_system_config_with_numeric_string_prices() {
+async fn gateway_imports_admin_system_config_with_numeric_string_prices() {
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    ));
+    let global_model_repository = Arc::new(InMemoryGlobalModelReadRepository::seed(Vec::<
+        StoredPublicGlobalModel,
+    >::new()));
+    let data_state = build_admin_system_data_state_with_repositories(
+        Arc::clone(&provider_catalog_repository),
+        Arc::clone(&global_model_repository),
+    );
     let gateway = build_router_with_state(
         AppState::new()
             .expect("gateway should build")
-            .with_data_state_for_tests(build_empty_admin_system_data_state()),
+            .with_data_state_for_tests(data_state),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
@@ -989,11 +1384,37 @@ async fn gateway_rejects_admin_system_config_with_numeric_string_prices() {
         .await
         .expect("request should succeed");
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let status = response.status();
     let body: Value = response.json().await.expect("json body should parse");
-    let detail = body["detail"].as_str().expect("detail should be a string");
-    assert!(detail.contains("配置文件格式无效"));
-    assert!(detail.contains("default_price_per_request"));
+    assert_eq!(status, StatusCode::OK, "payload={body}");
+
+    let global_models = global_model_repository
+        .list_admin_global_models(&AdminGlobalModelListQuery {
+            offset: 0,
+            limit: 10_000,
+            is_active: None,
+            search: None,
+        })
+        .await
+        .expect("global models should load");
+    assert_eq!(global_models.items[0].default_price_per_request, Some(1.8));
+
+    let providers = provider_catalog_repository
+        .list_providers(false)
+        .await
+        .expect("providers should load");
+    let provider_models = global_model_repository
+        .list_admin_provider_models(&AdminProviderModelListQuery {
+            provider_id: providers[0].id.clone(),
+            is_active: None,
+            offset: 0,
+            limit: 10_000,
+        })
+        .await
+        .expect("provider models should load");
+    assert_eq!(provider_models[0].price_per_request, Some(0.7));
+    assert_eq!(providers[0].request_timeout_secs, Some(30.0));
+    assert_eq!(providers[0].stream_first_byte_timeout_secs, Some(15.0));
 
     gateway_handle.abort();
 }

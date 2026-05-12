@@ -148,7 +148,14 @@ fn remap_import_proxy(
 }
 
 fn normalize_import_endpoint_format(value: &str) -> Result<String, String> {
-    admin_endpoint_signature_parts(value)
+    let normalized = match value.trim().to_ascii_lowercase().as_str() {
+        "openai:cli" => "openai:responses",
+        "openai:compact" => "openai:responses:compact",
+        "claude:chat" | "claude:cli" => "claude:messages",
+        "gemini:chat" | "gemini:cli" => "gemini:generate_content",
+        _ => value.trim(),
+    };
+    admin_endpoint_signature_parts(normalized)
         .map(|(signature, _, _)| signature.to_string())
         .ok_or_else(|| format!("无效的 api_format: {value}"))
 }
@@ -1173,7 +1180,7 @@ impl<'a> AdminAppState<'a> {
                         }
                         AdminImportMergeMode::Overwrite => {
                             let Some((normalized_signature, api_family, endpoint_kind)) =
-                                admin_endpoint_signature_parts(&imported_endpoint.api_format)
+                                admin_endpoint_signature_parts(&normalized_api_format)
                             else {
                                 return Ok(Err(invalid_request(format!(
                                     "无效的 api_format: {}",
@@ -1246,7 +1253,7 @@ impl<'a> AdminAppState<'a> {
                 }
 
                 let Some((normalized_signature, api_family, endpoint_kind)) =
-                    admin_endpoint_signature_parts(&imported_endpoint.api_format)
+                    admin_endpoint_signature_parts(&normalized_api_format)
                 else {
                     return Ok(Err(invalid_request(format!(
                         "无效的 api_format: {}",
@@ -2832,7 +2839,9 @@ mod tests {
     use super::{
         imported_optional_bool, imported_optional_f64, imported_optional_i32,
         imported_optional_u64, imported_rfc3339_to_unix_secs, imported_string_list_from_value,
+        normalize_import_endpoint_format, normalize_import_key_formats,
         normalize_imported_wallet_target, validate_imported_system_users_export_version,
+        ImportedProviderKey,
     };
 
     #[test]
@@ -2847,6 +2856,59 @@ mod tests {
             validate_imported_system_users_export_version(Some(&json!(null))).unwrap_err(),
             "version 必须是 x.y 字符串"
         );
+    }
+
+    #[test]
+    fn config_import_normalizes_python_cli_api_format_aliases() {
+        for (raw, expected) in [
+            ("openai:cli", "openai:responses"),
+            ("openai:compact", "openai:responses:compact"),
+            ("claude:chat", "claude:messages"),
+            ("claude:cli", "claude:messages"),
+            ("gemini:chat", "gemini:generate_content"),
+            ("gemini:cli", "gemini:generate_content"),
+        ] {
+            assert_eq!(normalize_import_endpoint_format(raw).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn config_import_normalizes_key_formats_against_imported_endpoint_aliases() {
+        let endpoint_formats = ["claude:messages", "openai:responses:compact"]
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect();
+        let item = ImportedProviderKey {
+            api_key: None,
+            auth_type: None,
+            auth_config: None,
+            name: None,
+            note: None,
+            api_formats: Some(vec!["claude:cli".to_string(), "openai:compact".to_string()]),
+            supported_endpoints: None,
+            rate_multipliers: None,
+            internal_priority: None,
+            global_priority_by_format: None,
+            auth_type_by_format: None,
+            allow_auth_channel_mismatch_formats: None,
+            rpm_limit: None,
+            allowed_models: None,
+            capabilities: None,
+            cache_ttl_minutes: None,
+            max_probe_interval_minutes: None,
+            auto_fetch_models: None,
+            locked_models: None,
+            model_include_patterns: None,
+            model_exclude_patterns: None,
+            is_active: true,
+            proxy: None,
+            fingerprint: None,
+        };
+
+        let (formats, missing) = normalize_import_key_formats(&item, &endpoint_formats);
+
+        assert_eq!(formats, vec!["claude:messages", "openai:responses:compact"]);
+        assert!(missing.is_empty());
     }
 
     #[test]
