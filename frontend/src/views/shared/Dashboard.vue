@@ -122,77 +122,6 @@
           </template>
         </div>
 
-        <!-- 管理员：版本与更新状态 -->
-        <Card
-          v-if="isAdmin"
-          class="relative mt-6 overflow-hidden p-4 sm:p-5 border-book-cloth/30"
-        >
-          <div class="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-book-cloth/20 blur-3xl" />
-          <div class="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div class="min-w-0">
-              <div class="mb-2 flex items-center gap-2">
-                <Badge
-                  variant="outline"
-                  class="uppercase tracking-[0.3em] text-[10px]"
-                >
-                  Version
-                </Badge>
-                <Badge
-                  v-if="updateStatus"
-                  :variant="updateStatus.has_update ? 'default' : 'secondary'"
-                  class="text-[10px]"
-                >
-                  {{ updateStatusLabel }}
-                </Badge>
-              </div>
-              <h3 class="text-sm font-medium text-foreground">
-                系统版本
-              </h3>
-              <p class="mt-2 text-sm text-muted-foreground">
-                当前版本
-                <span class="font-mono text-foreground">
-                  {{ updateStatus?.current_version || '加载中...' }}
-                </span>
-                <template v-if="updateStatus?.latest_version">
-                  ，最新版本
-                  <span class="font-mono text-foreground">
-                    {{ updateStatus.latest_version }}
-                  </span>
-                </template>
-              </p>
-              <p
-                v-if="updateStatus?.error"
-                class="mt-2 text-xs text-muted-foreground"
-              >
-                检查更新失败：{{ updateStatus.error }}
-              </p>
-            </div>
-
-            <div class="flex flex-wrap items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                :disabled="loadingUpdateStatus"
-                @click="loadSystemUpdateStatus"
-              >
-                <RefreshCw
-                  class="mr-2 h-3.5 w-3.5"
-                  :class="loadingUpdateStatus ? 'animate-spin' : ''"
-                />
-                重新检查
-              </Button>
-              <Button
-                v-if="updateStatus?.has_update && updateStatus.release_url"
-                size="sm"
-                @click="openReleasePage"
-              >
-                <ExternalLink class="mr-2 h-3.5 w-3.5" />
-                查看更新
-              </Button>
-            </div>
-          </div>
-        </Card>
-
         <!-- 管理员：系统健康摘要 -->
         <div
           v-if="isAdmin && systemHealth"
@@ -863,7 +792,6 @@
 import { ref, onMounted, computed, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { dashboardApi, type DashboardStat, type DailyStat, type ProviderSummary } from '@/api/dashboard'
-import { adminApi, type CheckUpdateResponse } from '@/api/admin'
 import { getDateRangeFromPeriod } from '@/features/usage/composables'
 import type { DateRangeParams } from '@/features/usage/types'
 import { announcementApi, type Announcement } from '@/api/announcements'
@@ -901,12 +829,9 @@ import {
   Clock,
   Database,
   Shuffle,
-  RefreshCw,
-  ExternalLink
 } from 'lucide-vue-next'
 import { formatTokens, formatCurrency } from '@/utils/format'
 import { parseDateLike } from '@/utils/date'
-import { buildDashboardUpdateErrorStatus, describeDashboardUpdateStatus } from './dashboardUpdateStatus'
 import { marked } from 'marked'
 import { sanitizeMarkdown } from '@/utils/sanitize'
 import type { ChartData, ChartOptions, ChartDataset, TooltipItem } from 'chart.js'
@@ -1045,16 +970,10 @@ const cacheStats = ref<{
 } | null>(null)
 
 const userMonthlyCost = ref<number | null>(null)
-const updateStatus = ref<CheckUpdateResponse | null>(null)
-const loadingUpdateStatus = ref(false)
 
 const hasCacheData = computed(() =>
   cacheStats.value && cacheStats.value.total_cache_tokens > 0
 )
-
-const updateStatusLabel = computed(() => {
-  return describeDashboardUpdateStatus(updateStatus.value)
-})
 
 const tokenBreakdown = ref<{
   input: number
@@ -1367,8 +1286,7 @@ onMounted(async () => {
   await Promise.all([
     loadDashboardData(),
     loadAnnouncements(),
-    loadDailyStats(),
-    loadSystemUpdateStatus()
+    loadDailyStats()
   ])
   await nextTick()
   setupTimelineResizeObserver()
@@ -1421,24 +1339,6 @@ async function loadDashboardData() {
     }
   } finally {
     loading.value = false
-  }
-}
-
-async function loadSystemUpdateStatus() {
-  if (!isAdmin.value) return
-  loadingUpdateStatus.value = true
-  try {
-    updateStatus.value = await adminApi.checkUpdate()
-  } catch (error) {
-    updateStatus.value = buildDashboardUpdateErrorStatus(updateStatus.value, error)
-  } finally {
-    loadingUpdateStatus.value = false
-  }
-}
-
-function openReleasePage() {
-  if (updateStatus.value?.release_url) {
-    window.open(updateStatus.value.release_url, '_blank', 'noopener,noreferrer')
   }
 }
 

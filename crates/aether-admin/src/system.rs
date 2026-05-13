@@ -16,6 +16,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use semver::Version;
 use serde::{de, de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
@@ -640,10 +641,9 @@ pub fn build_admin_system_check_update_payload_with_release(
     latest_release: Option<AdminSystemUpdateRelease>,
     error: Option<String>,
 ) -> serde_json::Value {
-    let has_update = latest_release.as_ref().is_some_and(|release| {
-        normalized_admin_system_version(&release.version)
-            != normalized_admin_system_version(&current_version)
-    });
+    let has_update = latest_release
+        .as_ref()
+        .is_some_and(|release| admin_system_update_available(&current_version, &release.version));
 
     json!({
         "current_version": current_version,
@@ -657,11 +657,64 @@ pub fn build_admin_system_check_update_payload_with_release(
 }
 
 fn normalized_admin_system_version(version: &str) -> String {
-    version
-        .trim()
+    let trimmed = version.trim();
+    trimmed
         .strip_prefix('v')
-        .unwrap_or(version.trim())
+        .or_else(|| trimmed.strip_prefix('V'))
+        .unwrap_or(trimmed)
         .to_string()
+}
+
+fn admin_system_update_available(current_version: &str, latest_release_version: &str) -> bool {
+    match (
+        parse_admin_system_version_for_update(current_version),
+        parse_admin_system_version_for_update(latest_release_version),
+    ) {
+        (Some(current), Some(latest)) => latest > current,
+        _ => false,
+    }
+}
+
+fn parse_admin_system_version_for_update(version: &str) -> Option<Version> {
+    let base = admin_system_release_base_version(version);
+    let normalized = normalize_admin_system_rc_prerelease(&base);
+    Version::parse(&normalized).ok()
+}
+
+fn admin_system_release_base_version(version: &str) -> String {
+    let normalized = normalized_admin_system_version(version);
+    let without_dirty = normalized.strip_suffix("-dirty").unwrap_or(&normalized);
+    git_describe_base_version(without_dirty)
+        .unwrap_or(without_dirty)
+        .to_string()
+}
+
+fn git_describe_base_version(version: &str) -> Option<&str> {
+    let (before_hash, hash) = version.rsplit_once("-g")?;
+    if hash.is_empty() || !hash.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    let (base, commit_count) = before_hash.rsplit_once('-')?;
+    if commit_count.is_empty() || !commit_count.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+
+    Some(base)
+}
+
+fn normalize_admin_system_rc_prerelease(version: &str) -> String {
+    let Some((core, prerelease)) = version.split_once('-') else {
+        return version.to_string();
+    };
+    let Some(rc_number) = prerelease.strip_prefix("rc") else {
+        return version.to_string();
+    };
+    if rc_number.is_empty() || !rc_number.chars().all(|ch| ch.is_ascii_digit()) {
+        return version.to_string();
+    }
+
+    format!("{core}-rc.{rc_number}")
 }
 
 pub fn build_admin_system_stats_payload(
@@ -2254,6 +2307,57 @@ mod tests {
         );
 
         assert_eq!(payload["has_update"], false);
+        assert_eq!(payload["error"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn build_admin_system_check_update_payload_ignores_git_describe_build_on_latest_release() {
+        let payload = build_admin_system_check_update_payload_with_release(
+            "0.7.0-rc28-11-g63149fe2-dirty".to_string(),
+            Some(AdminSystemUpdateRelease {
+                version: "v0.7.0-rc28".to_string(),
+                release_url: None,
+                release_notes: None,
+                published_at: None,
+            }),
+            None,
+        );
+
+        assert_eq!(payload["has_update"], false);
+        assert_eq!(payload["error"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn build_admin_system_check_update_payload_ignores_newer_local_release() {
+        let payload = build_admin_system_check_update_payload_with_release(
+            "0.7.0-rc29".to_string(),
+            Some(AdminSystemUpdateRelease {
+                version: "v0.7.0-rc28".to_string(),
+                release_url: None,
+                release_notes: None,
+                published_at: None,
+            }),
+            None,
+        );
+
+        assert_eq!(payload["has_update"], false);
+        assert_eq!(payload["error"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn build_admin_system_check_update_payload_compares_rc_versions_numerically() {
+        let payload = build_admin_system_check_update_payload_with_release(
+            "0.7.0-rc9".to_string(),
+            Some(AdminSystemUpdateRelease {
+                version: "v0.7.0-rc10".to_string(),
+                release_url: None,
+                release_notes: None,
+                published_at: None,
+            }),
+            None,
+        );
+
+        assert_eq!(payload["has_update"], true);
         assert_eq!(payload["error"], serde_json::Value::Null);
     }
 

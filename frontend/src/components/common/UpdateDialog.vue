@@ -17,41 +17,26 @@
       </h2>
 
       <!-- Version Info -->
-      <div class="flex items-center gap-3 mb-2">
-        <span class="px-3 py-1.5 rounded-lg bg-muted text-sm font-mono text-muted-foreground">
-          v{{ currentVersion }}
-        </span>
-        <svg
-          class="h-4 w-4 text-muted-foreground"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M13 7l5 5m0 0l-5 5m5-5H6"
-          />
-        </svg>
-        <span class="px-3 py-1.5 rounded-lg bg-primary/10 text-sm font-mono font-medium text-primary">
-          v{{ latestVersion }}
-        </span>
+      <div class="mx-auto mb-2 w-full max-w-sm rounded-lg bg-muted/20 px-4 py-3 text-center">
+        <p class="text-xs text-muted-foreground">
+          最新版本
+        </p>
+        <p class="mt-1 break-all font-mono text-base font-semibold text-primary">
+          {{ formatDisplayVersion(latestVersion) }}
+        </p>
       </div>
-
-      <!-- Published At -->
-      <p
-        v-if="publishedAt"
-        class="text-xs text-muted-foreground mb-4"
-      >
-        发布于 {{ formattedPublishedAt }}
-      </p>
 
       <!-- Release Notes -->
       <div
         v-if="releaseNotes"
-        class="w-full mt-2 mb-4"
+        class="w-full mt-3 mb-4"
       >
+        <div
+          v-if="publishedAt"
+          class="text-left text-xs text-muted-foreground mb-2"
+        >
+          发布于 {{ formattedPublishedAt }}
+        </div>
         <div class="text-left text-xs font-medium text-muted-foreground mb-2">
           更新内容
         </div>
@@ -66,7 +51,7 @@
       <!-- Description (fallback when no release notes) -->
       <p
         v-else
-        class="text-sm text-muted-foreground max-w-xs mb-4"
+        class="text-sm text-muted-foreground max-w-xs mt-2 mb-4"
       >
         新版本已发布，建议更新以获得最新功能和安全修复
       </p>
@@ -97,6 +82,7 @@ import { ref, watch, computed } from 'vue'
 import { Dialog } from '@/components/ui'
 import Button from '@/components/ui/button.vue'
 import HeaderLogo from '@/components/HeaderLogo.vue'
+import { formatDisplayVersion } from '@/utils/version'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 

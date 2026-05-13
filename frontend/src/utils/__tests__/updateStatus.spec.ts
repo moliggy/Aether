@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { CheckUpdateResponse } from '@/api/admin'
 import {
-  buildDashboardUpdateErrorStatus,
-  describeDashboardUpdateStatus,
-} from '../dashboardUpdateStatus'
+  buildUpdateErrorStatus,
+  describeUpdateStatus,
+} from '../updateStatus'
 
 function updateStatus(overrides: Partial<CheckUpdateResponse> = {}): CheckUpdateResponse {
   return {
@@ -18,14 +18,14 @@ function updateStatus(overrides: Partial<CheckUpdateResponse> = {}): CheckUpdate
   }
 }
 
-describe('dashboardUpdateStatus', () => {
+describe('updateStatus', () => {
   it('describes loading and latest states', () => {
-    expect(describeDashboardUpdateStatus(null)).toBe('检查中')
-    expect(describeDashboardUpdateStatus(updateStatus())).toBe('已是最新')
+    expect(describeUpdateStatus(null)).toBe('检查中')
+    expect(describeUpdateStatus(updateStatus())).toBe('已是最新')
   })
 
   it('prioritizes update availability over latest-version text', () => {
-    expect(describeDashboardUpdateStatus(updateStatus({
+    expect(describeUpdateStatus(updateStatus({
       latest_version: 'v0.7.0-rc28',
       has_update: true,
       release_url: 'https://github.com/fawney19/Aether/releases/tag/v0.7.0-rc28',
@@ -33,7 +33,7 @@ describe('dashboardUpdateStatus', () => {
   })
 
   it('preserves the current version when building an error state', () => {
-    const status = buildDashboardUpdateErrorStatus(
+    const status = buildUpdateErrorStatus(
       updateStatus({ current_version: '0.7.0-rc28' }),
       new Error('network down')
     )

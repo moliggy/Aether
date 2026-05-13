@@ -114,6 +114,13 @@
 
             <!-- Right Actions -->
             <div class="flex items-center gap-3">
+              <VersionButton
+                v-if="isAdmin"
+                :status="versionStatus"
+                :loading="loadingVersionStatus"
+                @refresh="handleVersionRefresh"
+                @open-release="openVersionReleasePage"
+              />
               <button
                 class="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition"
                 :title="themeMode === 'system' ? '跟随系统' : themeMode === 'dark' ? '深色模式' : '浅色模式'"
@@ -290,6 +297,13 @@
             id="header-actions-right"
             class="flex items-center"
           />
+          <VersionButton
+            v-if="isAdmin"
+            :status="versionStatus"
+            :loading="loadingVersionStatus"
+            @refresh="handleVersionRefresh"
+            @open-release="openVersionReleasePage"
+          />
           <!-- Theme Toggle -->
           <button
             class="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition"
@@ -352,6 +366,8 @@ import AppShell from '@/components/layout/AppShell.vue'
 import SidebarNav from '@/components/layout/SidebarNav.vue'
 import HeaderLogo from '@/components/HeaderLogo.vue'
 import UpdateDialog from '@/components/common/UpdateDialog.vue'
+import VersionButton from '@/components/common/VersionButton.vue'
+import { buildUpdateErrorStatus } from '@/utils/updateStatus'
 import {
   Home,
   Users,
@@ -396,6 +412,7 @@ const moduleStore = useModuleStore()
 const { themeMode, toggleDarkMode } = useDarkMode()
 const { siteName, siteSubtitle } = useSiteInfo()
 const isDemo = computed(() => isDemoMode())
+const isAdmin = computed(() => authStore.user?.role === 'admin')
 
 const showAuthError = ref(false)
 const mobileMenuOpen = ref(false)
@@ -403,6 +420,9 @@ const mobileMenuOpen = ref(false)
 // 更新检查相关
 const showUpdateDialog = ref(false)
 const updateInfo = ref<CheckUpdateResponse | null>(null)
+const versionStatus = ref<CheckUpdateResponse | null>(null)
+const loadingVersionStatus = ref(false)
+let versionStatusLoadPromise: Promise<CheckUpdateResponse | null> | null = null
 
 // 路由变化时自动关闭移动端菜单
 watch(() => route.path, () => {
@@ -427,26 +447,92 @@ function shouldShowUpdatePrompt(latestVersion: string): boolean {
   return true
 }
 
+async function loadVersionStatus() {
+  if (!isAdmin.value) return null
+  if (versionStatusLoadPromise) return versionStatusLoadPromise
+
+  loadingVersionStatus.value = true
+  versionStatusLoadPromise = (async () => {
+    try {
+      versionStatus.value = await adminApi.checkUpdate()
+      return versionStatus.value
+    } catch (error) {
+      versionStatus.value = buildUpdateErrorStatus(versionStatus.value, error)
+      return versionStatus.value
+    } finally {
+      loadingVersionStatus.value = false
+      versionStatusLoadPromise = null
+    }
+  })()
+
+  return versionStatusLoadPromise
+}
+
+function handleVersionRefresh() {
+  void loadVersionStatus()
+}
+
+function openVersionReleasePage() {
+  if (versionStatus.value?.release_url) {
+    window.open(versionStatus.value.release_url, '_blank', 'noopener,noreferrer')
+  }
+}
+
+function showDebugUpdateDialog() {
+  const currentVersion = versionStatus.value?.current_version || __APP_VERSION__ || '0.7.0-rc28'
+  updateInfo.value = {
+    current_version: currentVersion,
+    latest_version: 'v0.7.0-rc99',
+    has_update: true,
+    release_url: 'https://github.com/fawney19/Aether/releases',
+    release_notes: [
+      "### What's Changed",
+      '- 调整版本更新提示样式',
+      '- 修复开发分支版本误判',
+      '- 统一版本号显示格式',
+    ].join('\n'),
+    published_at: new Date().toISOString(),
+    error: null,
+  }
+  showUpdateDialog.value = true
+}
+
+function showDebugVersionStatus(hasUpdate = true) {
+  const currentVersion = versionStatus.value?.current_version || __APP_VERSION__ || '0.7.0-rc28'
+  versionStatus.value = {
+    current_version: currentVersion,
+    latest_version: hasUpdate ? 'v0.7.0-rc99' : currentVersion,
+    has_update: hasUpdate,
+    release_url: hasUpdate ? 'https://github.com/fawney19/Aether/releases' : null,
+    release_notes: hasUpdate
+      ? [
+        "### What's Changed",
+        '- 调整版本更新提示样式',
+        '- 修复开发分支版本误判',
+        '- 统一版本号显示格式',
+      ].join('\n')
+      : null,
+    published_at: hasUpdate ? new Date().toISOString() : null,
+    error: null,
+  }
+}
+
 // 检查更新
 async function checkForUpdate() {
   // 只有管理员才检查更新
-  if (authStore.user?.role !== 'admin') return
+  if (!isAdmin.value) return
 
   // 同一会话内只检查一次
   const sessionKey = 'aether_update_checked'
   if (sessionStorage.getItem(sessionKey)) return
   sessionStorage.setItem(sessionKey, '1')
 
-  try {
-    const result = await adminApi.checkUpdate()
-    if (result.has_update && result.latest_version) {
-      if (shouldShowUpdatePrompt(result.latest_version)) {
-        updateInfo.value = result
-        showUpdateDialog.value = true
-      }
+  const result = versionStatus.value ?? await loadVersionStatus()
+  if (result?.has_update && result.latest_version) {
+    if (shouldShowUpdatePrompt(result.latest_version)) {
+      updateInfo.value = result
+      showUpdateDialog.value = true
     }
-  } catch {
-    // 静默失败，不影响用户体验
   }
 }
 
@@ -481,19 +567,31 @@ onMounted(() => {
   syncAuthNotice()
 
   // 管理员预加载模块状态（路由守卫会按需加载，这里提前加载以避免菜单闪烁）
-  if (authStore.user?.role === 'admin' && !moduleStore.loaded && !moduleStore.loading) {
+  if (isAdmin.value && !moduleStore.loaded && !moduleStore.loading) {
     moduleStore.fetchModules()
   }
+  void loadVersionStatus()
 
   // 延迟检查更新，避免影响页面加载
   setTimeout(() => {
-    checkForUpdate()
+    void checkForUpdate()
   }, 2000)
+
+  if (import.meta.env.DEV) {
+    window.__aetherShowUpdateDialog = showDebugUpdateDialog
+    window.__aetherMockVersionStatus = showDebugVersionStatus
+  }
 })
 
 onUnmounted(() => {
   window.removeEventListener('storage', handleStorageChange)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
+  if (import.meta.env.DEV && window.__aetherShowUpdateDialog === showDebugUpdateDialog) {
+    delete window.__aetherShowUpdateDialog
+  }
+  if (import.meta.env.DEV && window.__aetherMockVersionStatus === showDebugVersionStatus) {
+    delete window.__aetherMockVersionStatus
+  }
 })
 
 async function handleRelogin() {
