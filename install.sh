@@ -49,8 +49,9 @@ Usage: install.sh [options]
 Install Aether Gateway.
 
 Options:
-  --mode MODE          Deployment mode: compose, single, or cluster
+  --mode MODE          Deployment mode: compose, compose-solo, single, or cluster
                       compose: Docker Compose app + Postgres + Redis
+                      compose-solo: Docker Compose app + SQLite
                       single: system service with SQLite + in-process runtime
                       cluster: system service connected to shared database + Redis
                       Linux services use systemd; macOS services use launchd
@@ -424,6 +425,10 @@ select_mode() {
             MODE="compose"
             return
             ;;
+        compose-solo|solo|docker-solo|docker-solo-compose)
+            MODE="compose-solo"
+            return
+            ;;
         single|service|systemd|launchd|sqlite)
             MODE="single"
             return
@@ -435,7 +440,7 @@ select_mode() {
         auto|"")
             ;;
         *)
-            die "unsupported install mode: ${MODE}; expected compose, single, or cluster"
+            die "unsupported install mode: ${MODE}; expected compose, compose-solo, single, or cluster"
             ;;
     esac
 
@@ -449,6 +454,7 @@ select_mode() {
   1) Docker Compose: 应用 + Postgres + Redis
   2) 单机服务: ${service_manager} + SQLite + 进程内运行时
   3) 集群节点服务: ${service_manager} + 共享数据库 + Redis
+  4) Docker Compose: 应用 + SQLite
 
 请输入选项 [2]:
 EOF
@@ -459,6 +465,7 @@ Choose Aether deployment mode:
   1) Docker Compose: app + Postgres + Redis
   2) Single-node service: ${service_manager} + SQLite + in-process runtime
   3) Cluster node service: ${service_manager} + shared database + Redis
+  4) Docker Compose: app + SQLite
 
 Enter choice [2]:
 EOF
@@ -474,6 +481,9 @@ EOF
                 ;;
             3)
                 MODE="cluster"
+                ;;
+            4)
+                MODE="compose-solo"
                 ;;
             *)
                 if ui_is_zh; then
@@ -1024,6 +1034,46 @@ generate_compose_env() {
     replace_or_append_env "${output}" "AETHER_GATEWAY_AUTO_PREPARE_DATABASE" "true"
 }
 
+generate_compose_solo_env() {
+    local output="$1"
+    local jwt_key encryption_key
+    prompt_admin_password
+    jwt_key="$(urlsafe_rand 32)"
+    encryption_key="$(urlsafe_rand 32)"
+
+    cat > "${output}" <<EOF
+ENVIRONMENT=production
+TZ=Asia/Shanghai
+RUST_LOG=aether_gateway=info
+AETHER_LOG_DESTINATION=both
+AETHER_LOG_FORMAT=pretty
+AETHER_LOG_DIR=/app/logs
+AETHER_LOG_ROTATION=daily
+AETHER_LOG_RETENTION_DAYS=7
+AETHER_LOG_MAX_FILES=30
+
+APP_IMAGE=$(compose_image)
+APP_PORT=${APP_PORT:-8084}
+AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=single-node
+AETHER_GATEWAY_NODE_ROLE=all
+AETHER_GATEWAY_STATIC_DIR=/srv/frontend
+AETHER_GATEWAY_VIDEO_TASK_TRUTH_SOURCE_MODE=rust-authoritative
+AETHER_GATEWAY_AUTO_PREPARE_DATABASE=true
+AETHER_RUNTIME_BACKEND=memory
+API_KEY_PREFIX=sk
+
+AETHER_DATABASE_DRIVER=sqlite
+AETHER_DATABASE_URL=sqlite:///app/data/aether.db
+
+JWT_SECRET_KEY=${JWT_SECRET_KEY:-${jwt_key}}
+ENCRYPTION_KEY=${ENCRYPTION_KEY:-${encryption_key}}
+
+ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.local}
+ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+ADMIN_PASSWORD=${ADMIN_PASSWORD}
+EOF
+}
+
 install_config_dir() {
     if is_darwin; then
         install -d -o root -g "${SERVICE_GROUP}" -m 0750 "${CONFIG_DIR}"
@@ -1409,6 +1459,43 @@ Docker Compose files are ready:
 Next steps:
   cd ${COMPOSE_DIR}
   docker compose pull
+  docker compose up -d
+  docker compose logs -f app
+
+Generate a fresh key set any time:
+  cd ${COMPOSE_DIR}
+  ./generate_keys.sh
+EOF
+}
+
+install_compose_solo_mode() {
+    info "preparing Docker Compose solo deployment in ${COMPOSE_DIR}"
+    install -d -m 0755 "${COMPOSE_DIR}" "${COMPOSE_DIR}/logs" "${COMPOSE_DIR}/data"
+
+    install_project_file "docker-compose.solo.yml" "${COMPOSE_DIR}/docker-compose.yml" "0644"
+    install_project_file ".env.example" "${COMPOSE_DIR}/.env.example" "0644"
+    write_generate_keys_script "${COMPOSE_DIR}/generate_keys.sh"
+
+    if [[ -f "${COMPOSE_DIR}/.env" ]]; then
+        warn "keeping existing ${COMPOSE_DIR}/.env"
+    else
+        info "generating ${COMPOSE_DIR}/.env"
+        generate_compose_solo_env "${COMPOSE_DIR}/.env"
+        chmod 0600 "${COMPOSE_DIR}/.env"
+    fi
+
+    cat <<EOF
+
+Docker Compose solo files are ready:
+  ${COMPOSE_DIR}/docker-compose.yml
+  ${COMPOSE_DIR}/.env
+  ${COMPOSE_DIR}/.env.example
+  ${COMPOSE_DIR}/generate_keys.sh
+  ${COMPOSE_DIR}/data
+  ${COMPOSE_DIR}/logs
+
+Next steps:
+  cd ${COMPOSE_DIR}
   docker compose up -d
   docker compose logs -f app
 
@@ -1834,6 +1921,8 @@ main() {
 
     if [[ "${MODE}" == "compose" ]]; then
         install_compose_mode
+    elif [[ "${MODE}" == "compose-solo" ]]; then
+        install_compose_solo_mode
     else
         require_root
         require_service_manager
