@@ -77,6 +77,25 @@ git pull
 ./deploy.sh
 ```
 
+### Docker Compose（单容器 SQLite / solo）
+
+```bash
+# 1. 克隆代码
+git clone https://github.com/fawney19/Aether.git
+cd Aether
+
+# 2. 配置环境变量
+cp .env.example .env
+./generate_keys.sh
+# 编辑 .env 设置 ADMIN_PASSWORD
+
+# 3. 启动单容器 SQLite 版本
+docker compose -f docker-compose.solo.yml up -d
+
+# 4. 升级前备份（可选）
+cp -a data/aether.db backup_$(date +%Y%m%d_%H%M%S).db
+```
+
 ### 一键安装（可选部署方式）
 
 安装脚本先从 `aether-rust-pioneer` 分支下载，不依赖 GitHub Release 的 `latest` 脚本地址。运行后会先选择语言，再选择版本和部署方式。Linux 单机 / 集群服务使用 systemd，macOS 单机 / 集群服务使用系统级 launchd；脚本会按当前系统自动下载 `linux-*` 或 `macos-*` Release 压缩包。
@@ -106,6 +125,7 @@ curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/aether-rust-pioneer
   1) Docker Compose: 应用 + Postgres + Redis
   2) 单机服务: systemd/launchd + SQLite + 进程内运行时
   3) 集群节点服务: systemd/launchd + 共享数据库 + Redis
+  4) Docker Compose: 应用 + SQLite
 
 请输入选项 [2]:
 
