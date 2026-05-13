@@ -615,6 +615,35 @@ mod tests {
         .is_ok());
     }
 
+    #[test]
+    fn read_only_permissions_allow_reads_and_reject_writes() {
+        let decision = GatewayControlDecision::synthetic(
+            "/api/admin/providers".to_string(),
+            Some("admin_proxy".to_string()),
+            Some("providers_manage".to_string()),
+            Some("create_provider".to_string()),
+            Some("admin:providers".to_string()),
+        );
+        let permissions = read_only_management_token_permissions();
+
+        assert!(validate_management_token_admin_route_permission(
+            &http::Method::GET,
+            &decision,
+            Some(&permissions),
+        )
+        .is_ok());
+        assert_eq!(
+            validate_management_token_admin_route_permission(
+                &http::Method::POST,
+                &decision,
+                Some(&permissions),
+            )
+            .expect_err("read-only permissions should reject writes")
+            .required_permission,
+            "admin:providers:write"
+        );
+    }
+
     fn extract_admin_route_scopes(source: &'static str) -> BTreeSet<&'static str> {
         let mut scopes = BTreeSet::new();
         let mut remaining = source;
