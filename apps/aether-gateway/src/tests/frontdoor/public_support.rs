@@ -30,7 +30,8 @@ use aether_data::repository::management_tokens::{
 };
 use aether_data::repository::usage::InMemoryUsageReadRepository;
 use aether_data::repository::users::{
-    InMemoryUserReadRepository, StoredUserAuthRecord, StoredUserExportRow,
+    InMemoryUserReadRepository, StoredUserAuthRecord, StoredUserExportRow, UpsertUserGroupRecord,
+    UserReadRepository,
 };
 use aether_data::repository::wallet::{
     InMemoryWalletRepository, StoredWalletSnapshot, WalletWriteRepository,
@@ -2701,15 +2702,38 @@ async fn gateway_handles_user_monitoring_rate_limit_status_locally_without_proxy
         .expect("auth api key snapshot should build")
         .with_user_rate_limit(Some(80)),
     )]));
+    let user_repository: Arc<dyn UserReadRepository> =
+        Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![
+            sample_auth_user(now),
+        ]));
+    let group = user_repository
+        .create_user_group(UpsertUserGroupRecord {
+            name: "Monitoring Limits".to_string(),
+            description: None,
+            priority: 0,
+            allowed_providers: None,
+            allowed_providers_mode: "unrestricted".to_string(),
+            allowed_api_formats: None,
+            allowed_api_formats_mode: "unrestricted".to_string(),
+            allowed_models: None,
+            allowed_models_mode: "unrestricted".to_string(),
+            rate_limit: Some(80),
+            rate_limit_mode: "custom".to_string(),
+        })
+        .await
+        .expect("group should create")
+        .expect("group should exist");
+    user_repository
+        .add_user_to_group(&group.id, "user-auth-1")
+        .await
+        .expect("group membership should create");
 
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
             let data_state = crate::data::GatewayDataState::with_auth_api_key_repository_for_tests(
                 auth_repository,
             )
-            .with_user_reader(Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![
-                sample_auth_user(now),
-            ])));
+            .with_user_reader(Arc::clone(&user_repository));
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
