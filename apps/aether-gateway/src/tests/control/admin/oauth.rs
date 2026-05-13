@@ -4302,7 +4302,7 @@ async fn gateway_batch_imports_admin_provider_oauth_kiro_via_execution_runtime_p
                         .and_then(|proxy| proxy.node_id.as_deref()),
                     Some("proxy-node-kiro-batch-runtime")
                 );
-                if plan.request_id == "kiro_batch_refresh:social" {
+                if plan.request_id == "provider-oauth:kiro-social-refresh" {
                     assert_eq!(plan.url, "https://oauth.example/refreshToken");
                     assert_eq!(
                         plan.headers

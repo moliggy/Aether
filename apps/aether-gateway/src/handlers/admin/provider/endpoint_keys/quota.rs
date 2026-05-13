@@ -13,15 +13,12 @@ use axum::{
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::super::oauth::quota::antigravity::refresh_antigravity_provider_quota_locally;
-use super::super::oauth::quota::chatgpt_web::refresh_chatgpt_web_provider_quota_locally;
-use super::super::oauth::quota::codex::refresh_codex_provider_quota_locally;
-use super::super::oauth::quota::kiro::refresh_kiro_provider_quota_locally;
+use super::super::oauth::quota::dispatch::refresh_provider_pool_quota_locally;
 use super::super::oauth::quota::shared::normalize_string_id_list;
 use super::super::oauth::quota::shared::{
+    provider_quota_refresh_endpoint_for_provider, provider_quota_refresh_missing_endpoint_message,
     provider_type_supports_quota_refresh, unsupported_provider_quota_refresh_message,
 };
-use super::super::oauth::runtime::provider_oauth_maintenance_endpoint_for_provider;
 use super::super::write::provider::reconcile_admin_fixed_provider_template_endpoints;
 
 fn unsupported_provider_quota_refresh_response(provider_type: &str) -> Response<Body> {
@@ -115,7 +112,7 @@ pub(super) async fn maybe_handle(
         .list_provider_catalog_endpoints_by_provider_ids(std::slice::from_ref(&provider_id))
         .await?;
     let mut endpoint =
-        provider_oauth_maintenance_endpoint_for_provider(&normalized_provider_type, &endpoints);
+        provider_quota_refresh_endpoint_for_provider(&normalized_provider_type, &endpoints, true);
 
     if endpoint.is_none() && is_fixed_provider {
         if !state.has_provider_catalog_data_writer() {
@@ -136,8 +133,11 @@ pub(super) async fn maybe_handle(
         endpoints = state
             .list_provider_catalog_endpoints_by_provider_ids(std::slice::from_ref(&provider_id))
             .await?;
-        endpoint =
-            provider_oauth_maintenance_endpoint_for_provider(&normalized_provider_type, &endpoints);
+        endpoint = provider_quota_refresh_endpoint_for_provider(
+            &normalized_provider_type,
+            &endpoints,
+            true,
+        );
     }
 
     if !provider_type_supports_quota_refresh(&normalized_provider_type) {
@@ -147,15 +147,7 @@ pub(super) async fn maybe_handle(
     }
 
     let Some(endpoint) = endpoint else {
-        let detail = match normalized_provider_type.as_str() {
-            "codex" => "找不到有效的 openai:responses 端点",
-            "antigravity" => "找不到有效的 gemini:generate_content 端点",
-            "kiro" => "找不到有效的 Kiro 端点",
-            "chatgpt_web" => "找不到有效的 openai:image 端点",
-            "claude_code" => "找不到有效的 claude:messages 端点",
-            "gemini_cli" | "vertex_ai" => "找不到有效的 gemini:generate_content 端点",
-            _ => "找不到有效端点",
-        };
+        let detail = provider_quota_refresh_missing_endpoint_message(&normalized_provider_type);
         return Ok(Some(
             (
                 http::StatusCode::BAD_REQUEST,
@@ -231,23 +223,16 @@ pub(super) async fn maybe_handle(
         ));
     }
 
-    let Some(payload) = (match normalized_provider_type.as_str() {
-        "codex" => {
-            refresh_codex_provider_quota_locally(state, &provider, &endpoint, keys, None).await?
-        }
-        "kiro" => {
-            refresh_kiro_provider_quota_locally(state, &provider, &endpoint, keys, None).await?
-        }
-        "antigravity" => {
-            refresh_antigravity_provider_quota_locally(state, &provider, &endpoint, keys, None)
-                .await?
-        }
-        "chatgpt_web" => {
-            refresh_chatgpt_web_provider_quota_locally(state, &provider, &endpoint, keys, None)
-                .await?
-        }
-        _ => None,
-    }) else {
+    let Some(payload) = refresh_provider_pool_quota_locally(
+        state,
+        &provider,
+        &endpoint,
+        &normalized_provider_type,
+        keys,
+        None,
+    )
+    .await?
+    else {
         return Ok(None);
     };
     Ok(Some(Json(payload).into_response()))

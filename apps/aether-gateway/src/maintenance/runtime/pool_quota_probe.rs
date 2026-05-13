@@ -9,16 +9,16 @@ use aether_data_contracts::repository::pool_scores::{
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
+use aether_provider_pool::provider_pool_quota_metadata_updated_at;
 use aether_runtime_state::{RuntimeLockLease, RuntimeState};
 use futures_util::{stream, StreamExt};
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
 use crate::admin_api::{
-    admin_provider_pool_config, provider_oauth_maintenance_endpoint_for_provider,
+    admin_provider_pool_config, provider_quota_refresh_endpoint_for_provider,
     provider_type_supports_quota_refresh, reconcile_admin_fixed_provider_template_endpoints,
-    refresh_antigravity_provider_quota_locally, refresh_chatgpt_web_provider_quota_locally,
-    refresh_codex_provider_quota_locally, refresh_kiro_provider_quota_locally, AdminAppState,
+    refresh_provider_pool_quota_locally, AdminAppState,
 };
 use crate::{AppState, GatewayError};
 
@@ -112,38 +112,6 @@ fn provider_supports_quota_probe(provider_type: &str) -> bool {
     provider_type_supports_quota_refresh(provider_type)
 }
 
-fn json_number(value: Option<&Value>) -> Option<f64> {
-    let value = value?;
-    if let Some(number) = value.as_f64() {
-        return Some(number);
-    }
-    value
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .and_then(|value| value.parse::<f64>().ok())
-}
-
-fn extract_quota_updated_at(provider_type: &str, upstream_metadata: Option<&Value>) -> Option<u64> {
-    let metadata = upstream_metadata?.as_object()?;
-    let bucket_name = match provider_type.trim().to_ascii_lowercase().as_str() {
-        "codex" => "codex",
-        "kiro" => "kiro",
-        "antigravity" => "antigravity",
-        "chatgpt_web" => "chatgpt_web",
-        _ => return None,
-    };
-    let bucket = metadata.get(bucket_name)?.as_object()?;
-    let mut updated_at = json_number(bucket.get("updated_at"))?;
-    if updated_at <= 0.0 {
-        return None;
-    }
-    if updated_at > 1_000_000_000_000.0 {
-        updated_at /= 1000.0;
-    }
-    Some(updated_at as u64)
-}
-
 fn parse_probe_stamp(raw_value: Option<&str>) -> Option<u64> {
     let parsed = raw_value
         .map(str::trim)
@@ -169,7 +137,7 @@ pub(crate) fn select_pool_quota_probe_key_ids(
             continue;
         }
         let quota_updated_ts =
-            extract_quota_updated_at(provider_type, key.upstream_metadata.as_ref());
+            provider_pool_quota_metadata_updated_at(key.upstream_metadata.as_ref(), provider_type);
         let last_probe_ts = last_probe_timestamps.get(&key.id).copied();
         let anchor_ts = quota_updated_ts
             .unwrap_or(0)
@@ -421,7 +389,7 @@ fn endpoint_for_probe(
     provider_type: &str,
     endpoints: &[StoredProviderCatalogEndpoint],
 ) -> Option<StoredProviderCatalogEndpoint> {
-    provider_oauth_maintenance_endpoint_for_provider(provider_type, endpoints)
+    provider_quota_refresh_endpoint_for_provider(provider_type, endpoints, true)
 }
 
 async fn endpoint_for_probe_with_reconcile(
@@ -462,23 +430,8 @@ async fn refresh_provider_probe_keys(
     provider_type: &str,
     keys: Vec<StoredProviderCatalogKey>,
 ) -> Result<Option<Value>, GatewayError> {
-    match provider_type {
-        "codex" => {
-            refresh_codex_provider_quota_locally(admin_state, provider, endpoint, keys, None).await
-        }
-        "kiro" => {
-            refresh_kiro_provider_quota_locally(admin_state, provider, endpoint, keys, None).await
-        }
-        "antigravity" => {
-            refresh_antigravity_provider_quota_locally(admin_state, provider, endpoint, keys, None)
-                .await
-        }
-        "chatgpt_web" => {
-            refresh_chatgpt_web_provider_quota_locally(admin_state, provider, endpoint, keys, None)
-                .await
-        }
-        _ => Ok(None),
-    }
+    refresh_provider_pool_quota_locally(admin_state, provider, endpoint, provider_type, keys, None)
+        .await
 }
 
 fn update_summary_from_payload(
@@ -971,16 +924,16 @@ mod tests {
     #[test]
     fn parses_quota_updated_at_seconds_and_milliseconds() {
         assert_eq!(
-            extract_quota_updated_at(
-                "codex",
-                Some(&json!({ "codex": { "updated_at": 1_700_000_000 } }))
+            provider_pool_quota_metadata_updated_at(
+                Some(&json!({ "codex": { "updated_at": 1_700_000_000 } })),
+                "codex"
             ),
             Some(1_700_000_000)
         );
         assert_eq!(
-            extract_quota_updated_at(
-                "kiro",
-                Some(&json!({ "kiro": { "updated_at": 1_700_000_000_000_u64 } }))
+            provider_pool_quota_metadata_updated_at(
+                Some(&json!({ "kiro": { "updated_at": 1_700_000_000_000_u64 } })),
+                "kiro"
             ),
             Some(1_700_000_000)
         );

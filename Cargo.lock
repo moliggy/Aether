@@ -28,6 +28,7 @@ dependencies = [
  "aether-contracts",
  "aether-data",
  "aether-data-contracts",
+ "aether-provider-pool",
  "axum",
  "base64 0.22.1",
  "chrono",
@@ -64,6 +65,7 @@ dependencies = [
  "aether-ai-formats",
  "aether-contracts",
  "aether-data-contracts",
+ "aether-pool-core",
  "aether-scheduler-core",
  "async-trait",
  "http",
@@ -189,6 +191,8 @@ dependencies = [
  "aether-http",
  "aether-model-fetch",
  "aether-oauth",
+ "aether-pool-core",
+ "aether-provider-pool",
  "aether-provider-transport",
  "aether-runtime",
  "aether-runtime-state",
@@ -276,6 +280,25 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "aether-pool-core"
+version = "0.1.0"
+dependencies = [
+ "aether-data-contracts",
+ "serde_json",
+]
+
+[[package]]
+name = "aether-provider-pool"
+version = "0.1.0"
+dependencies = [
+ "aether-data-contracts",
+ "aether-pool-core",
+ "serde_json",
  "url",
  "uuid",
 ]

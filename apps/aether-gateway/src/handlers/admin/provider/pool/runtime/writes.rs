@@ -618,7 +618,7 @@ mod tests {
             probe_concurrency: 4,
             score_top_n: 128,
             score_fallback_scan_limit: 1024,
-            score_rules: aether_ai_serving::PoolMemberScoreRules::default(),
+            score_rules: aether_pool_core::PoolMemberScoreRules::default(),
             stream_timeout_threshold: 3,
             stream_timeout_window_seconds: 1800,
             stream_timeout_cooldown_seconds: 300,

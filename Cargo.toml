@@ -4,6 +4,8 @@ members = [
     "crates/aether-ai-formats",
     "crates/aether-admin",
     "crates/aether-ai-serving",
+    "crates/aether-pool-core",
+    "crates/aether-provider-pool",
     "crates/aether-data-contracts",
     "crates/aether-data-schema",
     "crates/aether-dispatch-core",
@@ -37,6 +39,8 @@ repository = "https://github.com/fawney19/Aether.git"
 aether-admin = { path = "crates/aether-admin" }
 aether-ai-formats = { path = "crates/aether-ai-formats" }
 aether-ai-serving = { path = "crates/aether-ai-serving" }
+aether-pool-core = { path = "crates/aether-pool-core" }
+aether-provider-pool = { path = "crates/aether-provider-pool" }
 aether-data-contracts = { path = "crates/aether-data-contracts" }
 aether-data-schema = { path = "crates/aether-data-schema" }
 aether-dispatch-core = { path = "crates/aether-dispatch-core" }

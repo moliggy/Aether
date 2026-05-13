@@ -2,11 +2,6 @@ use std::collections::{btree_map::Entry, BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use aether_admin::provider::pool as admin_provider_pool_pure;
-use aether_ai_serving::{
-    normalize_enabled_ai_pool_presets, run_ai_pool_scheduler, AiPoolCandidateFacts,
-    AiPoolCandidateInput, AiPoolCandidateOrchestration, AiPoolCatalogKeyContext,
-    AiPoolRuntimeState, AiPoolSchedulingConfig, AiPoolSchedulingPreset,
-};
 use aether_data_contracts::repository::candidate_selection::{
     StoredMinimalCandidateSelectionRow, StoredPoolKeyCandidateOrder,
     StoredPoolKeyCandidateRowsByKeyIdsQuery, StoredPoolKeyCandidateRowsQuery,
@@ -16,7 +11,11 @@ use aether_data_contracts::repository::pool_scores::{
     PoolMemberScheduleFeedback, PoolScoreScope, StoredPoolMemberScore, POOL_KIND_PROVIDER_KEY_POOL,
 };
 use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
-use serde_json::{Map, Value};
+use aether_pool_core::{
+    run_pool_scheduler, PoolCandidateFacts, PoolCandidateInput, PoolCandidateOrchestration,
+    PoolMemberSignals, PoolRuntimeState, PoolSchedulingConfig, PoolSchedulingPreset,
+};
+use aether_provider_pool::ProviderPoolService;
 use tracing::warn;
 
 use crate::ai_serving::{
@@ -35,16 +34,12 @@ use crate::handlers::shared::provider_pool::{
     read_admin_provider_pool_key_cooldown_reason, AdminProviderPoolConfig,
     AdminProviderPoolRuntimeState,
 };
-use crate::handlers::shared::{
-    parse_catalog_auth_config_json, provider_key_health_summary,
-    provider_key_status_snapshot_payload,
-};
+use crate::handlers::shared::{parse_catalog_auth_config_json, provider_key_health_summary};
 use crate::orchestration::LocalExecutionCandidateMetadata;
-use crate::provider_key_auth::provider_key_auth_semantics;
 
 static LOAD_BALANCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-type PoolCatalogKeyContext = AiPoolCatalogKeyContext;
+type PoolCatalogKeyContext = PoolMemberSignals;
 
 pub(crate) async fn apply_local_execution_pool_scheduler(
     state: PlannerAppState<'_>,
@@ -796,6 +791,8 @@ async fn read_pool_catalog_key_contexts_by_id(
         }
     };
 
+    let provider_pool_service = ProviderPoolService::with_builtin_adapters();
+
     keys.into_iter()
         .map(|key| {
             let provider_type = provider_type_by_key_id
@@ -804,7 +801,7 @@ async fn read_pool_catalog_key_contexts_by_id(
                 .unwrap_or_default();
             (
                 key.id.clone(),
-                build_pool_catalog_key_context(state, &key, provider_type),
+                build_pool_catalog_key_context(state, &provider_pool_service, &key, provider_type),
             )
         })
         .collect()
@@ -812,24 +809,15 @@ async fn read_pool_catalog_key_contexts_by_id(
 
 fn build_pool_catalog_key_context(
     state: PlannerAppState<'_>,
+    provider_pool_service: &ProviderPoolService,
     key: &StoredProviderCatalogKey,
     provider_type: &str,
 ) -> PoolCatalogKeyContext {
-    let status_snapshot = provider_key_status_snapshot_payload(key, provider_type);
-    let quota_snapshot = status_snapshot
-        .as_object()
-        .and_then(|snapshot| snapshot.get("quota"))
-        .and_then(Value::as_object);
-    let account_snapshot = status_snapshot
-        .as_object()
-        .and_then(|snapshot| snapshot.get("account"))
-        .and_then(Value::as_object);
-
     let (health_score, _, _, _, _) = provider_key_health_summary(key);
     let health_score = key
         .health_by_format
         .as_ref()
-        .and_then(Value::as_object)
+        .and_then(serde_json::Value::as_object)
         .filter(|payload| !payload.is_empty())
         .map(|_| health_score);
     let latency_avg_ms = key
@@ -841,131 +829,14 @@ fn build_pool_catalog_key_context(
         })
         .filter(|value| value.is_finite() && *value >= 0.0);
 
-    PoolCatalogKeyContext {
-        oauth_plan_type: quota_snapshot
-            .and_then(|quota| quota.get("plan_type"))
-            .and_then(Value::as_str)
-            .and_then(|value| normalize_pool_plan_type(value, provider_type))
-            .or_else(|| derive_pool_oauth_plan_type(state, key, provider_type)),
-        quota_usage_ratio: quota_snapshot
-            .and_then(|quota| quota.get("usage_ratio"))
-            .and_then(json_f64)
-            .map(|value| value.clamp(0.0, 1.0)),
-        quota_reset_seconds: quota_snapshot
-            .and_then(|quota| quota.get("reset_seconds"))
-            .and_then(json_f64)
-            .filter(|value| *value >= 0.0),
-        account_blocked: account_snapshot
-            .and_then(|account| account.get("blocked"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-            || admin_provider_pool_pure::admin_pool_key_is_known_banned(key),
-        quota_exhausted: pool_catalog_key_quota_exhausted(key, provider_type, quota_snapshot),
-        health_score,
-        latency_avg_ms,
-        catalog_lru_score: Some(key.last_used_at_unix_secs.unwrap_or(0) as f64),
-    }
-}
-
-fn pool_catalog_key_quota_exhausted(
-    key: &StoredProviderCatalogKey,
-    provider_type: &str,
-    quota_snapshot: Option<&Map<String, Value>>,
-) -> bool {
-    match provider_type.trim().to_ascii_lowercase().as_str() {
-        "codex" | "kiro" | "chatgpt_web" => {
-            admin_provider_pool_pure::admin_pool_key_account_quota_exhausted(key, provider_type)
-        }
-        _ => quota_snapshot
-            .and_then(|quota| quota.get("exhausted"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-    }
-}
-
-fn derive_pool_oauth_plan_type(
-    state: PlannerAppState<'_>,
-    key: &StoredProviderCatalogKey,
-    provider_type: &str,
-) -> Option<String> {
-    if !provider_key_auth_semantics(key, provider_type).oauth_managed() {
-        return None;
-    }
-
-    let provider_type_key = provider_type.trim().to_ascii_lowercase();
-    if let Some(upstream_metadata) = key.upstream_metadata.as_ref().and_then(Value::as_object) {
-        let provider_bucket = upstream_metadata
-            .get(&provider_type_key)
-            .and_then(Value::as_object);
-        for source in provider_bucket
-            .into_iter()
-            .chain(std::iter::once(upstream_metadata))
-        {
-            if let Some(plan_type) = pool_plan_type_from_source(
-                source,
-                provider_type,
-                &[
-                    "plan_type",
-                    "tier",
-                    "subscription_title",
-                    "subscription_plan",
-                    "plan",
-                ],
-            ) {
-                return Some(plan_type);
-            }
-        }
-    }
-
-    parse_catalog_auth_config_json(state.app(), key).and_then(|auth_config| {
-        pool_plan_type_from_source(
-            &auth_config,
-            provider_type,
-            &["plan_type", "tier", "plan", "subscription_plan"],
-        )
-    })
-}
-
-fn pool_plan_type_from_source(
-    source: &Map<String, Value>,
-    provider_type: &str,
-    fields: &[&str],
-) -> Option<String> {
-    for field in fields {
-        let Some(value) = source.get(*field).and_then(Value::as_str) else {
-            continue;
-        };
-        if let Some(normalized) = normalize_pool_plan_type(value, provider_type) {
-            return Some(normalized);
-        }
-    }
-    None
-}
-
-fn normalize_pool_plan_type(value: &str, provider_type: &str) -> Option<String> {
-    let mut normalized = value.trim().to_string();
-    if normalized.is_empty() {
-        return None;
-    }
-
-    let provider_type = provider_type.trim().to_ascii_lowercase();
-    if !provider_type.is_empty() && normalized.to_ascii_lowercase().starts_with(&provider_type) {
-        normalized = normalized[provider_type.len()..]
-            .trim_matches(|ch: char| [' ', ':', '-', '_'].contains(&ch))
-            .to_string();
-    }
-
-    let normalized = normalized.trim().to_ascii_lowercase();
-    (!normalized.is_empty()).then_some(normalized)
-}
-
-fn json_f64(value: &Value) -> Option<f64> {
-    match value {
-        Value::Number(number) => number.as_f64(),
-        Value::String(text) => text.trim().parse::<f64>().ok(),
-        _ => None,
-    }
-    .filter(|value| value.is_finite())
+    let auth_config = parse_catalog_auth_config_json(state.app(), key);
+    let mut signals =
+        provider_pool_service.member_signals(provider_type, key, auth_config.as_ref());
+    signals.account_blocked |= admin_provider_pool_pure::admin_pool_key_is_known_banned(key);
+    signals.health_score = health_score;
+    signals.latency_avg_ms = latency_avg_ms;
+    signals.catalog_lru_score = Some(key.last_used_at_unix_secs.unwrap_or(0) as f64);
+    signals
 }
 
 fn apply_local_execution_pool_scheduler_with_runtime_map(
@@ -978,7 +849,7 @@ fn apply_local_execution_pool_scheduler_with_runtime_map(
 ) {
     let runtime_by_provider = runtime_by_provider
         .iter()
-        .map(|(provider_id, runtime)| (provider_id.clone(), ai_pool_runtime_state(runtime)))
+        .map(|(provider_id, runtime)| (provider_id.clone(), pool_runtime_state(runtime)))
         .collect::<BTreeMap<_, _>>();
     let inputs = candidates
         .into_iter()
@@ -987,20 +858,25 @@ fn apply_local_execution_pool_scheduler_with_runtime_map(
                 .get(&candidate.candidate.key_id)
                 .cloned()
                 .unwrap_or_default();
-            AiPoolCandidateInput {
-                facts: ai_pool_candidate_facts(&candidate),
-                pool_config: pool_config_for_candidate(&candidate).map(ai_pool_scheduling_config),
+            PoolCandidateInput {
+                facts: pool_candidate_facts(&candidate),
+                pool_config: pool_config_for_candidate(&candidate).map(|config| {
+                    pool_scheduling_config(
+                        config,
+                        candidate.transport.provider.provider_type.as_str(),
+                    )
+                }),
                 key_context,
                 candidate,
             }
         })
         .collect::<Vec<_>>();
-    let outcome = run_ai_pool_scheduler(inputs, &runtime_by_provider, pool_sort_seed().as_str());
+    let outcome = run_pool_scheduler(inputs, &runtime_by_provider, pool_sort_seed().as_str());
 
     let candidates = outcome
         .candidates
         .into_iter()
-        .map(|scheduled| apply_ai_pool_orchestration(scheduled.candidate, scheduled.orchestration))
+        .map(|scheduled| apply_pool_orchestration(scheduled.candidate, scheduled.orchestration))
         .collect::<Vec<_>>();
     let skipped_candidates = outcome
         .skipped_candidates
@@ -1032,16 +908,17 @@ fn pool_key_candidate_order_for_group(
     let presets = pool_config
         .scheduling_presets
         .iter()
-        .map(|preset| AiPoolSchedulingPreset {
+        .map(|preset| PoolSchedulingPreset {
             preset: preset.preset.clone(),
             enabled: preset.enabled,
             mode: preset.mode.clone(),
         })
         .collect::<Vec<_>>();
-    let active_presets = normalize_enabled_ai_pool_presets(
-        &presets,
-        group.transport.provider.provider_type.as_str(),
-    );
+    let active_presets = ProviderPoolService::with_builtin_adapters()
+        .normalize_scheduling_presets(group.transport.provider.provider_type.as_str(), &presets)
+        .into_iter()
+        .map(|preset| preset.preset)
+        .collect::<Vec<_>>();
     if let Some(distribution_mode) = active_presets
         .iter()
         .find(|preset| pool_distribution_mode_preset(preset.as_str()))
@@ -1072,38 +949,43 @@ fn pool_sort_seed() -> String {
     format!("{now_ms}:{sequence}")
 }
 
-fn ai_pool_candidate_facts(candidate: &EligibleLocalExecutionCandidate) -> AiPoolCandidateFacts {
-    AiPoolCandidateFacts {
+fn pool_candidate_facts(candidate: &EligibleLocalExecutionCandidate) -> PoolCandidateFacts {
+    PoolCandidateFacts {
         provider_id: candidate.candidate.provider_id.clone(),
         endpoint_id: candidate.candidate.endpoint_id.clone(),
         model_id: candidate.candidate.model_id.clone(),
         selected_provider_model_name: candidate.candidate.selected_provider_model_name.clone(),
         provider_api_format: candidate.provider_api_format.clone(),
-        provider_type: candidate.transport.provider.provider_type.clone(),
         key_id: candidate.candidate.key_id.clone(),
         key_internal_priority: candidate.candidate.key_internal_priority,
     }
 }
 
-fn ai_pool_scheduling_config(config: AdminProviderPoolConfig) -> AiPoolSchedulingConfig {
-    AiPoolSchedulingConfig {
-        scheduling_presets: config
-            .scheduling_presets
-            .into_iter()
-            .map(|preset| AiPoolSchedulingPreset {
-                preset: preset.preset,
-                enabled: preset.enabled,
-                mode: preset.mode,
-            })
-            .collect(),
+fn pool_scheduling_config(
+    config: AdminProviderPoolConfig,
+    provider_type: &str,
+) -> PoolSchedulingConfig {
+    let service = ProviderPoolService::with_builtin_adapters();
+    let scheduling_presets = config
+        .scheduling_presets
+        .into_iter()
+        .map(|preset| PoolSchedulingPreset {
+            preset: preset.preset,
+            enabled: preset.enabled,
+            mode: preset.mode,
+        })
+        .collect::<Vec<_>>();
+    PoolSchedulingConfig {
+        scheduling_presets: service
+            .normalize_scheduling_presets(provider_type, &scheduling_presets),
         lru_enabled: config.lru_enabled,
         skip_exhausted_accounts: config.skip_exhausted_accounts,
         cost_limit_per_key_tokens: config.cost_limit_per_key_tokens,
     }
 }
 
-fn ai_pool_runtime_state(runtime: &AdminProviderPoolRuntimeState) -> AiPoolRuntimeState {
-    AiPoolRuntimeState {
+fn pool_runtime_state(runtime: &AdminProviderPoolRuntimeState) -> PoolRuntimeState {
+    PoolRuntimeState {
         sticky_bound_key_id: runtime.sticky_bound_key_id.clone(),
         cooldown_reason_by_key: runtime.cooldown_reason_by_key.clone(),
         cost_window_usage_by_key: runtime.cost_window_usage_by_key.clone(),
@@ -1112,9 +994,9 @@ fn ai_pool_runtime_state(runtime: &AdminProviderPoolRuntimeState) -> AiPoolRunti
     }
 }
 
-fn apply_ai_pool_orchestration(
+fn apply_pool_orchestration(
     mut candidate: EligibleLocalExecutionCandidate,
-    orchestration: AiPoolCandidateOrchestration,
+    orchestration: PoolCandidateOrchestration,
 ) -> EligibleLocalExecutionCandidate {
     let scheduler_affinity_epoch = candidate.orchestration.scheduler_affinity_epoch;
     candidate.orchestration = LocalExecutionCandidateMetadata {
@@ -1142,7 +1024,6 @@ mod tests {
     };
     use crate::orchestration::LocalExecutionCandidateMetadata;
     use crate::{AppState, LocalExecutionRuntimeMissDiagnostic};
-    use aether_ai_serving::{normalize_enabled_ai_pool_presets, AiPoolSchedulingPreset};
     use aether_data::repository::candidate_selection::InMemoryMinimalCandidateSelectionReadRepository;
     use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
     use aether_data_contracts::repository::candidate_selection::{
@@ -1151,6 +1032,8 @@ mod tests {
     use aether_data_contracts::repository::provider_catalog::{
         StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
     };
+    use aether_pool_core::PoolSchedulingPreset;
+    use aether_provider_pool::ProviderPoolService;
     use aether_provider_transport::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
         GatewayProviderTransportProvider,
@@ -1592,14 +1475,14 @@ mod tests {
             (
                 "key-free".to_string(),
                 PoolCatalogKeyContext {
-                    oauth_plan_type: Some("free".to_string()),
+                    plan_tier: Some("free".to_string()),
                     ..PoolCatalogKeyContext::default()
                 },
             ),
             (
                 "key-plus".to_string(),
                 PoolCatalogKeyContext {
-                    oauth_plan_type: Some("plus".to_string()),
+                    plan_tier: Some("plus".to_string()),
                     ..PoolCatalogKeyContext::default()
                 },
             ),
@@ -1661,7 +1544,7 @@ mod tests {
             (
                 "key-plus".to_string(),
                 PoolCatalogKeyContext {
-                    oauth_plan_type: Some("plus".to_string()),
+                    plan_tier: Some("plus".to_string()),
                     catalog_lru_score: Some(300.0),
                     ..PoolCatalogKeyContext::default()
                 },
@@ -1669,7 +1552,7 @@ mod tests {
             (
                 "key-pro".to_string(),
                 PoolCatalogKeyContext {
-                    oauth_plan_type: Some("pro".to_string()),
+                    plan_tier: Some("pro".to_string()),
                     catalog_lru_score: Some(100.0),
                     ..PoolCatalogKeyContext::default()
                 },
@@ -1677,7 +1560,7 @@ mod tests {
             (
                 "key-team".to_string(),
                 PoolCatalogKeyContext {
-                    oauth_plan_type: Some("team".to_string()),
+                    plan_tier: Some("team".to_string()),
                     catalog_lru_score: Some(50.0),
                     ..PoolCatalogKeyContext::default()
                 },
@@ -1740,21 +1623,21 @@ mod tests {
             (
                 "key-plus".to_string(),
                 PoolCatalogKeyContext {
-                    oauth_plan_type: Some("plus".to_string()),
+                    plan_tier: Some("plus".to_string()),
                     ..PoolCatalogKeyContext::default()
                 },
             ),
             (
                 "key-pro".to_string(),
                 PoolCatalogKeyContext {
-                    oauth_plan_type: Some("pro".to_string()),
+                    plan_tier: Some("pro".to_string()),
                     ..PoolCatalogKeyContext::default()
                 },
             ),
             (
                 "key-team".to_string(),
                 PoolCatalogKeyContext {
-                    oauth_plan_type: Some("team".to_string()),
+                    plan_tier: Some("team".to_string()),
                     ..PoolCatalogKeyContext::default()
                 },
             ),
@@ -1822,31 +1705,35 @@ mod tests {
 
     #[test]
     fn normalizes_distribution_mode_before_strategy_presets() {
-        let presets = normalize_enabled_ai_pool_presets(
-            &[
-                AiPoolSchedulingPreset {
-                    preset: "lru".to_string(),
-                    enabled: false,
-                    mode: None,
-                },
-                AiPoolSchedulingPreset {
-                    preset: "single_account".to_string(),
-                    enabled: true,
-                    mode: None,
-                },
-                AiPoolSchedulingPreset {
-                    preset: "cache_affinity".to_string(),
-                    enabled: true,
-                    mode: None,
-                },
-                AiPoolSchedulingPreset {
-                    preset: "priority_first".to_string(),
-                    enabled: true,
-                    mode: None,
-                },
-            ],
-            "openai",
-        );
+        let presets = ProviderPoolService::with_builtin_adapters()
+            .normalize_scheduling_presets(
+                "openai",
+                &[
+                    PoolSchedulingPreset {
+                        preset: "lru".to_string(),
+                        enabled: false,
+                        mode: None,
+                    },
+                    PoolSchedulingPreset {
+                        preset: "single_account".to_string(),
+                        enabled: true,
+                        mode: None,
+                    },
+                    PoolSchedulingPreset {
+                        preset: "cache_affinity".to_string(),
+                        enabled: true,
+                        mode: None,
+                    },
+                    PoolSchedulingPreset {
+                        preset: "priority_first".to_string(),
+                        enabled: true,
+                        mode: None,
+                    },
+                ],
+            )
+            .into_iter()
+            .map(|preset| preset.preset)
+            .collect::<Vec<_>>();
 
         assert_eq!(presets, ["single_account", "priority_first"]);
     }
@@ -2286,9 +2173,14 @@ mod tests {
                 )),
             ));
 
-        let context = build_pool_catalog_key_context(PlannerAppState::new(&app), &key, "codex");
+        let context = build_pool_catalog_key_context(
+            PlannerAppState::new(&app),
+            &ProviderPoolService::with_builtin_adapters(),
+            &key,
+            "codex",
+        );
 
-        assert_eq!(context.oauth_plan_type.as_deref(), Some("team"));
+        assert_eq!(context.plan_tier.as_deref(), Some("team"));
         assert_eq!(context.quota_usage_ratio, Some(0.25));
         assert_eq!(context.quota_reset_seconds, Some(3600.0));
         assert_eq!(context.latency_avg_ms, Some(50.0));
@@ -2326,7 +2218,12 @@ mod tests {
         }));
 
         let app = app_state_with_catalog_key(key.clone());
-        let context = build_pool_catalog_key_context(PlannerAppState::new(&app), &key, "codex");
+        let context = build_pool_catalog_key_context(
+            PlannerAppState::new(&app),
+            &ProviderPoolService::with_builtin_adapters(),
+            &key,
+            "codex",
+        );
 
         assert!(!context.quota_exhausted);
     }
@@ -2341,7 +2238,12 @@ mod tests {
         }));
 
         let app = app_state_with_catalog_key(key.clone());
-        let context = build_pool_catalog_key_context(PlannerAppState::new(&app), &key, "codex");
+        let context = build_pool_catalog_key_context(
+            PlannerAppState::new(&app),
+            &ProviderPoolService::with_builtin_adapters(),
+            &key,
+            "codex",
+        );
 
         assert!(context.quota_exhausted);
     }
@@ -2366,8 +2268,12 @@ mod tests {
         }));
 
         let app = app_state_with_catalog_key(key.clone());
-        let context =
-            build_pool_catalog_key_context(PlannerAppState::new(&app), &key, "antigravity");
+        let context = build_pool_catalog_key_context(
+            PlannerAppState::new(&app),
+            &ProviderPoolService::with_builtin_adapters(),
+            &key,
+            "antigravity",
+        );
 
         assert!(context.quota_exhausted);
     }
@@ -2383,7 +2289,12 @@ mod tests {
         }));
 
         let app = app_state_with_catalog_key(key.clone());
-        let context = build_pool_catalog_key_context(PlannerAppState::new(&app), &key, "codex");
+        let context = build_pool_catalog_key_context(
+            PlannerAppState::new(&app),
+            &ProviderPoolService::with_builtin_adapters(),
+            &key,
+            "codex",
+        );
 
         assert!(context.account_blocked);
     }

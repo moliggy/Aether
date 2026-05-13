@@ -1704,7 +1704,9 @@ fn admin_provider_oauth_quota_mod_stays_thin() {
         read_workspace_file("apps/aether-gateway/src/handlers/admin/provider/oauth/quota/mod.rs");
     for pattern in [
         "pub(crate) mod antigravity;",
+        "pub(crate) mod chatgpt_web;",
         "pub(crate) mod codex;",
+        "pub(crate) mod dispatch;",
         "pub(crate) mod kiro;",
         "pub(crate) mod shared;",
     ] {
@@ -1730,9 +1732,7 @@ fn admin_provider_oauth_quota_mod_stays_thin() {
         "apps/aether-gateway/src/handlers/admin/provider/endpoint_keys/quota.rs",
     );
     for pattern in [
-        "use super::super::oauth::quota::antigravity::refresh_antigravity_provider_quota_locally;",
-        "use super::super::oauth::quota::codex::refresh_codex_provider_quota_locally;",
-        "use super::super::oauth::quota::kiro::refresh_kiro_provider_quota_locally;",
+        "use super::super::oauth::quota::dispatch::refresh_provider_pool_quota_locally;",
         "use super::super::oauth::quota::shared::normalize_string_id_list;",
     ] {
         assert!(
@@ -1744,15 +1744,51 @@ fn admin_provider_oauth_quota_mod_stays_thin() {
     let oauth_runtime =
         read_workspace_file("apps/aether-gateway/src/handlers/admin/provider/oauth/runtime.rs");
     for pattern in [
-        "use super::quota::antigravity::refresh_antigravity_provider_quota_locally;",
-        "use super::quota::codex::refresh_codex_provider_quota_locally;",
-        "use super::quota::kiro::refresh_kiro_provider_quota_locally;",
+        "use super::quota::dispatch::refresh_provider_pool_quota_locally;",
+        "use super::quota::shared::provider_type_supports_quota_refresh;",
     ] {
         assert!(
             oauth_runtime.contains(pattern),
             "handlers/admin/provider/oauth/runtime.rs should import quota helper via explicit owner {pattern}"
         );
     }
+    assert!(
+        !oauth_runtime.contains("\"codex\" | \"kiro\" | \"antigravity\" | \"chatgpt_web\""),
+        "handlers/admin/provider/oauth/runtime.rs should not hardcode quota refresh provider allow-list"
+    );
+
+    let quota_shared = read_workspace_file(
+        "apps/aether-gateway/src/handlers/admin/provider/oauth/quota/shared.rs",
+    );
+    assert!(
+        quota_shared.contains("aether_provider_pool::provider_pool_quota_metadata_provider_type("),
+        "handlers/admin/provider/oauth/quota/shared.rs should delegate quota metadata provider detection to aether-provider-pool"
+    );
+    assert!(
+        !quota_shared.contains("[\"codex\", \"kiro\", \"antigravity\", \"gemini_cli\", \"chatgpt_web\"]"),
+        "handlers/admin/provider/oauth/quota/shared.rs should not hardcode quota metadata provider list"
+    );
+
+    let quota_dispatch = read_workspace_file(
+        "apps/aether-gateway/src/handlers/admin/provider/oauth/quota/dispatch.rs",
+    );
+    for pattern in [
+        "pub(crate) async fn refresh_provider_pool_quota_locally(",
+        "const PROVIDER_QUOTA_REFRESH_HANDLERS:",
+        "refresh_codex_provider_quota_locally",
+        "refresh_kiro_provider_quota_locally",
+        "refresh_antigravity_provider_quota_locally",
+        "refresh_chatgpt_web_provider_quota_locally",
+    ] {
+        assert!(
+            quota_dispatch.contains(pattern),
+            "handlers/admin/provider/oauth/quota/dispatch.rs should centralize quota refresh dispatch {pattern}"
+        );
+    }
+    assert!(
+        !quota_dispatch.contains("match provider_type.trim().to_ascii_lowercase().as_str()"),
+        "handlers/admin/provider/oauth/quota/dispatch.rs should use provider handler registration instead of provider_type match"
+    );
 
     let quota_codex_mod = read_workspace_file(
         "apps/aether-gateway/src/handlers/admin/provider/oauth/quota/codex/mod.rs",
@@ -1799,14 +1835,13 @@ fn admin_provider_oauth_quota_mod_stays_thin() {
         "apps/aether-gateway/src/handlers/admin/provider/oauth/quota/codex/plan.rs",
     );
     for pattern in [
-        "use super::parse::normalize_codex_plan_type;",
-        "use crate::handlers::admin::provider::shared::payloads::CODEX_WHAM_USAGE_URL;",
-        "pub(super) fn build_codex_refresh_headers(",
+        "use aether_provider_pool::{build_codex_pool_quota_request, ProviderPoolQuotaRequestSpec};",
+        "pub(super) fn build_codex_quota_request_spec(",
         "pub(super) async fn execute_codex_quota_plan(",
     ] {
         assert!(
             quota_codex_plan.contains(pattern),
-            "handlers/admin/provider/oauth/quota/codex/plan.rs should own codex quota execution helper {pattern}"
+            "handlers/admin/provider/oauth/quota/codex/plan.rs should delegate codex quota request construction and own execution helper {pattern}"
         );
     }
     let quota_kiro_mod = read_workspace_file(
@@ -1843,13 +1878,13 @@ fn admin_provider_oauth_quota_mod_stays_thin() {
         "apps/aether-gateway/src/handlers/admin/provider/oauth/quota/kiro/plan.rs",
     );
     for pattern in [
-        "use super::super::shared::{execute_provider_quota_plan, ProviderQuotaExecutionOutcome};",
-        "use crate::handlers::admin::provider::shared::payloads::{",
+        "build_provider_quota_execution_plan",
+        "use aether_provider_pool::{build_kiro_pool_quota_request, KiroPoolQuotaAuthInput};",
         "pub(super) async fn execute_kiro_quota_plan(",
     ] {
         assert!(
             quota_kiro_plan.contains(pattern),
-            "handlers/admin/provider/oauth/quota/kiro/plan.rs should own kiro quota execution helper {pattern}"
+            "handlers/admin/provider/oauth/quota/kiro/plan.rs should delegate kiro quota request construction and own execution helper {pattern}"
         );
     }
     let quota_antigravity = read_workspace_file(
@@ -1859,6 +1894,30 @@ fn admin_provider_oauth_quota_mod_stays_thin() {
         quota_antigravity.contains("use super::shared::{"),
         "handlers/admin/provider/oauth/quota/antigravity.rs should import common quota helpers from shared.rs"
     );
+    assert!(
+        quota_antigravity.contains("use aether_provider_pool::build_antigravity_pool_quota_request;"),
+        "handlers/admin/provider/oauth/quota/antigravity.rs should delegate antigravity quota request construction to aether-provider-pool"
+    );
+    let quota_chatgpt_web = read_workspace_file(
+        "apps/aether-gateway/src/handlers/admin/provider/oauth/quota/chatgpt_web.rs",
+    );
+    assert!(
+        quota_chatgpt_web.contains("use aether_provider_pool::{")
+            && quota_chatgpt_web.contains("build_chatgpt_web_pool_quota_request")
+            && quota_chatgpt_web.contains("enrich_chatgpt_web_quota_metadata")
+            && quota_chatgpt_web.contains("normalize_chatgpt_web_image_quota_limit"),
+        "handlers/admin/provider/oauth/quota/chatgpt_web.rs should delegate chatgpt_web quota request and metadata behavior to aether-provider-pool"
+    );
+    for forbidden in [
+        "fn enrich_chatgpt_web_quota_metadata(",
+        "fn normalize_chatgpt_web_image_quota_limit(",
+        "fn chatgpt_web_auth_config_string(",
+    ] {
+        assert!(
+            !quota_chatgpt_web.contains(forbidden),
+            "handlers/admin/provider/oauth/quota/chatgpt_web.rs should not own provider-pool chatgpt_web quota metadata helper {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -1924,6 +1983,34 @@ fn admin_provider_oauth_refresh_helpers_use_specific_local_owners() {
         !workspace_file_exists("apps/aether-gateway/src/handlers/admin/provider/oauth/refresh.rs"),
         "handlers/admin/provider/oauth/refresh.rs should be removed once oauth helper owners are split"
     );
+}
+
+#[test]
+fn admin_provider_oauth_kiro_token_refresh_delegates_to_oauth_adapter() {
+    let kiro_dispatch = read_workspace_file(
+        "apps/aether-gateway/src/handlers/admin/provider/oauth/dispatch/kiro.rs",
+    );
+    assert!(
+        kiro_dispatch.contains("use aether_oauth::provider::providers::KiroProviderOAuthAdapter;"),
+        "gateway Kiro OAuth dispatch should depend on the shared provider OAuth adapter"
+    );
+    assert!(
+        kiro_dispatch.contains(".refresh_auth_config("),
+        "gateway Kiro OAuth dispatch should delegate token refresh to aether-oauth"
+    );
+    for forbidden in [
+        "fn admin_provider_oauth_kiro_build_refresh_url(",
+        "fn admin_provider_oauth_kiro_refresh_response_json(",
+        "\"kiro_batch_refresh:social\"",
+        "\"kiro_batch_refresh:idc\"",
+        "\"refreshToken\": auth_config",
+        "\"grantType\": \"refresh_token\"",
+    ] {
+        assert!(
+            !kiro_dispatch.contains(forbidden),
+            "gateway Kiro OAuth dispatch should not own provider-specific token refresh detail {forbidden}"
+        );
+    }
 }
 
 #[test]

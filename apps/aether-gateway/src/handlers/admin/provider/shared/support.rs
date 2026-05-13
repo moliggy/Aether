@@ -1,6 +1,6 @@
 use crate::handlers::admin::request::AdminAppState;
 use crate::LocalProviderDeleteTaskState;
-use aether_ai_serving::PoolMemberScoreRules;
+use aether_pool_core::PoolMemberScoreRules;
 use serde_json::json;
 use std::collections::BTreeMap;
 

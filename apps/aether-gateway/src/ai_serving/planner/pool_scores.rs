@@ -1,11 +1,11 @@
-use aether_ai_serving::{
-    score_pool_member_with_rules, PoolMemberScoreInput, PoolMemberScoreRules, POOL_SCORE_VERSION,
-};
 use aether_data_contracts::repository::pool_scores::{
     PoolMemberIdentity, PoolMemberProbeStatus, PoolScoreScope, UpsertPoolMemberScore,
     POOL_SCORE_CAPABILITY_ACCOUNT, POOL_SCORE_SCOPE_KIND_ACCOUNT,
 };
 use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
+use aether_pool_core::{
+    score_pool_member_with_rules, PoolMemberScoreInput, PoolMemberScoreRules, POOL_SCORE_VERSION,
+};
 use serde_json::Value;
 
 use crate::handlers::shared::{provider_key_health_summary, provider_key_status_snapshot_payload};

@@ -10,94 +10,18 @@ use crate::handlers::admin::provider::shared::payloads::{
 use crate::handlers::admin::request::{AdminAppState, AdminGatewayProviderTransportSnapshot};
 use crate::GatewayError;
 use aether_admin::provider::quota::parse_chatgpt_web_conversation_init_response;
-use aether_contracts::{
-    ExecutionPlan, ProxySnapshot, RequestBody, EXECUTION_REQUEST_ACCEPT_INVALID_CERTS_HEADER,
-};
+use aether_contracts::ProxySnapshot;
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
+use aether_provider_pool::{
+    build_chatgpt_web_pool_quota_request, enrich_chatgpt_web_quota_metadata,
+    normalize_chatgpt_web_image_quota_limit,
+};
 use serde_json::json;
-use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const CHATGPT_WEB_DEFAULT_BASE_URL: &str = "https://chatgpt.com";
-const CHATGPT_WEB_CONVERSATION_INIT_PATH: &str = "/backend-api/conversation/init";
-const CHATGPT_WEB_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0";
-const CHATGPT_WEB_CLIENT_VERSION: &str = "prod-be885abbfcfe7b1f511e88b3003d9ee44757fbad";
-const CHATGPT_WEB_BUILD_NUMBER: &str = "5955942";
-const CHATGPT_WEB_SEC_CH_UA: &str =
-    r#""Microsoft Edge";v="143", "Chromium";v="143", "Not A(Brand";v="24""#;
 const PLACEHOLDER_API_KEY: &str = "__placeholder__";
-const CHATGPT_WEB_FREE_IMAGE_QUOTA_LIMIT: f64 = 25.0;
-
-fn chatgpt_web_base_url(endpoint: &StoredProviderCatalogEndpoint) -> String {
-    let base_url = endpoint.base_url.trim().trim_end_matches('/');
-    if base_url.is_empty() {
-        CHATGPT_WEB_DEFAULT_BASE_URL.to_string()
-    } else {
-        base_url.to_string()
-    }
-}
-
-fn build_chatgpt_web_quota_headers(
-    authorization: (String, String),
-    base_url: &str,
-) -> BTreeMap<String, String> {
-    let device_id = uuid::Uuid::new_v4().to_string();
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let mut headers = BTreeMap::from([
-        ("accept".to_string(), "application/json".to_string()),
-        ("content-type".to_string(), "application/json".to_string()),
-        ("user-agent".to_string(), CHATGPT_WEB_USER_AGENT.to_string()),
-        ("origin".to_string(), base_url.to_string()),
-        ("referer".to_string(), format!("{base_url}/")),
-        (
-            "accept-language".to_string(),
-            "zh-CN,zh;q=0.9,en;q=0.8,en-US;q=0.7".to_string(),
-        ),
-        ("cache-control".to_string(), "no-cache".to_string()),
-        ("pragma".to_string(), "no-cache".to_string()),
-        ("priority".to_string(), "u=1, i".to_string()),
-        ("sec-ch-ua".to_string(), CHATGPT_WEB_SEC_CH_UA.to_string()),
-        ("sec-ch-ua-arch".to_string(), r#""x86""#.to_string()),
-        ("sec-ch-ua-bitness".to_string(), r#""64""#.to_string()),
-        ("sec-ch-ua-mobile".to_string(), "?0".to_string()),
-        ("sec-ch-ua-model".to_string(), r#""""#.to_string()),
-        ("sec-ch-ua-platform".to_string(), r#""Windows""#.to_string()),
-        (
-            "sec-ch-ua-platform-version".to_string(),
-            r#""19.0.0""#.to_string(),
-        ),
-        ("sec-fetch-dest".to_string(), "empty".to_string()),
-        ("sec-fetch-mode".to_string(), "cors".to_string()),
-        ("sec-fetch-site".to_string(), "same-origin".to_string()),
-        ("oai-device-id".to_string(), device_id),
-        ("oai-session-id".to_string(), session_id),
-        ("oai-language".to_string(), "zh-CN".to_string()),
-        (
-            "oai-client-version".to_string(),
-            CHATGPT_WEB_CLIENT_VERSION.to_string(),
-        ),
-        (
-            "oai-client-build-number".to_string(),
-            CHATGPT_WEB_BUILD_NUMBER.to_string(),
-        ),
-        (
-            "x-openai-target-path".to_string(),
-            CHATGPT_WEB_CONVERSATION_INIT_PATH.to_string(),
-        ),
-        (
-            "x-openai-target-route".to_string(),
-            CHATGPT_WEB_CONVERSATION_INIT_PATH.to_string(),
-        ),
-        (
-            EXECUTION_REQUEST_ACCEPT_INVALID_CERTS_HEADER.to_string(),
-            "true".to_string(),
-        ),
-    ]);
-    headers.insert(authorization.0.to_ascii_lowercase(), authorization.1);
-    headers
-}
 
 fn chatgpt_web_auth_config(
     transport: &AdminGatewayProviderTransportSnapshot,
@@ -109,133 +33,6 @@ fn chatgpt_web_auth_config(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
-}
-
-fn chatgpt_web_auth_config_string(
-    auth_config: Option<&serde_json::Value>,
-    fields: &[&str],
-) -> Option<String> {
-    let object = auth_config.and_then(serde_json::Value::as_object)?;
-    fields.iter().find_map(|field| {
-        object
-            .get(*field)
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-    })
-}
-
-fn enrich_chatgpt_web_quota_metadata(
-    metadata: &mut serde_json::Value,
-    auth_config: Option<&serde_json::Value>,
-) {
-    let Some(object) = metadata.as_object_mut() else {
-        return;
-    };
-    for (target, fields) in [
-        ("plan_type", &["plan_type", "tier", "plan"][..]),
-        ("email", &["email"][..]),
-        ("account_id", &["account_id", "accountId"][..]),
-        ("account_user_id", &["account_user_id", "accountUserId"][..]),
-        ("user_id", &["user_id", "userId"][..]),
-    ] {
-        if object.contains_key(target) {
-            continue;
-        }
-        if let Some(value) = chatgpt_web_auth_config_string(auth_config, fields) {
-            object.insert(target.to_string(), json!(value));
-        }
-    }
-}
-
-fn chatgpt_web_json_number(value: Option<&serde_json::Value>) -> Option<f64> {
-    let value = value?;
-    if let Some(number) = value.as_f64() {
-        return number.is_finite().then_some(number);
-    }
-    value
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .and_then(|value| value.parse::<f64>().ok())
-        .filter(|value| value.is_finite())
-}
-
-fn chatgpt_web_json_string(value: Option<&serde_json::Value>) -> Option<&str> {
-    value
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-}
-
-fn existing_chatgpt_web_image_quota_limit(
-    upstream_metadata: Option<&serde_json::Value>,
-) -> Option<f64> {
-    upstream_metadata
-        .and_then(serde_json::Value::as_object)
-        .and_then(|metadata| metadata.get("chatgpt_web"))
-        .and_then(serde_json::Value::as_object)
-        .and_then(|bucket| chatgpt_web_json_number(bucket.get("image_quota_total")))
-        .filter(|value| *value > 0.0)
-}
-
-fn infer_chatgpt_web_image_quota_limit(
-    plan_type: Option<&str>,
-    remaining: Option<f64>,
-    existing_limit: Option<f64>,
-) -> Option<f64> {
-    let normalized_plan = plan_type.unwrap_or_default().trim().to_ascii_lowercase();
-    if normalized_plan == "free" {
-        return Some(CHATGPT_WEB_FREE_IMAGE_QUOTA_LIMIT);
-    }
-
-    if let Some(existing_limit) = existing_limit.filter(|value| *value > 0.0) {
-        return Some(existing_limit);
-    }
-
-    remaining.filter(|value| *value > 0.0)
-}
-
-fn normalize_chatgpt_web_image_quota_limit(
-    metadata: &mut serde_json::Value,
-    upstream_metadata: Option<&serde_json::Value>,
-) {
-    let existing_limit = existing_chatgpt_web_image_quota_limit(upstream_metadata);
-    let Some(object) = metadata.as_object_mut() else {
-        return;
-    };
-
-    let remaining = chatgpt_web_json_number(object.get("image_quota_remaining"));
-    let explicit_limit =
-        chatgpt_web_json_number(object.get("image_quota_total")).filter(|value| *value > 0.0);
-    let plan_type = chatgpt_web_json_string(object.get("plan_type"));
-    let is_free_plan = plan_type.is_some_and(|value| value.trim().eq_ignore_ascii_case("free"));
-    let limit = if is_free_plan {
-        Some(CHATGPT_WEB_FREE_IMAGE_QUOTA_LIMIT)
-    } else {
-        explicit_limit
-            .or_else(|| infer_chatgpt_web_image_quota_limit(plan_type, remaining, existing_limit))
-    };
-
-    if let Some(limit) = limit {
-        object.insert("image_quota_total".to_string(), json!(limit));
-
-        if !object.contains_key("image_quota_used") {
-            if let Some(remaining) = remaining {
-                object.insert(
-                    "image_quota_used".to_string(),
-                    json!((limit - remaining).max(0.0)),
-                );
-            } else if object
-                .get("image_quota_blocked")
-                .and_then(serde_json::Value::as_bool)
-                == Some(true)
-            {
-                object.insert("image_quota_used".to_string(), json!(limit));
-            }
-        }
-    }
 }
 
 async fn resolve_chatgpt_web_quota_auth(
@@ -262,7 +59,6 @@ async fn execute_chatgpt_web_quota_plan(
     authorization: (String, String),
     proxy_override: Option<&ProxySnapshot>,
 ) -> Result<ProviderQuotaExecutionOutcome, GatewayError> {
-    let base_url = chatgpt_web_base_url(endpoint);
     let proxy = match proxy_override {
         Some(proxy) => Some(proxy.clone()),
         None => {
@@ -276,33 +72,15 @@ async fn execute_chatgpt_web_quota_plan(
         .or(Some(default_provider_quota_execution_timeouts(
             proxy.as_ref(),
         )));
-    let plan = ExecutionPlan {
-        request_id: format!("chatgpt-web-quota:{}", transport.key.id),
-        candidate_id: None,
-        provider_name: Some("chatgpt_web".to_string()),
-        provider_id: transport.provider.id.clone(),
-        endpoint_id: transport.endpoint.id.clone(),
-        key_id: transport.key.id.clone(),
-        method: "POST".to_string(),
-        url: format!("{base_url}{CHATGPT_WEB_CONVERSATION_INIT_PATH}"),
-        headers: build_chatgpt_web_quota_headers(authorization, base_url.as_str()),
-        content_type: Some("application/json".to_string()),
-        content_encoding: None,
-        body: RequestBody::from_json(json!({
-            "gizmo_id": serde_json::Value::Null,
-            "requested_default_model": serde_json::Value::Null,
-            "conversation_id": serde_json::Value::Null,
-            "timezone_offset_min": -480,
-            "system_hints": ["picture_v2"],
-        })),
-        stream: false,
-        client_api_format: "openai:image".to_string(),
-        provider_api_format: "chatgpt_web:conversation_init".to_string(),
-        model_name: Some("chatgpt-web-conversation-init".to_string()),
+    let spec =
+        build_chatgpt_web_pool_quota_request(&transport.key.id, &endpoint.base_url, authorization);
+    let plan = super::shared::build_provider_quota_execution_plan(
+        transport,
+        spec,
         proxy,
-        transport_profile: state.resolve_transport_profile(transport),
+        state.resolve_transport_profile(transport),
         timeouts,
-    };
+    );
 
     execute_provider_quota_plan(state, transport, plan, "chatgpt_web").await
 }

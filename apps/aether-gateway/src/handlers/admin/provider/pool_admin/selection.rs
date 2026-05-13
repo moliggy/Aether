@@ -22,74 +22,17 @@ fn admin_pool_parse_auth_config_json(
         .cloned()
 }
 
-fn admin_pool_derive_oauth_plan_type(
+fn admin_pool_derive_plan_tier(
     state: &AdminAppState<'_>,
     key: &StoredProviderCatalogKey,
     provider_type: &str,
 ) -> Option<String> {
-    let normalize = |value: &str| {
-        let mut text = value.trim().to_string();
-        if text.is_empty() {
-            return None;
-        }
-        let provider_type = provider_type.trim().to_ascii_lowercase();
-        if !provider_type.is_empty() && text.to_ascii_lowercase().starts_with(&provider_type) {
-            text = text[provider_type.len()..]
-                .trim_matches(|ch: char| [' ', ':', '-', '_'].contains(&ch))
-                .to_string();
-        }
-        if text.is_empty() {
-            None
-        } else {
-            Some(text.to_ascii_lowercase())
-        }
-    };
-
     if !provider_key_is_oauth_managed(key, provider_type) {
         return None;
     }
 
-    if let Some(upstream_metadata) = key
-        .upstream_metadata
-        .as_ref()
-        .and_then(serde_json::Value::as_object)
-    {
-        let provider_bucket = upstream_metadata
-            .get(&provider_type.trim().to_ascii_lowercase())
-            .and_then(serde_json::Value::as_object);
-        for source in provider_bucket
-            .into_iter()
-            .chain(std::iter::once(upstream_metadata))
-        {
-            for plan_key in [
-                "plan_type",
-                "tier",
-                "subscription_title",
-                "subscription_plan",
-            ] {
-                if let Some(value) = source.get(plan_key).and_then(serde_json::Value::as_str) {
-                    if let Some(normalized) = normalize(value) {
-                        return Some(normalized);
-                    }
-                }
-            }
-        }
-    }
-
-    if let Some(auth_config) = admin_pool_parse_auth_config_json(state, key) {
-        for plan_key in ["plan_type", "tier", "plan", "subscription_plan"] {
-            if let Some(value) = auth_config
-                .get(plan_key)
-                .and_then(serde_json::Value::as_str)
-            {
-                if let Some(normalized) = normalize(value) {
-                    return Some(normalized);
-                }
-            }
-        }
-    }
-
-    None
+    let auth_config = admin_pool_parse_auth_config_json(state, key);
+    aether_provider_pool::derive_plan_tier(provider_type, key, auth_config.as_ref())
 }
 
 pub(super) fn admin_pool_matches_quick_selector(
@@ -98,7 +41,7 @@ pub(super) fn admin_pool_matches_quick_selector(
     provider_type: &str,
     selector: &str,
 ) -> bool {
-    let oauth_plan_type = admin_pool_derive_oauth_plan_type(state, key, provider_type);
+    let oauth_plan_type = admin_pool_derive_plan_tier(state, key, provider_type);
     admin_provider_pool_pure::admin_pool_matches_quick_selector(
         key,
         selector,
@@ -113,7 +56,7 @@ pub(super) fn admin_pool_matches_search(
     provider_type: &str,
     search: Option<&str>,
 ) -> bool {
-    let oauth_plan_type = admin_pool_derive_oauth_plan_type(state, key, provider_type);
+    let oauth_plan_type = admin_pool_derive_plan_tier(state, key, provider_type);
     admin_provider_pool_pure::admin_pool_matches_search(key, search, oauth_plan_type.as_deref())
 }
 

@@ -9,5 +9,7 @@ pub use generic::{
     GenericProviderOAuthAdapter, GenericProviderOAuthTemplate, GENERIC_PROVIDER_OAUTH_TEMPLATES,
 };
 pub use kiro::{
-    generate_kiro_machine_id, KiroAuthConfig, KiroProviderOAuthAdapter, KIRO_PROVIDER_TYPE,
+    generate_kiro_machine_id, normalize_kiro_machine_id, KiroAuthConfig, KiroProviderOAuthAdapter,
+    DEFAULT_KIRO_VERSION, DEFAULT_NODE_VERSION, DEFAULT_REGION, DEFAULT_SYSTEM_VERSION,
+    KIRO_PROVIDER_TYPE,
 };

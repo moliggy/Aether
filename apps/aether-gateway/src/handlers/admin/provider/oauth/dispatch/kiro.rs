@@ -5,12 +5,11 @@ use crate::handlers::admin::provider::shared::payloads::{
 use crate::handlers::admin::request::{AdminAppState, AdminKiroAuthConfig};
 use crate::provider_transport::kiro::{build_kiro_request_auth_from_config, KiroRequestAuth};
 use aether_contracts::ProxySnapshot;
-use serde_json::{json, Value};
-use std::time::{SystemTime, UNIX_EPOCH};
+use aether_oauth::core::OAuthError;
+use aether_oauth::provider::providers::KiroProviderOAuthAdapter;
+use aether_oauth::provider::ProviderOAuthTransportContext;
+use serde_json::Value;
 use url::form_urlencoded;
-
-const KIRO_IDC_AMZ_USER_AGENT: &str =
-    "aws-sdk-js/3.738.0 ua/2.1 os/other lang/js md/browser#unknown_unknown api/sso-oidc#3.738.0 m/E KiroIDE";
 
 pub(super) fn admin_provider_oauth_kiro_refresh_base_url_override(
     state: &AdminAppState<'_>,
@@ -21,29 +20,6 @@ pub(super) fn admin_provider_oauth_kiro_refresh_base_url_override(
     (!normalized.is_empty()).then(|| normalized.to_string())
 }
 
-fn admin_provider_oauth_kiro_build_refresh_url(
-    auth_config: &AdminKiroAuthConfig,
-    override_base_url: Option<&str>,
-    path: &str,
-    default_host: impl FnOnce(&str) -> String,
-) -> String {
-    if let Some(base_url) = override_base_url
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return format!("{}/{}", base_url.trim_end_matches('/'), path);
-    }
-    let region = auth_config.effective_auth_region();
-    default_host(region)
-}
-
-fn admin_provider_oauth_kiro_effective_host(url: &str, fallback_host: String) -> String {
-    reqwest::Url::parse(url)
-        .ok()
-        .and_then(|value| value.host_str().map(ToOwned::to_owned))
-        .unwrap_or(fallback_host)
-}
-
 fn admin_provider_oauth_kiro_ide_tag(kiro_version: &str, machine_id: &str) -> String {
     if machine_id.trim().is_empty() {
         format!("KiroIDE-{kiro_version}")
@@ -52,41 +28,49 @@ fn admin_provider_oauth_kiro_ide_tag(kiro_version: &str, machine_id: &str) -> St
     }
 }
 
-fn admin_provider_oauth_kiro_refresh_expires_at(payload: &Value) -> u64 {
-    let expires_in = payload
-        .get("expiresIn")
-        .and_then(|value| {
-            value
-                .as_u64()
-                .or_else(|| value.as_str()?.parse::<u64>().ok())
-        })
-        .unwrap_or(3600);
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .map(|value| value.as_secs())
-        .unwrap_or_default()
-        .saturating_add(expires_in)
+fn admin_provider_oauth_kiro_refresh_context(
+    proxy: Option<ProxySnapshot>,
+) -> ProviderOAuthTransportContext {
+    ProviderOAuthTransportContext {
+        provider_id: String::new(),
+        provider_type: "kiro".to_string(),
+        endpoint_id: None,
+        key_id: None,
+        auth_type: Some("oauth".to_string()),
+        decrypted_api_key: None,
+        decrypted_auth_config: None,
+        provider_config: None,
+        endpoint_config: None,
+        key_config: None,
+        network: aether_oauth::network::OAuthNetworkContext::provider_operation(proxy),
+    }
 }
 
-fn admin_provider_oauth_kiro_refresh_response_json(
-    body_text: &str,
-    json_body: Option<Value>,
-) -> Result<Value, String> {
-    json_body
-        .or_else(|| serde_json::from_str::<Value>(body_text).ok())
-        .ok_or_else(|| "refresh 接口返回了非 JSON 响应".to_string())
-}
-
-fn admin_provider_oauth_kiro_refresh_error_detail(
-    status: http::StatusCode,
-    body_text: &str,
+fn admin_provider_oauth_kiro_refresh_error(
+    auth_config: &AdminKiroAuthConfig,
+    error: OAuthError,
 ) -> String {
-    let detail = body_text.trim();
-    if detail.is_empty() {
-        format!("HTTP {}", status.as_u16())
+    let prefix = if auth_config.is_idc_auth() {
+        "IDC refresh"
     } else {
-        detail.to_string()
+        "social refresh"
+    };
+    match error {
+        OAuthError::HttpStatus {
+            status_code,
+            body_excerpt,
+        } => {
+            let detail = body_excerpt.trim();
+            if detail.is_empty() {
+                format!("{prefix} 失败: HTTP {status_code}")
+            } else {
+                format!("{prefix} 失败: {detail}")
+            }
+        }
+        OAuthError::Transport(message) => format!("{prefix} 请求失败: {message}"),
+        OAuthError::InvalidRequest(message) => format!("{prefix} 参数无效: {message}"),
+        OAuthError::InvalidResponse(message) => format!("{prefix} 返回无效响应: {message}"),
+        error => format!("{prefix} 失败: {error}"),
     }
 }
 
@@ -97,216 +81,25 @@ pub(super) async fn refresh_admin_provider_oauth_kiro_auth_config(
     social_refresh_base_url: Option<&str>,
     idc_refresh_base_url: Option<&str>,
 ) -> Result<AdminKiroAuthConfig, String> {
-    if auth_config.is_idc_auth() {
-        let fallback_host = format!("oidc.{}.amazonaws.com", auth_config.effective_auth_region());
-        let url = admin_provider_oauth_kiro_build_refresh_url(
+    let adapter = KiroProviderOAuthAdapter::default().with_refresh_base_urls(
+        social_refresh_base_url
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        idc_refresh_base_url
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+    );
+    let ctx = admin_provider_oauth_kiro_refresh_context(proxy);
+    adapter
+        .refresh_auth_config(
+            &crate::oauth::GatewayOAuthHttpExecutor::new(*state),
+            &ctx,
             auth_config,
-            idc_refresh_base_url,
-            "token",
-            |region| format!("https://oidc.{region}.amazonaws.com/token"),
-        );
-        let host = admin_provider_oauth_kiro_effective_host(&url, fallback_host);
-        let headers = reqwest::header::HeaderMap::from_iter([
-            (
-                reqwest::header::CONTENT_TYPE,
-                reqwest::header::HeaderValue::from_static("application/json"),
-            ),
-            (
-                reqwest::header::HOST,
-                reqwest::header::HeaderValue::from_str(&host)
-                    .map_err(|_| "IDC host 无效".to_string())?,
-            ),
-            (
-                reqwest::header::HeaderName::from_static("x-amz-user-agent"),
-                reqwest::header::HeaderValue::from_static(KIRO_IDC_AMZ_USER_AGENT),
-            ),
-            (
-                reqwest::header::USER_AGENT,
-                reqwest::header::HeaderValue::from_static("node"),
-            ),
-            (
-                reqwest::header::ACCEPT,
-                reqwest::header::HeaderValue::from_static("*/*"),
-            ),
-        ]);
-        let response = state
-            .execute_admin_provider_oauth_http_request(
-                "kiro_batch_refresh:idc",
-                reqwest::Method::POST,
-                &url,
-                &headers,
-                Some("application/json"),
-                Some(json!({
-                    "clientId": auth_config
-                        .client_id
-                        .as_deref()
-                        .map(str::trim)
-                        .unwrap_or_default(),
-                    "clientSecret": auth_config
-                        .client_secret
-                        .as_deref()
-                        .map(str::trim)
-                        .unwrap_or_default(),
-                    "refreshToken": auth_config
-                        .refresh_token
-                        .as_deref()
-                        .map(str::trim)
-                        .unwrap_or_default(),
-                    "grantType": "refresh_token",
-                })),
-                None,
-                proxy.clone(),
-            )
-            .await
-            .map_err(|err| format!("IDC refresh 请求失败: {err}"))?;
-        if !response.status.is_success() {
-            return Err(format!(
-                "IDC refresh 失败: {}",
-                admin_provider_oauth_kiro_refresh_error_detail(
-                    response.status,
-                    &response.body_text
-                )
-            ));
-        }
-        let payload = admin_provider_oauth_kiro_refresh_response_json(
-            &response.body_text,
-            response.json_body,
-        )?;
-        let access_token = payload
-            .get("accessToken")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "IDC refresh 返回了空 accessToken".to_string())?;
-
-        let mut refreshed = auth_config.clone();
-        refreshed.access_token = Some(access_token.to_string());
-        refreshed.expires_at = Some(admin_provider_oauth_kiro_refresh_expires_at(&payload));
-        if refreshed
-            .machine_id
-            .as_deref()
-            .map(str::trim)
-            .is_none_or(|value| value.is_empty())
-        {
-            refreshed.machine_id =
-                crate::provider_transport::kiro::generate_machine_id(auth_config, None);
-        }
-        if let Some(refresh_token) = payload
-            .get("refreshToken")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            refreshed.refresh_token = Some(refresh_token.to_string());
-        }
-        return Ok(refreshed);
-    }
-
-    let machine_id = crate::provider_transport::kiro::generate_machine_id(auth_config, None)
-        .ok_or_else(|| "缺少 machine_id 种子，无法刷新 social token".to_string())?;
-    let fallback_host = format!(
-        "prod.{}.auth.desktop.kiro.dev",
-        auth_config.effective_auth_region()
-    );
-    let url = admin_provider_oauth_kiro_build_refresh_url(
-        auth_config,
-        social_refresh_base_url,
-        "refreshToken",
-        |region| format!("https://prod.{region}.auth.desktop.kiro.dev/refreshToken"),
-    );
-    let host = admin_provider_oauth_kiro_effective_host(&url, fallback_host);
-    let user_agent =
-        admin_provider_oauth_kiro_ide_tag(auth_config.effective_kiro_version(), &machine_id);
-    let headers = reqwest::header::HeaderMap::from_iter([
-        (
-            reqwest::header::USER_AGENT,
-            reqwest::header::HeaderValue::from_str(&user_agent)
-                .map_err(|_| "Kiro User-Agent 无效".to_string())?,
-        ),
-        (
-            reqwest::header::HOST,
-            reqwest::header::HeaderValue::from_str(&host)
-                .map_err(|_| "Kiro host 无效".to_string())?,
-        ),
-        (
-            reqwest::header::ACCEPT,
-            reqwest::header::HeaderValue::from_static("application/json, text/plain, */*"),
-        ),
-        (
-            reqwest::header::CONTENT_TYPE,
-            reqwest::header::HeaderValue::from_static("application/json"),
-        ),
-        (
-            reqwest::header::CONNECTION,
-            reqwest::header::HeaderValue::from_static("close"),
-        ),
-        (
-            reqwest::header::ACCEPT_ENCODING,
-            reqwest::header::HeaderValue::from_static("gzip, compress, deflate, br"),
-        ),
-    ]);
-    let response = state
-        .execute_admin_provider_oauth_http_request(
-            "kiro_batch_refresh:social",
-            reqwest::Method::POST,
-            &url,
-            &headers,
-            Some("application/json"),
-            Some(json!({
-                "refreshToken": auth_config
-                    .refresh_token
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or_default(),
-            })),
-            None,
-            proxy,
         )
         .await
-        .map_err(|err| format!("social refresh 请求失败: {err}"))?;
-    if !response.status.is_success() {
-        return Err(format!(
-            "social refresh 失败: {}",
-            admin_provider_oauth_kiro_refresh_error_detail(response.status, &response.body_text)
-        ));
-    }
-    let payload =
-        admin_provider_oauth_kiro_refresh_response_json(&response.body_text, response.json_body)?;
-    let access_token = payload
-        .get("accessToken")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "social refresh 返回了空 accessToken".to_string())?;
-
-    let mut refreshed = auth_config.clone();
-    refreshed.access_token = Some(access_token.to_string());
-    refreshed.expires_at = Some(admin_provider_oauth_kiro_refresh_expires_at(&payload));
-    if refreshed
-        .machine_id
-        .as_deref()
-        .map(str::trim)
-        .is_none_or(|value| value.is_empty())
-    {
-        refreshed.machine_id = Some(machine_id);
-    }
-    if let Some(refresh_token) = payload
-        .get("refreshToken")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        refreshed.refresh_token = Some(refresh_token.to_string());
-    }
-    if let Some(profile_arn) = payload
-        .get("profileArn")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        refreshed.profile_arn = Some(profile_arn.to_string());
-    }
-    Ok(refreshed)
+        .map_err(|error| admin_provider_oauth_kiro_refresh_error(auth_config, error))
 }
 
 fn build_kiro_usage_url(auth: &KiroRequestAuth) -> String {

@@ -1,0 +1,29 @@
+pub mod antigravity;
+pub mod chatgpt_web;
+pub mod codex;
+pub mod default;
+pub mod kiro;
+pub mod unsupported;
+
+pub use antigravity::AntigravityProviderPoolAdapter;
+pub use antigravity::{
+    build_antigravity_pool_quota_request, ANTIGRAVITY_FETCH_AVAILABLE_MODELS_PATH,
+};
+pub use chatgpt_web::ChatGptWebProviderPoolAdapter;
+pub use chatgpt_web::{
+    build_chatgpt_web_pool_quota_request, enrich_chatgpt_web_quota_metadata,
+    normalize_chatgpt_web_image_quota_limit, CHATGPT_WEB_CONVERSATION_INIT_PATH,
+    CHATGPT_WEB_DEFAULT_BASE_URL,
+};
+pub use codex::CodexProviderPoolAdapter;
+pub use codex::{build_codex_pool_quota_request, CODEX_WHAM_USAGE_URL};
+pub use default::DefaultProviderPoolAdapter;
+pub use kiro::KiroProviderPoolAdapter;
+pub use kiro::{
+    build_kiro_pool_quota_request, KiroPoolQuotaAuthInput, KIRO_USAGE_LIMITS_PATH,
+    KIRO_USAGE_SDK_VERSION,
+};
+pub use unsupported::{
+    UnsupportedQuotaProviderPoolAdapter, CLAUDE_CODE_PROVIDER_POOL_ADAPTER,
+    GEMINI_CLI_PROVIDER_POOL_ADAPTER, VERTEX_AI_PROVIDER_POOL_ADAPTER,
+};

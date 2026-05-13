@@ -2,28 +2,28 @@ use std::cmp::Ordering;
 use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 
-pub const AI_POOL_ACCOUNT_BLOCKED_SKIP_REASON: &str = "pool_account_blocked";
-pub const AI_POOL_ACCOUNT_EXHAUSTED_SKIP_REASON: &str = "pool_account_exhausted";
-pub const AI_POOL_COOLDOWN_SKIP_REASON: &str = "pool_cooldown";
-pub const AI_POOL_COST_LIMIT_REACHED_SKIP_REASON: &str = "pool_cost_limit_reached";
+pub const POOL_ACCOUNT_BLOCKED_SKIP_REASON: &str = "pool_account_blocked";
+pub const POOL_ACCOUNT_EXHAUSTED_SKIP_REASON: &str = "pool_account_exhausted";
+pub const POOL_COOLDOWN_SKIP_REASON: &str = "pool_cooldown";
+pub const POOL_COST_LIMIT_REACHED_SKIP_REASON: &str = "pool_cost_limit_reached";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AiPoolSchedulingPreset {
+pub struct PoolSchedulingPreset {
     pub preset: String,
     pub enabled: bool,
     pub mode: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AiPoolSchedulingConfig {
-    pub scheduling_presets: Vec<AiPoolSchedulingPreset>,
+pub struct PoolSchedulingConfig {
+    pub scheduling_presets: Vec<PoolSchedulingPreset>,
     pub lru_enabled: bool,
     pub skip_exhausted_accounts: bool,
     pub cost_limit_per_key_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct AiPoolRuntimeState {
+pub struct PoolRuntimeState {
     pub sticky_bound_key_id: Option<String>,
     pub cooldown_reason_by_key: BTreeMap<String, String>,
     pub cost_window_usage_by_key: BTreeMap<String, u64>,
@@ -32,8 +32,8 @@ pub struct AiPoolRuntimeState {
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct AiPoolCatalogKeyContext {
-    pub oauth_plan_type: Option<String>,
+pub struct PoolMemberSignals {
+    pub plan_tier: Option<String>,
     pub quota_usage_ratio: Option<f64>,
     pub quota_reset_seconds: Option<f64>,
     pub account_blocked: bool,
@@ -44,47 +44,46 @@ pub struct AiPoolCatalogKeyContext {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AiPoolCandidateFacts {
+pub struct PoolCandidateFacts {
     pub provider_id: String,
     pub endpoint_id: String,
     pub model_id: String,
     pub selected_provider_model_name: String,
     pub provider_api_format: String,
-    pub provider_type: String,
     pub key_id: String,
     pub key_internal_priority: i32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AiPoolCandidateOrchestration {
+pub struct PoolCandidateOrchestration {
     pub candidate_group_id: Option<String>,
     pub pool_key_index: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AiPoolCandidateInput<Candidate> {
+pub struct PoolCandidateInput<Candidate> {
     pub candidate: Candidate,
-    pub facts: AiPoolCandidateFacts,
-    pub pool_config: Option<AiPoolSchedulingConfig>,
-    pub key_context: AiPoolCatalogKeyContext,
+    pub facts: PoolCandidateFacts,
+    pub pool_config: Option<PoolSchedulingConfig>,
+    pub key_context: PoolMemberSignals,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AiPoolScheduledCandidate<Candidate> {
+pub struct PoolScheduledCandidate<Candidate> {
     pub candidate: Candidate,
-    pub orchestration: AiPoolCandidateOrchestration,
+    pub orchestration: PoolCandidateOrchestration,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AiPoolSkippedCandidate<Candidate> {
+pub struct PoolSkippedCandidate<Candidate> {
     pub candidate: Candidate,
     pub skip_reason: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AiPoolSchedulerOutcome<Candidate> {
-    pub candidates: Vec<AiPoolScheduledCandidate<Candidate>>,
-    pub skipped_candidates: Vec<AiPoolSkippedCandidate<Candidate>>,
+pub struct PoolSchedulerOutcome<Candidate> {
+    pub candidates: Vec<PoolScheduledCandidate<Candidate>>,
+    pub skipped_candidates: Vec<PoolSkippedCandidate<Candidate>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -103,13 +102,13 @@ struct NormalizedPoolPreset {
     mode: Option<String>,
 }
 
-pub fn run_ai_pool_scheduler<Candidate>(
-    candidates: Vec<AiPoolCandidateInput<Candidate>>,
-    runtime_by_provider: &BTreeMap<String, AiPoolRuntimeState>,
+pub fn run_pool_scheduler<Candidate>(
+    candidates: Vec<PoolCandidateInput<Candidate>>,
+    runtime_by_provider: &BTreeMap<String, PoolRuntimeState>,
     load_balance_seed_nonce: &str,
-) -> AiPoolSchedulerOutcome<Candidate> {
+) -> PoolSchedulerOutcome<Candidate> {
     let mut group_order = Vec::new();
-    let mut groups = BTreeMap::<PoolGroupKey, Vec<AiPoolCandidateInput<Candidate>>>::new();
+    let mut groups = BTreeMap::<PoolGroupKey, Vec<PoolCandidateInput<Candidate>>>::new();
 
     for candidate in candidates {
         let pool_enabled = candidate.pool_config.is_some();
@@ -127,20 +126,20 @@ pub fn run_ai_pool_scheduler<Candidate>(
 
     let mut reordered = Vec::new();
     let mut skipped = Vec::new();
-    let default_runtime = AiPoolRuntimeState::default();
+    let default_runtime = PoolRuntimeState::default();
 
     for group_key in group_order {
         let Some(group) = groups.remove(&group_key) else {
             continue;
         };
-        let candidate_group_id = ai_pool_candidate_group_id(&group_key);
+        let candidate_group_id = pool_candidate_group_id(&group_key);
         let Some(pool_config) = group
             .first()
             .expect("group should exist")
             .pool_config
             .clone()
         else {
-            reordered.extend(annotate_ai_pool_candidates(
+            reordered.extend(annotate_pool_candidates(
                 group,
                 candidate_group_id.as_str(),
                 false,
@@ -161,14 +160,14 @@ pub fn run_ai_pool_scheduler<Candidate>(
         skipped.extend(outcome.skipped_candidates);
     }
 
-    AiPoolSchedulerOutcome {
+    PoolSchedulerOutcome {
         candidates: reordered,
         skipped_candidates: skipped,
     }
 }
 
 fn pool_group_key<Candidate>(
-    candidate: &AiPoolCandidateInput<Candidate>,
+    candidate: &PoolCandidateInput<Candidate>,
     pool_enabled: bool,
 ) -> PoolGroupKey {
     PoolGroupKey {
@@ -181,7 +180,7 @@ fn pool_group_key<Candidate>(
     }
 }
 
-fn ai_pool_candidate_group_id(group_key: &PoolGroupKey) -> String {
+fn pool_candidate_group_id(group_key: &PoolGroupKey) -> String {
     format!(
         "provider={}|endpoint={}|model={}|selected_model={}|api_format={}|singleton_key={}",
         group_key.provider_id,
@@ -194,18 +193,13 @@ fn ai_pool_candidate_group_id(group_key: &PoolGroupKey) -> String {
 }
 
 fn schedule_pool_group<Candidate>(
-    group: Vec<AiPoolCandidateInput<Candidate>>,
-    pool_config: &AiPoolSchedulingConfig,
-    runtime: &AiPoolRuntimeState,
+    group: Vec<PoolCandidateInput<Candidate>>,
+    pool_config: &PoolSchedulingConfig,
+    runtime: &PoolRuntimeState,
     candidate_group_id: &str,
     load_balance_seed_nonce: &str,
-) -> AiPoolSchedulerOutcome<Candidate> {
-    let provider_type = group
-        .first()
-        .map(|candidate| candidate.facts.provider_type.trim().to_ascii_lowercase())
-        .unwrap_or_default();
-    let active_presets =
-        normalize_enabled_pool_presets(&pool_config.scheduling_presets, provider_type.as_str());
+) -> PoolSchedulerOutcome<Candidate> {
+    let active_presets = normalize_enabled_pool_preset_entries(&pool_config.scheduling_presets);
     let lru_distribution_enabled = pool_config.lru_enabled
         && !active_presets
             .iter()
@@ -223,25 +217,25 @@ fn schedule_pool_group<Candidate>(
             .or(item.key_context.latency_avg_ms);
 
         if item.key_context.account_blocked {
-            skipped.push(AiPoolSkippedCandidate {
+            skipped.push(PoolSkippedCandidate {
                 candidate: item.candidate,
-                skip_reason: AI_POOL_ACCOUNT_BLOCKED_SKIP_REASON,
+                skip_reason: POOL_ACCOUNT_BLOCKED_SKIP_REASON,
             });
             continue;
         }
 
         if pool_config.skip_exhausted_accounts && item.key_context.quota_exhausted {
-            skipped.push(AiPoolSkippedCandidate {
+            skipped.push(PoolSkippedCandidate {
                 candidate: item.candidate,
-                skip_reason: AI_POOL_ACCOUNT_EXHAUSTED_SKIP_REASON,
+                skip_reason: POOL_ACCOUNT_EXHAUSTED_SKIP_REASON,
             });
             continue;
         }
 
         if runtime.cooldown_reason_by_key.contains_key(&key_id) {
-            skipped.push(AiPoolSkippedCandidate {
+            skipped.push(PoolSkippedCandidate {
                 candidate: item.candidate,
-                skip_reason: AI_POOL_COOLDOWN_SKIP_REASON,
+                skip_reason: POOL_COOLDOWN_SKIP_REASON,
             });
             continue;
         }
@@ -250,9 +244,9 @@ fn schedule_pool_group<Candidate>(
             .cost_limit_per_key_tokens
             .is_some_and(|limit| runtime_cost_usage(runtime, key_id.as_str()) >= limit)
         {
-            skipped.push(AiPoolSkippedCandidate {
+            skipped.push(PoolSkippedCandidate {
                 candidate: item.candidate,
-                skip_reason: AI_POOL_COST_LIMIT_REACHED_SKIP_REASON,
+                skip_reason: POOL_COST_LIMIT_REACHED_SKIP_REASON,
             });
             continue;
         }
@@ -269,7 +263,7 @@ fn schedule_pool_group<Candidate>(
     }
 
     if available.is_empty() {
-        return AiPoolSchedulerOutcome {
+        return PoolSchedulerOutcome {
             candidates: Vec::new(),
             skipped_candidates: skipped,
         };
@@ -295,7 +289,6 @@ fn schedule_pool_group<Candidate>(
             &active_presets,
             lru_distribution_enabled,
             group_sort_seed(
-                provider_type.as_str(),
                 available.first().map(|item| &item.item.facts),
                 load_balance_seed_nonce,
             )
@@ -324,23 +317,23 @@ fn schedule_pool_group<Candidate>(
     }
     ordered.extend(available.into_iter().map(|item| item.item));
 
-    AiPoolSchedulerOutcome {
-        candidates: annotate_ai_pool_candidates(ordered, candidate_group_id, true),
+    PoolSchedulerOutcome {
+        candidates: annotate_pool_candidates(ordered, candidate_group_id, true),
         skipped_candidates: skipped,
     }
 }
 
-fn annotate_ai_pool_candidates<Candidate>(
-    candidates: Vec<AiPoolCandidateInput<Candidate>>,
+fn annotate_pool_candidates<Candidate>(
+    candidates: Vec<PoolCandidateInput<Candidate>>,
     candidate_group_id: &str,
     pool_enabled: bool,
-) -> Vec<AiPoolScheduledCandidate<Candidate>> {
+) -> Vec<PoolScheduledCandidate<Candidate>> {
     candidates
         .into_iter()
         .enumerate()
-        .map(|(index, item)| AiPoolScheduledCandidate {
+        .map(|(index, item)| PoolScheduledCandidate {
             candidate: item.candidate,
-            orchestration: AiPoolCandidateOrchestration {
+            orchestration: PoolCandidateOrchestration {
                 candidate_group_id: Some(candidate_group_id.to_string()),
                 pool_key_index: pool_enabled.then_some(index as u32),
             },
@@ -350,7 +343,7 @@ fn annotate_ai_pool_candidates<Candidate>(
 
 #[derive(Debug)]
 struct PoolGroupCandidateOrdering<Candidate> {
-    item: AiPoolCandidateInput<Candidate>,
+    item: PoolCandidateInput<Candidate>,
     original_index: usize,
     lru_score: Option<f64>,
     cost_usage: u64,
@@ -473,7 +466,7 @@ fn plan_ranks<Candidate>(
             (
                 item.item.facts.key_id.clone(),
                 Some(plan_priority_score(
-                    item.item.key_context.oauth_plan_type.as_deref(),
+                    item.item.key_context.plan_tier.as_deref(),
                     mode,
                 )),
             )
@@ -574,19 +567,18 @@ fn load_balance_ranks<Candidate>(
 }
 
 fn group_sort_seed(
-    provider_type: &str,
-    candidate: Option<&AiPoolCandidateFacts>,
+    candidate: Option<&PoolCandidateFacts>,
     load_balance_seed_nonce: &str,
 ) -> String {
     match candidate {
         Some(candidate) => format!(
-            "{provider_type}:{}:{}:{}:{}:{load_balance_seed_nonce}",
+            "{}:{}:{}:{}:{load_balance_seed_nonce}",
             candidate.provider_id,
             candidate.endpoint_id,
             candidate.model_id,
             candidate.selected_provider_model_name,
         ),
-        None => format!("{provider_type}:{load_balance_seed_nonce}"),
+        None => load_balance_seed_nonce.to_string(),
     }
 }
 
@@ -736,21 +728,16 @@ fn plan_priority_score(plan_type: Option<&str>, mode: Option<&str>) -> f64 {
     }
 }
 
-pub fn normalize_enabled_ai_pool_presets(
-    scheduling_presets: &[AiPoolSchedulingPreset],
-    provider_type: &str,
-) -> Vec<String> {
-    normalize_enabled_pool_presets(scheduling_presets, provider_type)
+pub fn normalize_enabled_pool_presets(scheduling_presets: &[PoolSchedulingPreset]) -> Vec<String> {
+    normalize_enabled_pool_preset_entries(scheduling_presets)
         .into_iter()
         .map(|preset| preset.preset)
         .collect()
 }
 
-fn normalize_enabled_pool_presets(
-    scheduling_presets: &[AiPoolSchedulingPreset],
-    provider_type: &str,
+fn normalize_enabled_pool_preset_entries(
+    scheduling_presets: &[PoolSchedulingPreset],
 ) -> Vec<NormalizedPoolPreset> {
-    let provider_type = provider_type.trim().to_ascii_lowercase();
     let mut entries = Vec::<(usize, String, bool, Option<String>)>::new();
     let mut seen = BTreeSet::new();
 
@@ -762,20 +749,11 @@ fn normalize_enabled_pool_presets(
         entries.push((index, preset, item.enabled, item.mode.clone()));
     }
 
-    if provider_type == "codex"
-        && !entries.is_empty()
-        && entries
-            .iter()
-            .all(|(_, preset, _, _)| preset != "recent_refresh")
-    {
-        entries.push((entries.len(), "recent_refresh".to_string(), true, None));
-    }
-
     let mut distribution_mode = None::<(usize, String, Option<String>)>;
     let mut strategy_presets = Vec::<(usize, String, Option<String>)>::new();
 
     for (index, preset, enabled, mode) in entries {
-        if !enabled || !pool_preset_supported_for_provider(&preset, &provider_type) {
+        if !enabled {
             continue;
         }
 
@@ -809,15 +787,6 @@ fn normalize_enabled_pool_presets(
     normalized
 }
 
-fn pool_preset_supported_for_provider(preset: &str, provider_type: &str) -> bool {
-    match preset {
-        "free_first" | "plus_first" | "pro_first" | "recent_refresh" | "team_first" => {
-            matches!(provider_type, "codex" | "kiro")
-        }
-        _ => true,
-    }
-}
-
 fn pool_preset_mutex_group(preset: &str) -> Option<&'static str> {
     match preset {
         "lru" | "cache_affinity" | "load_balance" | "single_account" => Some("distribution_mode"),
@@ -825,11 +794,11 @@ fn pool_preset_mutex_group(preset: &str) -> Option<&'static str> {
     }
 }
 
-fn runtime_lru_score(runtime: &AiPoolRuntimeState, key_id: &str) -> Option<f64> {
+fn runtime_lru_score(runtime: &PoolRuntimeState, key_id: &str) -> Option<f64> {
     runtime.lru_score_by_key.get(key_id).copied()
 }
 
-fn runtime_cost_usage(runtime: &AiPoolRuntimeState, key_id: &str) -> u64 {
+fn runtime_cost_usage(runtime: &PoolRuntimeState, key_id: &str) -> u64 {
     runtime
         .cost_window_usage_by_key
         .get(key_id)
@@ -849,16 +818,16 @@ mod tests {
 
         let runtime_by_provider = BTreeMap::from([(
             "provider-pool".to_string(),
-            AiPoolRuntimeState {
+            PoolRuntimeState {
                 lru_score_by_key: BTreeMap::from([
                     ("key-pool-a".to_string(), 20.0),
                     ("key-pool-b".to_string(), 10.0),
                 ]),
-                ..AiPoolRuntimeState::default()
+                ..PoolRuntimeState::default()
             },
         )]);
 
-        let outcome = run_ai_pool_scheduler(
+        let outcome = run_pool_scheduler(
             vec![pool_first, other, pool_second],
             &runtime_by_provider,
             "seed",
@@ -887,17 +856,17 @@ mod tests {
 
         let runtime_by_provider = BTreeMap::from([(
             "provider-pool".to_string(),
-            AiPoolRuntimeState {
+            PoolRuntimeState {
                 cooldown_reason_by_key: BTreeMap::from([(
                     "key-cooldown".to_string(),
                     "429".to_string(),
                 )]),
                 cost_window_usage_by_key: BTreeMap::from([("key-cost".to_string(), 100)]),
-                ..AiPoolRuntimeState::default()
+                ..PoolRuntimeState::default()
             },
         )]);
 
-        let outcome = run_ai_pool_scheduler(
+        let outcome = run_pool_scheduler(
             vec![key_ready, key_cooldown, key_cost],
             &runtime_by_provider,
             "seed",
@@ -927,13 +896,13 @@ mod tests {
     #[test]
     fn pool_scheduler_promotes_sticky_hit_before_other_sorted_keys() {
         let key_a = sample_candidate("provider-pool", "endpoint-1", "key-a", 10, true)
-            .with_presets(vec![AiPoolSchedulingPreset {
+            .with_presets(vec![PoolSchedulingPreset {
                 preset: "cache_affinity".to_string(),
                 enabled: true,
                 mode: None,
             }]);
         let key_b = sample_candidate("provider-pool", "endpoint-1", "key-b", 10, true)
-            .with_presets(vec![AiPoolSchedulingPreset {
+            .with_presets(vec![PoolSchedulingPreset {
                 preset: "cache_affinity".to_string(),
                 enabled: true,
                 mode: None,
@@ -941,17 +910,17 @@ mod tests {
 
         let runtime_by_provider = BTreeMap::from([(
             "provider-pool".to_string(),
-            AiPoolRuntimeState {
+            PoolRuntimeState {
                 sticky_bound_key_id: Some("key-a".to_string()),
                 lru_score_by_key: BTreeMap::from([
                     ("key-a".to_string(), 50.0),
                     ("key-b".to_string(), 10.0),
                 ]),
-                ..AiPoolRuntimeState::default()
+                ..PoolRuntimeState::default()
             },
         )]);
 
-        let outcome = run_ai_pool_scheduler(vec![key_a, key_b], &runtime_by_provider, "seed");
+        let outcome = run_pool_scheduler(vec![key_a, key_b], &runtime_by_provider, "seed");
 
         assert!(outcome.skipped_candidates.is_empty());
         assert_eq!(
@@ -967,13 +936,13 @@ mod tests {
     #[test]
     fn load_balance_distribution_ignores_sticky_hit() {
         let key_a = sample_candidate("provider-pool", "endpoint-1", "key-a", 10, true)
-            .with_presets(vec![AiPoolSchedulingPreset {
+            .with_presets(vec![PoolSchedulingPreset {
                 preset: "load_balance".to_string(),
                 enabled: true,
                 mode: None,
             }]);
         let key_b = sample_candidate("provider-pool", "endpoint-1", "key-b", 10, true)
-            .with_presets(vec![AiPoolSchedulingPreset {
+            .with_presets(vec![PoolSchedulingPreset {
                 preset: "load_balance".to_string(),
                 enabled: true,
                 mode: None,
@@ -981,20 +950,20 @@ mod tests {
         let nonce = (0..1000)
             .map(|index| format!("seed-{index}"))
             .find(|nonce| {
-                let group_seed = format!("codex:provider-pool:endpoint-1:model-1:gpt-5:{nonce}");
+                let group_seed = format!("provider-pool:endpoint-1:model-1:gpt-5:{nonce}");
                 stable_hash_score(format!("{group_seed}:key-b").as_str())
                     < stable_hash_score(format!("{group_seed}:key-a").as_str())
             })
             .expect("test seed should exist");
         let runtime_by_provider = BTreeMap::from([(
             "provider-pool".to_string(),
-            AiPoolRuntimeState {
+            PoolRuntimeState {
                 sticky_bound_key_id: Some("key-a".to_string()),
-                ..AiPoolRuntimeState::default()
+                ..PoolRuntimeState::default()
             },
         )]);
 
-        let outcome = run_ai_pool_scheduler(vec![key_a, key_b], &runtime_by_provider, &nonce);
+        let outcome = run_pool_scheduler(vec![key_a, key_b], &runtime_by_provider, &nonce);
 
         assert!(outcome.skipped_candidates.is_empty());
         assert_eq!(
@@ -1010,21 +979,21 @@ mod tests {
     #[test]
     fn pool_scheduler_uses_plan_preset_with_catalog_context() {
         let key_free = sample_candidate("provider-pool", "endpoint-1", "key-free", 10, true)
-            .with_presets(vec![AiPoolSchedulingPreset {
+            .with_presets(vec![PoolSchedulingPreset {
                 preset: "plus_first".to_string(),
                 enabled: true,
                 mode: None,
             }])
             .with_plan("free");
         let key_plus = sample_candidate("provider-pool", "endpoint-1", "key-plus", 10, true)
-            .with_presets(vec![AiPoolSchedulingPreset {
+            .with_presets(vec![PoolSchedulingPreset {
                 preset: "plus_first".to_string(),
                 enabled: true,
                 mode: None,
             }])
             .with_plan("plus");
 
-        let outcome = run_ai_pool_scheduler(vec![key_free, key_plus], &BTreeMap::new(), "seed");
+        let outcome = run_pool_scheduler(vec![key_free, key_plus], &BTreeMap::new(), "seed");
 
         assert!(outcome.skipped_candidates.is_empty());
         assert_eq!(
@@ -1042,12 +1011,12 @@ mod tests {
         let key_cache_hit =
             sample_candidate("provider-pool", "endpoint-1", "key-cache-hit", 50, true)
                 .with_presets(vec![
-                    AiPoolSchedulingPreset {
+                    PoolSchedulingPreset {
                         preset: "cache_affinity".to_string(),
                         enabled: true,
                         mode: None,
                     },
-                    AiPoolSchedulingPreset {
+                    PoolSchedulingPreset {
                         preset: "priority_first".to_string(),
                         enabled: true,
                         mode: None,
@@ -1056,12 +1025,12 @@ mod tests {
         let key_high_priority =
             sample_candidate("provider-pool", "endpoint-1", "key-high-priority", 10, true)
                 .with_presets(vec![
-                    AiPoolSchedulingPreset {
+                    PoolSchedulingPreset {
                         preset: "cache_affinity".to_string(),
                         enabled: true,
                         mode: None,
                     },
-                    AiPoolSchedulingPreset {
+                    PoolSchedulingPreset {
                         preset: "priority_first".to_string(),
                         enabled: true,
                         mode: None,
@@ -1070,16 +1039,16 @@ mod tests {
 
         let runtime_by_provider = BTreeMap::from([(
             "provider-pool".to_string(),
-            AiPoolRuntimeState {
+            PoolRuntimeState {
                 lru_score_by_key: BTreeMap::from([
                     ("key-cache-hit".to_string(), 200.0),
                     ("key-high-priority".to_string(), 10.0),
                 ]),
-                ..AiPoolRuntimeState::default()
+                ..PoolRuntimeState::default()
             },
         )]);
 
-        let outcome = run_ai_pool_scheduler(
+        let outcome = run_pool_scheduler(
             vec![key_cache_hit, key_high_priority],
             &runtime_by_provider,
             "seed",
@@ -1101,12 +1070,12 @@ mod tests {
         let key_random_first =
             sample_candidate("provider-pool", "endpoint-1", "key-random-first", 50, true)
                 .with_presets(vec![
-                    AiPoolSchedulingPreset {
+                    PoolSchedulingPreset {
                         preset: "load_balance".to_string(),
                         enabled: true,
                         mode: None,
                     },
-                    AiPoolSchedulingPreset {
+                    PoolSchedulingPreset {
                         preset: "priority_first".to_string(),
                         enabled: true,
                         mode: None,
@@ -1115,12 +1084,12 @@ mod tests {
         let key_high_priority =
             sample_candidate("provider-pool", "endpoint-1", "key-high-priority", 10, true)
                 .with_presets(vec![
-                    AiPoolSchedulingPreset {
+                    PoolSchedulingPreset {
                         preset: "load_balance".to_string(),
                         enabled: true,
                         mode: None,
                     },
-                    AiPoolSchedulingPreset {
+                    PoolSchedulingPreset {
                         preset: "priority_first".to_string(),
                         enabled: true,
                         mode: None,
@@ -1129,13 +1098,13 @@ mod tests {
         let nonce = (0..1000)
             .map(|index| format!("seed-{index}"))
             .find(|nonce| {
-                let group_seed = format!("codex:provider-pool:endpoint-1:model-1:gpt-5:{nonce}");
+                let group_seed = format!("provider-pool:endpoint-1:model-1:gpt-5:{nonce}");
                 stable_hash_score(format!("{group_seed}:key-random-first").as_str())
                     < stable_hash_score(format!("{group_seed}:key-high-priority").as_str())
             })
             .expect("test seed should exist");
 
-        let outcome = run_ai_pool_scheduler(
+        let outcome = run_pool_scheduler(
             vec![key_random_first, key_high_priority],
             &BTreeMap::new(),
             nonce.as_str(),
@@ -1156,7 +1125,7 @@ mod tests {
     fn single_account_distribution_orders_by_priority_then_reverse_lru() {
         let key_priority_old =
             sample_candidate("provider-pool", "endpoint-1", "key-priority-old", 10, true)
-                .with_presets(vec![AiPoolSchedulingPreset {
+                .with_presets(vec![PoolSchedulingPreset {
                     preset: "single_account".to_string(),
                     enabled: true,
                     mode: None,
@@ -1168,7 +1137,7 @@ mod tests {
             10,
             true,
         )
-        .with_presets(vec![AiPoolSchedulingPreset {
+        .with_presets(vec![PoolSchedulingPreset {
             preset: "single_account".to_string(),
             enabled: true,
             mode: None,
@@ -1180,7 +1149,7 @@ mod tests {
             50,
             true,
         )
-        .with_presets(vec![AiPoolSchedulingPreset {
+        .with_presets(vec![PoolSchedulingPreset {
             preset: "single_account".to_string(),
             enabled: true,
             mode: None,
@@ -1188,17 +1157,17 @@ mod tests {
 
         let runtime_by_provider = BTreeMap::from([(
             "provider-pool".to_string(),
-            AiPoolRuntimeState {
+            PoolRuntimeState {
                 lru_score_by_key: BTreeMap::from([
                     ("key-priority-old".to_string(), 10.0),
                     ("key-priority-recent".to_string(), 200.0),
                     ("key-lower-priority-recent".to_string(), 500.0),
                 ]),
-                ..AiPoolRuntimeState::default()
+                ..PoolRuntimeState::default()
             },
         )]);
 
-        let outcome = run_ai_pool_scheduler(
+        let outcome = run_pool_scheduler(
             vec![
                 key_priority_old,
                 key_lower_priority_recent,
@@ -1225,57 +1194,51 @@ mod tests {
 
     #[test]
     fn normalizes_distribution_mode_before_strategy_presets() {
-        let presets = normalize_enabled_ai_pool_presets(
-            &[
-                AiPoolSchedulingPreset {
-                    preset: "lru".to_string(),
-                    enabled: false,
-                    mode: None,
-                },
-                AiPoolSchedulingPreset {
-                    preset: "single_account".to_string(),
-                    enabled: true,
-                    mode: None,
-                },
-                AiPoolSchedulingPreset {
-                    preset: "cache_affinity".to_string(),
-                    enabled: true,
-                    mode: None,
-                },
-                AiPoolSchedulingPreset {
-                    preset: "priority_first".to_string(),
-                    enabled: true,
-                    mode: None,
-                },
-            ],
-            "openai",
-        );
+        let presets = normalize_enabled_pool_presets(&[
+            PoolSchedulingPreset {
+                preset: "lru".to_string(),
+                enabled: false,
+                mode: None,
+            },
+            PoolSchedulingPreset {
+                preset: "single_account".to_string(),
+                enabled: true,
+                mode: None,
+            },
+            PoolSchedulingPreset {
+                preset: "cache_affinity".to_string(),
+                enabled: true,
+                mode: None,
+            },
+            PoolSchedulingPreset {
+                preset: "priority_first".to_string(),
+                enabled: true,
+                mode: None,
+            },
+        ]);
 
         assert_eq!(presets, ["single_account", "priority_first"]);
     }
 
     #[test]
     fn normalizes_lru_as_mutually_exclusive_distribution_mode() {
-        let presets = normalize_enabled_ai_pool_presets(
-            &[
-                AiPoolSchedulingPreset {
-                    preset: "lru".to_string(),
-                    enabled: true,
-                    mode: None,
-                },
-                AiPoolSchedulingPreset {
-                    preset: "cache_affinity".to_string(),
-                    enabled: true,
-                    mode: None,
-                },
-                AiPoolSchedulingPreset {
-                    preset: "priority_first".to_string(),
-                    enabled: true,
-                    mode: None,
-                },
-            ],
-            "openai",
-        );
+        let presets = normalize_enabled_pool_presets(&[
+            PoolSchedulingPreset {
+                preset: "lru".to_string(),
+                enabled: true,
+                mode: None,
+            },
+            PoolSchedulingPreset {
+                preset: "cache_affinity".to_string(),
+                enabled: true,
+                mode: None,
+            },
+            PoolSchedulingPreset {
+                preset: "priority_first".to_string(),
+                enabled: true,
+                mode: None,
+            },
+        ]);
 
         assert_eq!(presets, ["priority_first"]);
     }
@@ -1286,37 +1249,36 @@ mod tests {
         key_id: &str,
         internal_priority: i32,
         pool_enabled: bool,
-    ) -> AiPoolCandidateInput<String> {
-        let pool_config = pool_enabled.then(|| AiPoolSchedulingConfig {
+    ) -> PoolCandidateInput<String> {
+        let pool_config = pool_enabled.then(|| PoolSchedulingConfig {
             scheduling_presets: Vec::new(),
             lru_enabled: true,
             skip_exhausted_accounts: false,
             cost_limit_per_key_tokens: None,
         });
-        AiPoolCandidateInput {
+        PoolCandidateInput {
             candidate: key_id.to_string(),
-            facts: AiPoolCandidateFacts {
+            facts: PoolCandidateFacts {
                 provider_id: provider_id.to_string(),
                 endpoint_id: endpoint_id.to_string(),
                 model_id: "model-1".to_string(),
                 selected_provider_model_name: "gpt-5".to_string(),
                 provider_api_format: "openai:chat".to_string(),
-                provider_type: "codex".to_string(),
                 key_id: key_id.to_string(),
                 key_internal_priority: internal_priority,
             },
             pool_config,
-            key_context: AiPoolCatalogKeyContext::default(),
+            key_context: PoolMemberSignals::default(),
         }
     }
 
     trait TestCandidateExt {
         fn with_cost_limit(self, limit: u64) -> Self;
-        fn with_presets(self, presets: Vec<AiPoolSchedulingPreset>) -> Self;
+        fn with_presets(self, presets: Vec<PoolSchedulingPreset>) -> Self;
         fn with_plan(self, plan: &str) -> Self;
     }
 
-    impl TestCandidateExt for AiPoolCandidateInput<String> {
+    impl TestCandidateExt for PoolCandidateInput<String> {
         fn with_cost_limit(mut self, limit: u64) -> Self {
             if let Some(config) = self.pool_config.as_mut() {
                 config.cost_limit_per_key_tokens = Some(limit);
@@ -1324,7 +1286,7 @@ mod tests {
             self
         }
 
-        fn with_presets(mut self, presets: Vec<AiPoolSchedulingPreset>) -> Self {
+        fn with_presets(mut self, presets: Vec<PoolSchedulingPreset>) -> Self {
             if let Some(config) = self.pool_config.as_mut() {
                 config.scheduling_presets = presets;
             }
@@ -1332,7 +1294,7 @@ mod tests {
         }
 
         fn with_plan(mut self, plan: &str) -> Self {
-            self.key_context.oauth_plan_type = Some(plan.to_string());
+            self.key_context.plan_tier = Some(plan.to_string());
             self
         }
     }

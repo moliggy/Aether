@@ -15,8 +15,6 @@ pub mod dto;
 pub mod execution_path;
 pub mod failure_diagnostic;
 pub mod plan_payload;
-pub mod pool_scheduler;
-pub mod pool_scores;
 pub mod ports;
 pub mod ranking_metadata;
 pub mod report_context;
@@ -24,6 +22,34 @@ pub mod request_body_diagnostics;
 pub mod runtime_miss;
 pub mod surface_spec;
 
+pub use aether_pool_core::{
+    normalize_enabled_pool_presets, run_pool_scheduler, PoolCandidateFacts, PoolCandidateInput,
+    PoolCandidateOrchestration, PoolMemberSignals, PoolRuntimeState, PoolScheduledCandidate,
+    PoolSchedulerOutcome, PoolSchedulingConfig, PoolSchedulingPreset, PoolSkippedCandidate,
+    POOL_ACCOUNT_BLOCKED_SKIP_REASON, POOL_ACCOUNT_EXHAUSTED_SKIP_REASON,
+    POOL_COOLDOWN_SKIP_REASON, POOL_COST_LIMIT_REACHED_SKIP_REASON,
+};
+pub use aether_pool_core::{
+    normalize_enabled_pool_presets as normalize_enabled_ai_pool_presets,
+    run_pool_scheduler as run_ai_pool_scheduler, PoolCandidateFacts as AiPoolCandidateFacts,
+    PoolCandidateInput as AiPoolCandidateInput,
+    PoolCandidateOrchestration as AiPoolCandidateOrchestration,
+    PoolMemberSignals as AiPoolCatalogKeyContext, PoolRuntimeState as AiPoolRuntimeState,
+    PoolScheduledCandidate as AiPoolScheduledCandidate,
+    PoolSchedulerOutcome as AiPoolSchedulerOutcome, PoolSchedulingConfig as AiPoolSchedulingConfig,
+    PoolSchedulingPreset as AiPoolSchedulingPreset, PoolSkippedCandidate as AiPoolSkippedCandidate,
+    POOL_ACCOUNT_BLOCKED_SKIP_REASON as AI_POOL_ACCOUNT_BLOCKED_SKIP_REASON,
+    POOL_ACCOUNT_EXHAUSTED_SKIP_REASON as AI_POOL_ACCOUNT_EXHAUSTED_SKIP_REASON,
+    POOL_COOLDOWN_SKIP_REASON as AI_POOL_COOLDOWN_SKIP_REASON,
+    POOL_COST_LIMIT_REACHED_SKIP_REASON as AI_POOL_COST_LIMIT_REACHED_SKIP_REASON,
+};
+pub use aether_pool_core::{
+    probe_freshness_score, probe_freshness_score_with_ttl, score_pool_member,
+    score_pool_member_with_rules, PoolMemberScoreInput, PoolMemberScoreOutput,
+    PoolMemberScoreRules, PoolMemberScoreWeights, POOL_SCORE_VERSION,
+    PROBE_FAILURE_COOLDOWN_THRESHOLD, PROBE_FAILURE_PENALTY, PROBE_FRESHNESS_TTL_SECONDS,
+    REQUEST_FAILURE_PENALTY, UNSCHEDULABLE_SCORE_CAP,
+};
 pub use attempt_loop::{
     run_ai_attempt_loop, AiAttemptLoopOutcome, AiAttemptLoopPort, AiExecutionAttempt,
 };
@@ -91,21 +117,6 @@ pub use execution_path::{
 pub use failure_diagnostic::{CandidateFailureDiagnostic, CandidateFailureDiagnosticKind};
 pub use plan_payload::{
     build_ai_stream_execution_plan_payload, build_ai_sync_execution_plan_payload,
-};
-pub use pool_scheduler::{
-    normalize_enabled_ai_pool_presets, run_ai_pool_scheduler, AiPoolCandidateFacts,
-    AiPoolCandidateInput, AiPoolCandidateOrchestration, AiPoolCatalogKeyContext,
-    AiPoolRuntimeState, AiPoolScheduledCandidate, AiPoolSchedulerOutcome, AiPoolSchedulingConfig,
-    AiPoolSchedulingPreset, AiPoolSkippedCandidate, AI_POOL_ACCOUNT_BLOCKED_SKIP_REASON,
-    AI_POOL_ACCOUNT_EXHAUSTED_SKIP_REASON, AI_POOL_COOLDOWN_SKIP_REASON,
-    AI_POOL_COST_LIMIT_REACHED_SKIP_REASON,
-};
-pub use pool_scores::{
-    probe_freshness_score, probe_freshness_score_with_ttl, score_pool_member,
-    score_pool_member_with_rules, PoolMemberScoreInput, PoolMemberScoreOutput,
-    PoolMemberScoreRules, PoolMemberScoreWeights, POOL_SCORE_VERSION,
-    PROBE_FAILURE_COOLDOWN_THRESHOLD, PROBE_FAILURE_PENALTY, PROBE_FRESHNESS_TTL_SECONDS,
-    REQUEST_FAILURE_PENALTY, UNSCHEDULABLE_SCORE_CAP,
 };
 pub use ranking_metadata::append_ai_ranking_metadata_to_object;
 pub use report_context::{

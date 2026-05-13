@@ -1,7 +1,4 @@
-use std::collections::BTreeMap;
-
 use aether_oauth::provider::providers::KiroProviderOAuthAdapter as CoreKiroProviderOAuthAdapter;
-use aether_oauth::provider::{ProviderOAuthAccount, ProviderOAuthAdapter};
 use async_trait::async_trait;
 
 use super::super::oauth_refresh::{
@@ -48,26 +45,10 @@ impl KiroOAuthRefreshAdapter {
         let oauth_executor =
             ProviderOAuthLocalHttpExecutor::new(PROVIDER_TYPE, transport, executor);
         let ctx = provider_oauth_transport_context_from_snapshot(transport);
-        let account = ProviderOAuthAccount {
-            provider_type: PROVIDER_TYPE.to_string(),
-            access_token: auth_config
-                .cached_access_token()
-                .map(ToOwned::to_owned)
-                .unwrap_or_default(),
-            auth_config: auth_config.to_json_value(),
-            expires_at_unix_secs: auth_config.expires_at,
-            identity: BTreeMap::new(),
-        };
-        let refreshed = adapter
-            .refresh(&oauth_executor, &ctx, &account)
+        adapter
+            .refresh_auth_config(&oauth_executor, &ctx, auth_config)
             .await
-            .map_err(|error| oauth_error_to_local_refresh_error(PROVIDER_TYPE, error))?;
-        KiroAuthConfig::from_json_value(&refreshed.auth_config).ok_or_else(|| {
-            LocalOAuthRefreshError::InvalidResponse {
-                provider_type: PROVIDER_TYPE,
-                message: "kiro refresh returned invalid auth_config".to_string(),
-            }
-        })
+            .map_err(|error| oauth_error_to_local_refresh_error(PROVIDER_TYPE, error))
     }
 
     fn auth_config_from_entry(entry: &CachedOAuthEntry) -> Option<KiroAuthConfig> {

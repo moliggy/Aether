@@ -1,7 +1,7 @@
 use crate::handlers::admin::provider::shared::support::{
     AdminProviderPoolConfig, AdminProviderPoolSchedulingPreset, AdminProviderPoolUnschedulableRule,
 };
-use aether_ai_serving::{PoolMemberScoreRules, PoolMemberScoreWeights};
+use aether_pool_core::{PoolMemberScoreRules, PoolMemberScoreWeights};
 use serde_json::{Map, Value};
 
 const POOL_ALLOWED_SCHEDULING_PRESETS: &[&str] = &[

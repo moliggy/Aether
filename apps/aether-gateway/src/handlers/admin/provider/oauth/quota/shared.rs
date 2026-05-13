@@ -7,8 +7,14 @@ use crate::handlers::shared::{
 };
 use crate::GatewayError;
 use aether_admin::provider::quota as admin_provider_quota_pure;
-use aether_contracts::{ExecutionPlan, ExecutionResult, ExecutionTimeouts, ProxySnapshot};
-use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
+use aether_contracts::{
+    ExecutionPlan, ExecutionResult, ExecutionTimeouts, ProxySnapshot, RequestBody,
+    ResolvedTransportProfile, EXECUTION_REQUEST_ACCEPT_INVALID_CERTS_HEADER,
+};
+use aether_data_contracts::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
+};
+use aether_provider_pool::{ProviderPoolQuotaRequestSpec, ProviderPoolService};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
@@ -51,22 +57,28 @@ pub(crate) fn normalize_string_id_list(values: Option<Vec<String>>) -> Option<Ve
 }
 
 pub(crate) fn provider_type_supports_quota_refresh(provider_type: &str) -> bool {
-    matches!(
-        provider_type.trim().to_ascii_lowercase().as_str(),
-        "codex" | "kiro" | "antigravity" | "chatgpt_web"
-    )
+    ProviderPoolService::with_builtin_adapters().supports_quota_refresh(provider_type)
 }
 
 pub(crate) fn unsupported_provider_quota_refresh_message(provider_type: &str) -> String {
-    match provider_type.trim().to_ascii_lowercase().as_str() {
-        "claude_code" => "Claude Code 暂不支持自动刷新额度：上游没有稳定可用的账号额度查询接口",
-        "gemini_cli" => {
-            "Gemini CLI 暂不支持自动刷新额度：当前只能通过模型同步/缓存快照展示已知配额信息"
-        }
-        "vertex_ai" => "Vertex AI 暂不支持自动刷新额度：额度属于 Google Cloud 项目/区域配额",
-        _ => "该 Provider 暂不支持自动刷新额度",
-    }
-    .to_string()
+    ProviderPoolService::with_builtin_adapters().quota_refresh_unsupported_message(provider_type)
+}
+
+pub(crate) fn provider_quota_refresh_endpoint_for_provider(
+    provider_type: &str,
+    endpoints: &[StoredProviderCatalogEndpoint],
+    include_inactive: bool,
+) -> Option<StoredProviderCatalogEndpoint> {
+    ProviderPoolService::with_builtin_adapters().quota_refresh_endpoint_for_provider(
+        provider_type,
+        endpoints,
+        include_inactive,
+    )
+}
+
+pub(crate) fn provider_quota_refresh_missing_endpoint_message(provider_type: &str) -> String {
+    ProviderPoolService::with_builtin_adapters()
+        .quota_refresh_missing_endpoint_message(provider_type)
 }
 
 pub(super) fn coerce_json_u64(value: &serde_json::Value) -> Option<u64> {
@@ -125,6 +137,63 @@ pub(super) fn build_quota_snapshot_payload(
     updated_snapshot.get("quota").cloned()
 }
 
+pub(super) fn build_provider_quota_execution_plan(
+    transport: &AdminGatewayProviderTransportSnapshot,
+    spec: ProviderPoolQuotaRequestSpec,
+    proxy: Option<ProxySnapshot>,
+    transport_profile: Option<ResolvedTransportProfile>,
+    timeouts: Option<ExecutionTimeouts>,
+) -> ExecutionPlan {
+    let ProviderPoolQuotaRequestSpec {
+        request_id,
+        provider_name,
+        quota_kind: _,
+        method,
+        url,
+        mut headers,
+        content_type,
+        json_body,
+        client_api_format,
+        provider_api_format,
+        model_name,
+        accept_invalid_certs,
+    } = spec;
+    if accept_invalid_certs {
+        headers.insert(
+            EXECUTION_REQUEST_ACCEPT_INVALID_CERTS_HEADER.to_string(),
+            "true".to_string(),
+        );
+    }
+    let body = json_body
+        .map(RequestBody::from_json)
+        .unwrap_or(RequestBody {
+            json_body: None,
+            body_bytes_b64: None,
+            body_ref: None,
+        });
+    ExecutionPlan {
+        request_id,
+        candidate_id: None,
+        provider_name: Some(provider_name),
+        provider_id: transport.provider.id.clone(),
+        endpoint_id: transport.endpoint.id.clone(),
+        key_id: transport.key.id.clone(),
+        method,
+        url,
+        headers,
+        content_type,
+        content_encoding: None,
+        body,
+        stream: false,
+        client_api_format,
+        provider_api_format,
+        model_name,
+        proxy,
+        transport_profile,
+        timeouts,
+    }
+}
+
 pub(crate) async fn persist_provider_quota_refresh_state(
     state: &AdminAppState<'_>,
     key_id: &str,
@@ -142,24 +211,21 @@ pub(crate) async fn persist_provider_quota_refresh_state(
         return Ok(false);
     };
 
-    let mut quota_snapshot_provider_type = None::<&str>;
+    let mut quota_snapshot_provider_type = None::<String>;
     if let Some(metadata_update) = metadata_update {
         latest_key.upstream_metadata = Some(merge_upstream_metadata(
             latest_key.upstream_metadata.as_ref(),
             metadata_update,
         ));
-        quota_snapshot_provider_type = metadata_update.as_object().and_then(|object| {
-            ["codex", "kiro", "antigravity", "gemini_cli", "chatgpt_web"]
-                .into_iter()
-                .find(|provider_type| object.contains_key(*provider_type))
-        });
+        quota_snapshot_provider_type =
+            aether_provider_pool::provider_pool_quota_metadata_provider_type(metadata_update);
     }
     if let Some(encrypted_auth_config) = encrypted_auth_config {
         latest_key.encrypted_auth_config = Some(encrypted_auth_config);
     }
     latest_key.oauth_invalid_at_unix_secs = oauth_invalid_at_unix_secs;
     latest_key.oauth_invalid_reason = oauth_invalid_reason;
-    if let Some(provider_type) = quota_snapshot_provider_type {
+    if let Some(provider_type) = quota_snapshot_provider_type.as_deref() {
         latest_key.status_snapshot = sync_provider_key_quota_status_snapshot(
             latest_key.status_snapshot.as_ref(),
             provider_type,

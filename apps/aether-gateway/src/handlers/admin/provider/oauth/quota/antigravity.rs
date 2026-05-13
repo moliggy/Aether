@@ -1,17 +1,17 @@
 use super::shared::{
-    build_quota_snapshot_payload, coerce_json_f64, coerce_json_string,
-    default_provider_quota_execution_timeouts, execute_provider_quota_plan,
+    build_provider_quota_execution_plan, build_quota_snapshot_payload, coerce_json_f64,
+    coerce_json_string, default_provider_quota_execution_timeouts, execute_provider_quota_plan,
     extract_execution_error_message, persist_provider_quota_refresh_state,
     quota_refresh_success_invalid_state, ProviderQuotaExecutionOutcome,
 };
-use crate::handlers::admin::provider::shared::payloads::ANTIGRAVITY_FETCH_AVAILABLE_MODELS_PATH;
 use crate::handlers::admin::request::{AdminAppState, AdminGatewayProviderTransportSnapshot};
 use crate::GatewayError;
 use aether_admin::provider::quota::parse_antigravity_usage_response;
-use aether_contracts::{ExecutionPlan, ProxySnapshot, RequestBody};
+use aether_contracts::ProxySnapshot;
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
+use aether_provider_pool::build_antigravity_pool_quota_request;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -21,18 +21,9 @@ async fn execute_antigravity_quota_plan(
     transport: &AdminGatewayProviderTransportSnapshot,
     authorization: (String, String),
     project_id: &str,
-    mut identity_headers: BTreeMap<String, String>,
+    identity_headers: BTreeMap<String, String>,
     proxy_override: Option<&ProxySnapshot>,
 ) -> Result<ProviderQuotaExecutionOutcome, GatewayError> {
-    let mut headers = std::mem::take(&mut identity_headers);
-    headers.insert("authorization".to_string(), authorization.1);
-    headers.insert("content-type".to_string(), "application/json".to_string());
-    headers.insert("accept".to_string(), "application/json".to_string());
-    headers
-        .entry("user-agent".to_string())
-        .or_insert_with(|| "antigravity".to_string());
-
-    let body = json!({ "project": project_id });
     let proxy = match proxy_override {
         Some(proxy) => Some(proxy.clone()),
         None => {
@@ -46,35 +37,20 @@ async fn execute_antigravity_quota_plan(
         .or(Some(default_provider_quota_execution_timeouts(
             proxy.as_ref(),
         )));
-    let plan = ExecutionPlan {
-        request_id: format!("antigravity-quota:{}", transport.key.id),
-        candidate_id: None,
-        provider_name: Some("antigravity".to_string()),
-        provider_id: transport.provider.id.clone(),
-        endpoint_id: transport.endpoint.id.clone(),
-        key_id: transport.key.id.clone(),
-        method: "POST".to_string(),
-        url: format!(
-            "{}{}",
-            transport.endpoint.base_url.trim_end_matches('/'),
-            ANTIGRAVITY_FETCH_AVAILABLE_MODELS_PATH
-        ),
-        headers,
-        content_type: Some("application/json".to_string()),
-        content_encoding: None,
-        body: RequestBody {
-            json_body: Some(body),
-            body_bytes_b64: None,
-            body_ref: None,
-        },
-        stream: false,
-        client_api_format: "gemini:generate_content".to_string(),
-        provider_api_format: "antigravity:fetch_available_models".to_string(),
-        model_name: Some("fetchAvailableModels".to_string()),
+    let spec = build_antigravity_pool_quota_request(
+        &transport.key.id,
+        &transport.endpoint.base_url,
+        authorization,
+        project_id,
+        identity_headers,
+    );
+    let plan = build_provider_quota_execution_plan(
+        transport,
+        spec,
         proxy,
-        transport_profile: state.resolve_transport_profile(transport),
+        state.resolve_transport_profile(transport),
         timeouts,
-    };
+    );
 
     execute_provider_quota_plan(state, transport, plan, "antigravity").await
 }

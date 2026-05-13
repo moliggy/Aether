@@ -11,7 +11,7 @@ use self::parse::{
     build_codex_quota_exhausted_fallback_metadata, parse_codex_usage_headers,
     parse_codex_wham_usage_response,
 };
-use self::plan::{build_codex_refresh_headers, execute_codex_quota_plan};
+use self::plan::{build_codex_quota_request_spec, execute_codex_quota_plan};
 use super::shared::{
     build_quota_snapshot_payload, extract_execution_error_message,
     persist_provider_quota_refresh_state, provider_auto_remove_banned_keys,
@@ -82,8 +82,8 @@ pub(crate) async fn refresh_codex_provider_quota_locally(
                 None
             };
 
-        let headers = match build_codex_refresh_headers(&transport, resolved_oauth_auth) {
-            Ok(headers) => headers,
+        let request_spec = match build_codex_quota_request_spec(&transport, resolved_oauth_auth) {
+            Ok(request_spec) => request_spec,
             Err(message) => {
                 failed_count += 1;
                 results.push(json!({
@@ -96,23 +96,27 @@ pub(crate) async fn refresh_codex_provider_quota_locally(
             }
         };
 
-        let result =
-            match execute_codex_quota_plan(state, &transport, headers, proxy_override.as_ref())
-                .await?
-            {
-                ProviderQuotaExecutionOutcome::Response(result) => result,
-                ProviderQuotaExecutionOutcome::Failure(detail) => {
-                    failed_count += 1;
-                    results.push(json!({
-                        "key_id": key.id,
-                        "key_name": key.name,
-                        "status": "error",
-                        "message": format!("wham/usage 请求执行失败: {detail}"),
-                        "status_code": 502,
-                    }));
-                    continue;
-                }
-            };
+        let result = match execute_codex_quota_plan(
+            state,
+            &transport,
+            request_spec,
+            proxy_override.as_ref(),
+        )
+        .await?
+        {
+            ProviderQuotaExecutionOutcome::Response(result) => result,
+            ProviderQuotaExecutionOutcome::Failure(detail) => {
+                failed_count += 1;
+                results.push(json!({
+                    "key_id": key.id,
+                    "key_name": key.name,
+                    "status": "error",
+                    "message": format!("wham/usage 请求执行失败: {detail}"),
+                    "status_code": 502,
+                }));
+                continue;
+            }
+        };
         let now_unix_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .ok()
