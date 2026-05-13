@@ -1667,7 +1667,6 @@ impl GatewayDataState {
             apply_admin_unrestricted_auth_snapshot(&mut snapshot);
             return Ok(Some(snapshot));
         }
-        let export_row = repository.find_export_user_by_id(&snapshot.user_id).await?;
         let mut groups = repository
             .list_user_groups_for_user(&snapshot.user_id)
             .await?;
@@ -1677,53 +1676,25 @@ impl GatewayDataState {
                 .then_with(|| left.id.cmp(&right.id))
         });
 
-        let mut allowed_providers = resolve_effective_list_policy(
-            user.allowed_providers,
-            &user.allowed_providers_mode,
-            &groups,
-            |group| {
+        let mut allowed_providers =
+            resolve_effective_list_policy(None, "unrestricted", &groups, |group| {
                 (
                     &group.allowed_providers_mode,
                     group.allowed_providers.clone(),
                 )
-            },
-        );
-        let mut allowed_api_formats = resolve_effective_list_policy(
-            user.allowed_api_formats,
-            &user.allowed_api_formats_mode,
-            &groups,
-            |group| {
+            });
+        let mut allowed_api_formats =
+            resolve_effective_list_policy(None, "unrestricted", &groups, |group| {
                 (
                     &group.allowed_api_formats_mode,
                     group.allowed_api_formats.clone(),
                 )
-            },
-        );
-        let mut allowed_models = resolve_effective_list_policy(
-            user.allowed_models,
-            &user.allowed_models_mode,
-            &groups,
-            |group| (&group.allowed_models_mode, group.allowed_models.clone()),
-        );
-        let snapshot_user_rate_limit = snapshot.user_rate_limit;
-        let export_user_rate_limit = export_row.as_ref().and_then(|row| row.rate_limit);
-        let user_rate_limit_mode = match export_row.as_ref() {
-            Some(row)
-                if row.rate_limit.is_none()
-                    && row.rate_limit_mode == "system"
-                    && snapshot_user_rate_limit.is_some() =>
-            {
-                "custom"
-            }
-            Some(row) => row.rate_limit_mode.as_str(),
-            None if snapshot_user_rate_limit.is_some() => "custom",
-            None => "system",
-        };
-        let user_rate_limit = resolve_effective_rate_limit_policy(
-            export_user_rate_limit.or(snapshot_user_rate_limit),
-            user_rate_limit_mode,
-            &groups,
-        );
+            });
+        let mut allowed_models =
+            resolve_effective_list_policy(None, "unrestricted", &groups, |group| {
+                (&group.allowed_models_mode, group.allowed_models.clone())
+            });
+        let user_rate_limit = resolve_effective_rate_limit_policy(None, "system", &groups);
         if !snapshot.api_key_is_standalone {
             constrain_api_key_list_policy_to_user_policy(
                 &mut allowed_providers,
@@ -2158,6 +2129,65 @@ mod tests {
         assert_eq!(resolved.user_rate_limit, None);
         assert_eq!(resolved.api_key_rate_limit, None);
         assert_eq!(resolved.api_key_concurrent_limit, None);
+    }
+
+    #[tokio::test]
+    async fn user_personal_policy_fields_are_ignored_when_groups_are_applied() {
+        let mut snapshot = sample_snapshot("key-user", "user-1").with_user_rate_limit(Some(200));
+        snapshot.api_key_allowed_providers = None;
+        snapshot.api_key_allowed_api_formats = None;
+        snapshot.api_key_allowed_models = None;
+
+        let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
+            Some("hash-user".to_string()),
+            snapshot,
+        )]));
+        let user_repository = Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![
+            sample_auth_user("user-1", "user"),
+        ]));
+        let group = user_repository
+            .create_user_group(UpsertUserGroupRecord {
+                name: "Group Policy".to_string(),
+                description: None,
+                priority: 10,
+                allowed_providers: Some(vec!["anthropic".to_string()]),
+                allowed_providers_mode: "specific".to_string(),
+                allowed_api_formats: Some(vec!["claude:messages".to_string()]),
+                allowed_api_formats_mode: "specific".to_string(),
+                allowed_models: Some(vec!["claude-sonnet-4-5".to_string()]),
+                allowed_models_mode: "specific".to_string(),
+                rate_limit: Some(30),
+                rate_limit_mode: "custom".to_string(),
+            })
+            .await
+            .expect("group should create")
+            .expect("group should exist");
+        user_repository
+            .add_user_to_group(&group.id, "user-1")
+            .await
+            .expect("group membership should create");
+
+        let state = GatewayDataState::with_auth_api_key_reader_for_tests(auth_repository)
+            .with_user_reader(user_repository);
+        let resolved = state
+            .read_auth_api_key_snapshot_by_key_hash("hash-user", 100)
+            .await
+            .expect("snapshot should resolve")
+            .expect("snapshot should exist");
+
+        assert_eq!(
+            resolved.effective_allowed_providers(),
+            Some(&["anthropic".to_string()][..])
+        );
+        assert_eq!(
+            resolved.effective_allowed_api_formats(),
+            Some(&["claude:messages".to_string()][..])
+        );
+        assert_eq!(
+            resolved.effective_allowed_models(),
+            Some(&["claude-sonnet-4-5".to_string()][..])
+        );
+        assert_eq!(resolved.user_rate_limit, Some(30));
     }
 
     #[tokio::test]
