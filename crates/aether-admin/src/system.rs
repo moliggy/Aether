@@ -58,6 +58,14 @@ pub const ADMIN_SYSTEM_PROVIDER_OPS_SENSITIVE_CREDENTIAL_FIELDS: &[&str] = &[
     "cookie",
 ];
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminSystemUpdateRelease {
+    pub version: String,
+    pub release_url: Option<String>,
+    pub release_notes: Option<String>,
+    pub published_at: Option<String>,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -620,15 +628,40 @@ const ADMIN_API_FORMAT_DEFINITIONS: &[AdminApiFormatDefinition] = &[
 ];
 
 pub fn build_admin_system_check_update_payload(current_version: String) -> serde_json::Value {
+    build_admin_system_check_update_payload_with_release(
+        current_version,
+        None,
+        Some("检查更新需要 Rust 管理后端".to_string()),
+    )
+}
+
+pub fn build_admin_system_check_update_payload_with_release(
+    current_version: String,
+    latest_release: Option<AdminSystemUpdateRelease>,
+    error: Option<String>,
+) -> serde_json::Value {
+    let has_update = latest_release.as_ref().is_some_and(|release| {
+        normalized_admin_system_version(&release.version)
+            != normalized_admin_system_version(&current_version)
+    });
+
     json!({
         "current_version": current_version,
-        "latest_version": serde_json::Value::Null,
-        "has_update": false,
-        "release_url": serde_json::Value::Null,
-        "release_notes": serde_json::Value::Null,
-        "published_at": serde_json::Value::Null,
-        "error": "检查更新需要 Rust 管理后端",
+        "latest_version": latest_release.as_ref().map(|release| release.version.clone()),
+        "has_update": has_update,
+        "release_url": latest_release.as_ref().and_then(|release| release.release_url.clone()),
+        "release_notes": latest_release.as_ref().and_then(|release| release.release_notes.clone()),
+        "published_at": latest_release.as_ref().and_then(|release| release.published_at.clone()),
+        "error": error,
     })
+}
+
+fn normalized_admin_system_version(version: &str) -> String {
+    version
+        .trim()
+        .strip_prefix('v')
+        .unwrap_or(version.trim())
+        .to_string()
 }
 
 pub fn build_admin_system_stats_payload(
@@ -2179,6 +2212,50 @@ fn mask_admin_proxy_node_password(password: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_admin_system_check_update_payload_reports_available_release() {
+        let payload = build_admin_system_check_update_payload_with_release(
+            "0.7.0-rc27".to_string(),
+            Some(AdminSystemUpdateRelease {
+                version: "v0.7.0-rc28".to_string(),
+                release_url: Some(
+                    "https://github.com/fawney19/Aether/releases/tag/v0.7.0-rc28".to_string(),
+                ),
+                release_notes: Some("release notes".to_string()),
+                published_at: Some("2026-05-13T00:00:00Z".to_string()),
+            }),
+            None,
+        );
+
+        assert_eq!(payload["current_version"], "0.7.0-rc27");
+        assert_eq!(payload["latest_version"], "v0.7.0-rc28");
+        assert_eq!(payload["has_update"], true);
+        assert_eq!(
+            payload["release_url"],
+            "https://github.com/fawney19/Aether/releases/tag/v0.7.0-rc28"
+        );
+        assert_eq!(payload["release_notes"], "release notes");
+        assert_eq!(payload["published_at"], "2026-05-13T00:00:00Z");
+        assert_eq!(payload["error"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn build_admin_system_check_update_payload_normalizes_v_prefix() {
+        let payload = build_admin_system_check_update_payload_with_release(
+            "0.7.0-rc28".to_string(),
+            Some(AdminSystemUpdateRelease {
+                version: "v0.7.0-rc28".to_string(),
+                release_url: None,
+                release_notes: None,
+                published_at: None,
+            }),
+            None,
+        );
+
+        assert_eq!(payload["has_update"], false);
+        assert_eq!(payload["error"], serde_json::Value::Null);
+    }
 
     #[test]
     fn parse_admin_system_config_import_request_accepts_supported_versions() {
