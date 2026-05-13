@@ -503,6 +503,30 @@ data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_123\",\"object\
     }
 
     #[test]
+    fn standard_rewriter_converts_openai_responses_reasoning_delta_to_chat() {
+        let report_context = json!({
+            "provider_api_format": "openai:responses",
+            "client_api_format": "openai:chat",
+            "needs_conversion": true,
+            "mapped_model": "gpt-5.4",
+        });
+        let mut rewriter = maybe_build_ai_surface_stream_rewriter(Some(&report_context))
+            .expect("rewriter should exist");
+        let output = rewriter
+            .push_chunk(
+                b"event: response.reasoning_summary_text.delta\n\
+data: {\"type\":\"response.reasoning_summary_text.delta\",\"response_id\":\"resp_reasoning_stream_123\",\"item_id\":\"rs_123\",\"output_index\":0,\"summary_index\":0,\"delta\":\"Need to inspect first.\"}\n\n",
+            )
+            .expect("rewrite should succeed");
+        let output = String::from_utf8(output).expect("output should be utf8");
+
+        assert!(output.contains("\"object\":\"chat.completion.chunk\""));
+        assert!(output.contains("\"reasoning_content\":\"Need to inspect first.\""));
+        assert!(!output.contains("\"content\""));
+        assert!(!output.contains("data: [DONE]"));
+    }
+
+    #[test]
     fn resolves_openai_image_mode_for_same_format_image_streams() {
         let report_context = json!({
             "provider_api_format": "openai:image",

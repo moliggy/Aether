@@ -139,6 +139,50 @@ fn inject_codex_default_variation_prompt(body_object: &mut serde_json::Map<Strin
     );
 }
 
+fn ensure_codex_reasoning_summary(body_object: &mut serde_json::Map<String, Value>) {
+    let reasoning = body_object
+        .entry("reasoning".to_string())
+        .or_insert_with(|| json!({}));
+    if !reasoning.is_object() {
+        *reasoning = json!({});
+    }
+    let Some(reasoning_object) = reasoning.as_object_mut() else {
+        return;
+    };
+    reasoning_object
+        .entry("effort".to_string())
+        .or_insert_with(|| json!("medium"));
+    reasoning_object
+        .entry("summary".to_string())
+        .or_insert_with(|| json!("auto"));
+}
+
+fn ensure_codex_reasoning_include(body_object: &mut serde_json::Map<String, Value>) {
+    const REASONING_ENCRYPTED_CONTENT: &str = "reasoning.encrypted_content";
+
+    match body_object.get_mut("include") {
+        Some(Value::Array(include)) => {
+            let has_reasoning_encrypted_content = include
+                .iter()
+                .any(|value| value.as_str() == Some(REASONING_ENCRYPTED_CONTENT));
+            if !has_reasoning_encrypted_content {
+                include.push(json!(REASONING_ENCRYPTED_CONTENT));
+            }
+        }
+        Some(_) | None => {
+            body_object.insert("include".to_string(), json!([REASONING_ENCRYPTED_CONTENT]));
+        }
+    }
+}
+
+fn ensure_codex_responses_defaults(body_object: &mut serde_json::Map<String, Value>) {
+    ensure_codex_reasoning_summary(body_object);
+    ensure_codex_reasoning_include(body_object);
+    body_object
+        .entry("parallel_tool_calls".to_string())
+        .or_insert_with(|| json!(true));
+}
+
 fn build_stable_codex_prompt_cache_key(user_api_key_id: &str) -> Option<String> {
     let normalized = user_api_key_id.trim();
     if normalized.is_empty() {
@@ -318,6 +362,7 @@ pub fn apply_codex_openai_responses_special_body_edits(
     } else if !body_rules_handle_path(body_rules, "store") {
         body_object.insert("store".to_string(), json!(false));
     }
+    ensure_codex_responses_defaults(body_object);
     if !body_rules_handle_path(body_rules, "instructions")
         && !body_object.contains_key("instructions")
     {
@@ -422,6 +467,67 @@ mod tests {
         apply_codex_openai_responses_special_body_edits, CODEX_OPENAI_IMAGE_INTERNAL_MODEL,
     };
     use serde_json::json;
+
+    #[test]
+    fn codex_responses_body_edits_request_reasoning_summary_stream() {
+        let mut provider_request_body = json!({
+            "input": [{
+                "role": "user",
+                "content": "hello"
+            }],
+            "model": "gpt-5.4",
+            "stream": true
+        });
+
+        apply_codex_openai_responses_special_body_edits(
+            &mut provider_request_body,
+            "codex",
+            "openai:responses",
+            None,
+            None,
+        );
+
+        assert_eq!(
+            provider_request_body["reasoning"]["effort"],
+            json!("medium")
+        );
+        assert_eq!(provider_request_body["reasoning"]["summary"], json!("auto"));
+        assert_eq!(
+            provider_request_body["include"],
+            json!(["reasoning.encrypted_content"])
+        );
+        assert_eq!(provider_request_body["parallel_tool_calls"], json!(true));
+    }
+
+    #[test]
+    fn codex_responses_body_edits_preserve_existing_reasoning_and_include() {
+        let mut provider_request_body = json!({
+            "input": [],
+            "model": "gpt-5.4",
+            "include": ["file_search_call.results"],
+            "reasoning": {"effort": "high", "summary": "detailed"},
+            "parallel_tool_calls": false
+        });
+
+        apply_codex_openai_responses_special_body_edits(
+            &mut provider_request_body,
+            "codex",
+            "openai:responses",
+            None,
+            None,
+        );
+
+        assert_eq!(provider_request_body["reasoning"]["effort"], json!("high"));
+        assert_eq!(
+            provider_request_body["reasoning"]["summary"],
+            json!("detailed")
+        );
+        assert_eq!(
+            provider_request_body["include"],
+            json!(["file_search_call.results", "reasoning.encrypted_content"])
+        );
+        assert_eq!(provider_request_body["parallel_tool_calls"], json!(false));
+    }
 
     #[test]
     fn codex_image_body_edits_force_tool_choice_and_default_generate_tool_fields() {

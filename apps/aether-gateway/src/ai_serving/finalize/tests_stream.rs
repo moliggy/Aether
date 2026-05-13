@@ -724,6 +724,32 @@ fn openai_responses_to_openai_chat_stream_rewriter_converts_text_deltas_immediat
 }
 
 #[test]
+fn openai_responses_to_openai_chat_stream_rewriter_converts_reasoning_deltas_immediately() {
+    let report_context = json!({
+        "provider_api_format": "openai:responses",
+        "client_api_format": "openai:chat",
+        "needs_conversion": true,
+        "mapped_model": "gpt-5.4",
+    });
+    let mut rewriter =
+        maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
+    let output = rewriter
+        .push_chunk(
+            concat!(
+                "event: response.reasoning_summary_text.delta\n",
+                "data: {\"type\":\"response.reasoning_summary_text.delta\",\"response_id\":\"resp_reasoning_stream_123\",\"item_id\":\"rs_123\",\"output_index\":0,\"summary_index\":0,\"delta\":\"Need to inspect first.\"}\n\n"
+            )
+            .as_bytes(),
+        )
+        .expect("rewrite should succeed");
+    let output_text = String::from_utf8(output).expect("utf8 should decode");
+    assert!(output_text.contains("\"object\":\"chat.completion.chunk\""));
+    assert!(output_text.contains("\"reasoning_content\":\"Need to inspect first.\""));
+    assert!(!output_text.contains("\"content\""));
+    assert!(!output_text.contains("data: [DONE]"));
+}
+
+#[test]
 fn openai_responses_to_openai_chat_stream_rewriter_converts_completed_event_without_buffering() {
     let report_context = json!({
         "provider_api_format": "openai:responses",
