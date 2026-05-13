@@ -1,10 +1,8 @@
 use super::super::{
     build_admin_users_bad_request_response, build_admin_users_data_unavailable_response,
-    build_admin_users_read_only_response, normalize_admin_list_policy_mode,
-    normalize_admin_optional_user_email, normalize_admin_rate_limit_policy_mode,
-    normalize_admin_user_api_formats, normalize_admin_user_group_ids, normalize_admin_user_role,
-    normalize_admin_user_string_list, normalize_admin_username, validate_admin_user_password,
-    AdminUpdateUserPatch,
+    build_admin_users_read_only_response, disabled_user_policy_detail, disabled_user_policy_field,
+    normalize_admin_optional_user_email, normalize_admin_user_group_ids, normalize_admin_user_role,
+    normalize_admin_username, validate_admin_user_password, AdminUpdateUserPatch,
 };
 use super::support::{
     admin_user_id_from_detail_path, admin_user_password_policy,
@@ -53,6 +51,13 @@ pub(in super::super) async fn build_admin_update_user_response(
                 .into_response())
         }
     };
+    if let Some(field) = disabled_user_policy_field(&raw_payload) {
+        return Ok((
+            http::StatusCode::BAD_REQUEST,
+            Json(json!({ "detail": disabled_user_policy_detail(field) })),
+        )
+            .into_response());
+    }
     let patch = match AdminUpdateUserPatch::from_object(raw_payload.clone()) {
         Ok(value) => value,
         Err(_) => {
@@ -131,123 +136,6 @@ pub(in super::super) async fn build_admin_update_user_response(
         None => None,
     };
     let effective_role = role.as_deref().unwrap_or(existing_user.role.as_str());
-    if payload.rate_limit.is_some_and(|value| value < 0) {
-        return Ok((
-            http::StatusCode::BAD_REQUEST,
-            Json(json!({ "detail": "rate_limit 必须大于等于 0" })),
-        )
-            .into_response());
-    }
-    let allowed_providers = if field_presence.contains("allowed_providers") {
-        match normalize_admin_user_string_list(payload.allowed_providers, "allowed_providers") {
-            Ok(value) => value,
-            Err(detail) => {
-                return Ok((
-                    http::StatusCode::BAD_REQUEST,
-                    Json(json!({ "detail": detail })),
-                )
-                    .into_response())
-            }
-        }
-    } else {
-        None
-    };
-    let allowed_api_formats = if field_presence.contains("allowed_api_formats") {
-        match normalize_admin_user_api_formats(payload.allowed_api_formats) {
-            Ok(value) => value,
-            Err(detail) => {
-                return Ok((
-                    http::StatusCode::BAD_REQUEST,
-                    Json(json!({ "detail": detail })),
-                )
-                    .into_response())
-            }
-        }
-    } else {
-        None
-    };
-    let allowed_models = if field_presence.contains("allowed_models") {
-        match normalize_admin_user_string_list(payload.allowed_models, "allowed_models") {
-            Ok(value) => value,
-            Err(detail) => {
-                return Ok((
-                    http::StatusCode::BAD_REQUEST,
-                    Json(json!({ "detail": detail })),
-                )
-                    .into_response())
-            }
-        }
-    } else {
-        None
-    };
-    let allowed_providers_mode = if field_presence.contains("allowed_providers_mode") {
-        match payload.allowed_providers_mode.as_deref() {
-            Some(value) => match normalize_admin_list_policy_mode(value) {
-                Ok(value) => Some(value),
-                Err(detail) => {
-                    return Ok((
-                        http::StatusCode::BAD_REQUEST,
-                        Json(json!({ "detail": detail })),
-                    )
-                        .into_response())
-                }
-            },
-            None => None,
-        }
-    } else {
-        None
-    };
-    let allowed_api_formats_mode = if field_presence.contains("allowed_api_formats_mode") {
-        match payload.allowed_api_formats_mode.as_deref() {
-            Some(value) => match normalize_admin_list_policy_mode(value) {
-                Ok(value) => Some(value),
-                Err(detail) => {
-                    return Ok((
-                        http::StatusCode::BAD_REQUEST,
-                        Json(json!({ "detail": detail })),
-                    )
-                        .into_response())
-                }
-            },
-            None => None,
-        }
-    } else {
-        None
-    };
-    let allowed_models_mode = if field_presence.contains("allowed_models_mode") {
-        match payload.allowed_models_mode.as_deref() {
-            Some(value) => match normalize_admin_list_policy_mode(value) {
-                Ok(value) => Some(value),
-                Err(detail) => {
-                    return Ok((
-                        http::StatusCode::BAD_REQUEST,
-                        Json(json!({ "detail": detail })),
-                    )
-                        .into_response())
-                }
-            },
-            None => None,
-        }
-    } else {
-        None
-    };
-    let rate_limit_mode = if field_presence.contains("rate_limit_mode") {
-        match payload.rate_limit_mode.as_deref() {
-            Some(value) => match normalize_admin_rate_limit_policy_mode(value) {
-                Ok(value) => Some(value),
-                Err(detail) => {
-                    return Ok((
-                        http::StatusCode::BAD_REQUEST,
-                        Json(json!({ "detail": detail })),
-                    )
-                        .into_response())
-                }
-            },
-            None => None,
-        }
-    } else {
-        None
-    };
     let group_ids = if field_presence.contains("group_ids") {
         let requested_group_ids = normalize_admin_user_group_ids(payload.group_ids);
         Some(
@@ -286,14 +174,6 @@ pub(in super::super) async fn build_admin_update_user_response(
         || username.is_some()
         || payload.password.is_some()
         || role.is_some()
-        || field_presence.contains("allowed_providers")
-        || allowed_providers_mode.is_some()
-        || field_presence.contains("allowed_api_formats")
-        || allowed_api_formats_mode.is_some()
-        || field_presence.contains("allowed_models")
-        || allowed_models_mode.is_some()
-        || field_presence.contains("rate_limit")
-        || rate_limit_mode.is_some()
         || payload.is_active.is_some()
         || group_ids.is_some();
     if needs_auth_user_write && !state.has_auth_user_write_capability() {
@@ -358,25 +238,19 @@ pub(in super::super) async fn build_admin_update_user_response(
         }
     }
 
-    if role.is_some()
-        || field_presence.contains("allowed_providers")
-        || field_presence.contains("allowed_api_formats")
-        || field_presence.contains("allowed_models")
-        || field_presence.contains("rate_limit")
-        || payload.is_active.is_some()
-    {
+    if role.is_some() || payload.is_active.is_some() {
         if state
             .update_local_auth_user_admin_fields(
                 &user_id,
                 role,
-                field_presence.contains("allowed_providers"),
-                allowed_providers,
-                field_presence.contains("allowed_api_formats"),
-                allowed_api_formats,
-                field_presence.contains("allowed_models"),
-                allowed_models,
-                field_presence.contains("rate_limit"),
-                payload.rate_limit,
+                false,
+                None,
+                false,
+                None,
+                false,
+                None,
+                false,
+                None,
                 payload.is_active,
             )
             .await?
@@ -389,30 +263,6 @@ pub(in super::super) async fn build_admin_update_user_response(
                 .into_response());
         }
     }
-    if allowed_providers_mode.is_some()
-        || allowed_api_formats_mode.is_some()
-        || allowed_models_mode.is_some()
-        || rate_limit_mode.is_some()
-    {
-        if state
-            .update_local_auth_user_policy_modes(
-                &user_id,
-                allowed_providers_mode,
-                allowed_api_formats_mode,
-                allowed_models_mode,
-                rate_limit_mode,
-            )
-            .await?
-            .is_none()
-        {
-            return Ok((
-                http::StatusCode::NOT_FOUND,
-                Json(json!({ "detail": "用户不存在" })),
-            )
-                .into_response());
-        }
-    }
-
     if let Some(unlimited) = payload.unlimited {
         match state
             .find_wallet(aether_data::repository::wallet::WalletLookupKey::UserId(
@@ -461,10 +311,7 @@ pub(in super::super) async fn build_admin_update_user_response(
         .is_some_and(|wallet| wallet.limit_mode.eq_ignore_ascii_case("unlimited"));
     let export_row = find_admin_export_user(state, &user_id).await?;
     let groups = state.list_user_groups_for_user(&user_id).await?;
-    let rate_limit = export_row
-        .as_ref()
-        .and_then(|row| row.rate_limit)
-        .or(payload.rate_limit);
+    let rate_limit = export_row.as_ref().and_then(|row| row.rate_limit);
 
     Ok(attach_admin_audit_response(
         Json(build_admin_user_payload_with_groups(

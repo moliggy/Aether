@@ -1,6 +1,6 @@
 use super::{
     build_admin_users_bad_request_response, build_admin_users_read_only_response,
-    normalize_admin_user_api_formats, normalize_admin_user_role, normalize_admin_user_string_list,
+    disabled_user_policy_detail, disabled_user_policy_field, normalize_admin_user_role,
 };
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::handlers::admin::shared::attach_admin_audit_response;
@@ -85,14 +85,6 @@ struct ResolvedAdminUserSelection {
 #[derive(Debug, Clone, Default)]
 struct AdminUserBatchMutation {
     role: Option<String>,
-    allowed_providers_present: bool,
-    allowed_providers: Option<Vec<String>>,
-    allowed_api_formats_present: bool,
-    allowed_api_formats: Option<Vec<String>>,
-    allowed_models_present: bool,
-    allowed_models: Option<Vec<String>>,
-    rate_limit_present: bool,
-    rate_limit: Option<i32>,
     is_active: Option<bool>,
     unlimited: Option<bool>,
     modified_fields: Vec<&'static str>,
@@ -100,12 +92,7 @@ struct AdminUserBatchMutation {
 
 impl AdminUserBatchMutation {
     fn has_auth_user_fields(&self) -> bool {
-        self.role.is_some()
-            || self.allowed_providers_present
-            || self.allowed_api_formats_present
-            || self.allowed_models_present
-            || self.rate_limit_present
-            || self.is_active.is_some()
+        self.role.is_some() || self.is_active.is_some()
     }
 }
 
@@ -214,14 +201,14 @@ pub(in super::super) async fn build_admin_user_batch_action_response(
                 .update_local_auth_user_admin_fields(
                     &item.user_id,
                     mutation.role.clone(),
-                    mutation.allowed_providers_present,
-                    mutation.allowed_providers.clone(),
-                    mutation.allowed_api_formats_present,
-                    mutation.allowed_api_formats.clone(),
-                    mutation.allowed_models_present,
-                    mutation.allowed_models.clone(),
-                    mutation.rate_limit_present,
-                    mutation.rate_limit,
+                    false,
+                    None,
+                    false,
+                    None,
+                    false,
+                    None,
+                    false,
+                    None,
                     mutation.is_active,
                 )
                 .await?
@@ -632,25 +619,8 @@ fn parse_access_control_mutation(payload: Option<Value>) -> Result<AdminUserBatc
     };
     let mut mutation = AdminUserBatchMutation::default();
 
-    if let Some(value) = payload.get("allowed_providers") {
-        mutation.allowed_providers_present = true;
-        mutation.allowed_providers = parse_optional_string_list(value, "allowed_providers")?;
-        mutation.modified_fields.push("allowed_providers");
-    }
-    if let Some(value) = payload.get("allowed_api_formats") {
-        mutation.allowed_api_formats_present = true;
-        mutation.allowed_api_formats = parse_optional_api_formats(value)?;
-        mutation.modified_fields.push("allowed_api_formats");
-    }
-    if let Some(value) = payload.get("allowed_models") {
-        mutation.allowed_models_present = true;
-        mutation.allowed_models = parse_optional_string_list(value, "allowed_models")?;
-        mutation.modified_fields.push("allowed_models");
-    }
-    if let Some(value) = payload.get("rate_limit") {
-        mutation.rate_limit_present = true;
-        mutation.rate_limit = parse_optional_rate_limit(value)?;
-        mutation.modified_fields.push("rate_limit");
+    if let Some(field) = disabled_user_policy_field(&payload) {
+        return Err(disabled_user_policy_detail(field));
     }
     if let Some(value) = payload.get("unlimited") {
         mutation.unlimited = Some(parse_unlimited(value)?);
@@ -662,39 +632,6 @@ fn parse_access_control_mutation(payload: Option<Value>) -> Result<AdminUserBatc
     }
 
     Ok(mutation)
-}
-
-fn parse_optional_string_list(
-    value: &Value,
-    field_name: &str,
-) -> Result<Option<Vec<String>>, String> {
-    if value.is_null() {
-        return Ok(None);
-    }
-    let values = serde_json::from_value::<Vec<String>>(value.clone())
-        .map_err(|_| format!("{field_name} 必须是字符串数组或 null"))?;
-    normalize_admin_user_string_list(Some(values), field_name)
-}
-
-fn parse_optional_api_formats(value: &Value) -> Result<Option<Vec<String>>, String> {
-    if value.is_null() {
-        return Ok(None);
-    }
-    let values = serde_json::from_value::<Vec<String>>(value.clone())
-        .map_err(|_| "allowed_api_formats 必须是字符串数组或 null".to_string())?;
-    normalize_admin_user_api_formats(Some(values))
-}
-
-fn parse_optional_rate_limit(value: &Value) -> Result<Option<i32>, String> {
-    if value.is_null() {
-        return Ok(None);
-    }
-    let rate_limit = serde_json::from_value::<i32>(value.clone())
-        .map_err(|_| "rate_limit 必须是整数或 null".to_string())?;
-    if rate_limit < 0 {
-        return Err("rate_limit 必须大于等于 0".to_string());
-    }
-    Ok(Some(rate_limit))
 }
 
 fn parse_unlimited(value: &Value) -> Result<bool, String> {

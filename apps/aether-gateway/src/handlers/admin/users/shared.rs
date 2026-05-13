@@ -66,22 +66,6 @@ pub(super) struct AdminCreateUserRequest {
     #[serde(default)]
     pub(super) unlimited: bool,
     #[serde(default)]
-    pub(super) allowed_providers: Option<Vec<String>>,
-    #[serde(default)]
-    pub(super) allowed_providers_mode: Option<String>,
-    #[serde(default)]
-    pub(super) allowed_api_formats: Option<Vec<String>>,
-    #[serde(default)]
-    pub(super) allowed_api_formats_mode: Option<String>,
-    #[serde(default)]
-    pub(super) allowed_models: Option<Vec<String>>,
-    #[serde(default)]
-    pub(super) allowed_models_mode: Option<String>,
-    #[serde(default)]
-    pub(super) rate_limit: Option<i32>,
-    #[serde(default)]
-    pub(super) rate_limit_mode: Option<String>,
-    #[serde(default)]
     pub(super) group_ids: Vec<String>,
 }
 
@@ -98,28 +82,36 @@ pub(super) struct AdminUpdateUserRequest {
     #[serde(default)]
     pub(super) unlimited: Option<bool>,
     #[serde(default)]
-    pub(super) allowed_providers: Option<Vec<String>>,
-    #[serde(default)]
-    pub(super) allowed_providers_mode: Option<String>,
-    #[serde(default)]
-    pub(super) allowed_api_formats: Option<Vec<String>>,
-    #[serde(default)]
-    pub(super) allowed_api_formats_mode: Option<String>,
-    #[serde(default)]
-    pub(super) allowed_models: Option<Vec<String>>,
-    #[serde(default)]
-    pub(super) allowed_models_mode: Option<String>,
-    #[serde(default)]
-    pub(super) rate_limit: Option<i32>,
-    #[serde(default)]
-    pub(super) rate_limit_mode: Option<String>,
-    #[serde(default)]
     pub(super) group_ids: Vec<String>,
     #[serde(default)]
     pub(super) is_active: Option<bool>,
 }
 
 pub(super) type AdminUpdateUserPatch = AdminTypedObjectPatch<AdminUpdateUserRequest>;
+
+const DISABLED_USER_POLICY_FIELDS: &[&str] = &[
+    "allowed_providers",
+    "allowed_providers_mode",
+    "allowed_api_formats",
+    "allowed_api_formats_mode",
+    "allowed_models",
+    "allowed_models_mode",
+    "rate_limit",
+    "rate_limit_mode",
+];
+
+pub(super) fn disabled_user_policy_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Option<&'static str> {
+    DISABLED_USER_POLICY_FIELDS
+        .iter()
+        .copied()
+        .find(|field| object.contains_key(*field))
+}
+
+pub(super) fn disabled_user_policy_detail(field: &str) -> String {
+    format!("{field} 已停用，请通过用户分组管理访问权限")
+}
 
 pub(super) fn build_admin_users_data_unavailable_response() -> Response<Body> {
     (

@@ -1,10 +1,8 @@
 use super::super::{
     admin_default_user_initial_gift, build_admin_users_read_only_response,
-    legacy_admin_list_policy_mode, legacy_admin_rate_limit_policy_mode,
-    normalize_admin_list_policy_mode, normalize_admin_optional_user_email,
-    normalize_admin_rate_limit_policy_mode, normalize_admin_user_api_formats,
-    normalize_admin_user_group_ids, normalize_admin_user_role, normalize_admin_user_string_list,
-    normalize_admin_username, validate_admin_user_password, AdminCreateUserRequest,
+    disabled_user_policy_detail, disabled_user_policy_field, normalize_admin_optional_user_email,
+    normalize_admin_user_group_ids, normalize_admin_user_role, normalize_admin_username,
+    validate_admin_user_password, AdminCreateUserRequest,
 };
 use super::support::{admin_user_password_policy, build_admin_user_payload_with_groups};
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
@@ -16,7 +14,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 
 pub(in super::super) async fn build_admin_create_user_response(
     state: &AdminAppState<'_>,
@@ -40,7 +38,25 @@ pub(in super::super) async fn build_admin_create_user_response(
         )
             .into_response());
     };
-    let payload = match serde_json::from_slice::<AdminCreateUserRequest>(request_body) {
+    let raw_payload = match serde_json::from_slice::<Value>(request_body) {
+        Ok(Value::Object(map)) => map,
+        _ => {
+            return Ok((
+                http::StatusCode::BAD_REQUEST,
+                Json(json!({ "detail": "请求数据验证失败" })),
+            )
+                .into_response())
+        }
+    };
+    if let Some(field) = disabled_user_policy_field(&raw_payload) {
+        return Ok((
+            http::StatusCode::BAD_REQUEST,
+            Json(json!({ "detail": disabled_user_policy_detail(field) })),
+        )
+            .into_response());
+    }
+    let payload = match serde_json::from_value::<AdminCreateUserRequest>(Value::Object(raw_payload))
+    {
         Ok(value) => value,
         Err(_) => {
             return Ok((
@@ -89,13 +105,6 @@ pub(in super::super) async fn build_admin_create_user_response(
         )
             .into_response());
     }
-    if payload.rate_limit.is_some_and(|value| value < 0) {
-        return Ok((
-            http::StatusCode::BAD_REQUEST,
-            Json(json!({ "detail": "rate_limit 必须大于等于 0" })),
-        )
-            .into_response());
-    }
     if payload
         .initial_gift_usd
         .is_some_and(|value| !value.is_finite() || !(0.0..=10000.0).contains(&value))
@@ -106,90 +115,6 @@ pub(in super::super) async fn build_admin_create_user_response(
         )
             .into_response());
     }
-    let allowed_providers =
-        match normalize_admin_user_string_list(payload.allowed_providers, "allowed_providers") {
-            Ok(value) => value,
-            Err(detail) => {
-                return Ok((
-                    http::StatusCode::BAD_REQUEST,
-                    Json(json!({ "detail": detail })),
-                )
-                    .into_response())
-            }
-        };
-    let allowed_api_formats = match normalize_admin_user_api_formats(payload.allowed_api_formats) {
-        Ok(value) => value,
-        Err(detail) => {
-            return Ok((
-                http::StatusCode::BAD_REQUEST,
-                Json(json!({ "detail": detail })),
-            )
-                .into_response())
-        }
-    };
-    let allowed_models =
-        match normalize_admin_user_string_list(payload.allowed_models, "allowed_models") {
-            Ok(value) => value,
-            Err(detail) => {
-                return Ok((
-                    http::StatusCode::BAD_REQUEST,
-                    Json(json!({ "detail": detail })),
-                )
-                    .into_response())
-            }
-        };
-    let allowed_providers_mode = match payload.allowed_providers_mode.as_deref() {
-        Some(value) => match normalize_admin_list_policy_mode(value) {
-            Ok(value) => value,
-            Err(detail) => {
-                return Ok((
-                    http::StatusCode::BAD_REQUEST,
-                    Json(json!({ "detail": detail })),
-                )
-                    .into_response())
-            }
-        },
-        None => legacy_admin_list_policy_mode(&allowed_providers),
-    };
-    let allowed_api_formats_mode = match payload.allowed_api_formats_mode.as_deref() {
-        Some(value) => match normalize_admin_list_policy_mode(value) {
-            Ok(value) => value,
-            Err(detail) => {
-                return Ok((
-                    http::StatusCode::BAD_REQUEST,
-                    Json(json!({ "detail": detail })),
-                )
-                    .into_response())
-            }
-        },
-        None => legacy_admin_list_policy_mode(&allowed_api_formats),
-    };
-    let allowed_models_mode = match payload.allowed_models_mode.as_deref() {
-        Some(value) => match normalize_admin_list_policy_mode(value) {
-            Ok(value) => value,
-            Err(detail) => {
-                return Ok((
-                    http::StatusCode::BAD_REQUEST,
-                    Json(json!({ "detail": detail })),
-                )
-                    .into_response())
-            }
-        },
-        None => legacy_admin_list_policy_mode(&allowed_models),
-    };
-    let rate_limit_mode = match payload.rate_limit_mode.as_deref() {
-        Some(value) => match normalize_admin_rate_limit_policy_mode(value) {
-            Ok(value) => value,
-            Err(detail) => {
-                return Ok((
-                    http::StatusCode::BAD_REQUEST,
-                    Json(json!({ "detail": detail })),
-                )
-                    .into_response())
-            }
-        },
-        None => legacy_admin_rate_limit_policy_mode(payload.rate_limit),
-    };
     let requested_group_ids = normalize_admin_user_group_ids(payload.group_ids);
     let group_ids = state
         .include_default_user_group_ids_for_role(&requested_group_ids, &role)
@@ -259,10 +184,10 @@ pub(in super::super) async fn build_admin_create_user_response(
             username,
             password_hash,
             role,
-            allowed_providers,
-            allowed_api_formats,
-            allowed_models,
-            payload.rate_limit,
+            None,
+            None,
+            None,
+            None,
         )
         .await?
     else {
@@ -280,20 +205,6 @@ pub(in super::super) async fn build_admin_create_user_response(
             "当前为只读模式，无法初始化用户钱包",
         ));
     }
-    let Some(user) = state
-        .update_local_auth_user_policy_modes(
-            &user.id,
-            Some(allowed_providers_mode.clone()),
-            Some(allowed_api_formats_mode.clone()),
-            Some(allowed_models_mode.clone()),
-            Some(rate_limit_mode.clone()),
-        )
-        .await?
-    else {
-        return Ok(build_admin_users_read_only_response(
-            "当前为只读模式，无法创建用户",
-        ));
-    };
     if !group_ids.is_empty() {
         state
             .replace_user_groups_for_user(&user.id, &group_ids)
@@ -303,8 +214,8 @@ pub(in super::super) async fn build_admin_create_user_response(
     Ok(attach_admin_audit_response(
         Json(build_admin_user_payload_with_groups(
             &user,
-            payload.rate_limit,
-            Some(rate_limit_mode.as_str()),
+            None,
+            None,
             payload.unlimited,
             &groups,
         ))
