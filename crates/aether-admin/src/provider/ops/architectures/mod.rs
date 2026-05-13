@@ -1,5 +1,6 @@
 mod anyrouter;
 mod cubence;
+mod done_hub;
 mod generic_api;
 mod nekocode;
 mod new_api;
@@ -92,6 +93,7 @@ static PROVIDER_OPS_ARCHITECTURES: LazyLock<Vec<ProviderOpsArchitectureSpec>> =
         vec![
             anyrouter::spec(),
             cubence::spec(),
+            done_hub::spec(),
             generic_api::spec(),
             nekocode::spec(),
             new_api::spec(),
@@ -122,6 +124,7 @@ pub fn normalize_architecture_id(architecture_id: &str) -> &'static str {
         "generic_api" => "generic_api",
         "new_api" => "new_api",
         "cubence" => "cubence",
+        "done_hub" => "done_hub",
         "yescode" => "yescode",
         "nekocode" => "nekocode",
         "anyrouter" => "anyrouter",
@@ -178,6 +181,7 @@ fn default_action_config(architecture_id: &str, action_type: &str) -> Option<Map
     match architecture_id {
         "anyrouter" => anyrouter::default_action_config(action_type),
         "cubence" => cubence::default_action_config(action_type),
+        "done_hub" => done_hub::default_action_config(action_type),
         "generic_api" => generic_api::default_action_config(action_type),
         "nekocode" => nekocode::default_action_config(action_type),
         "new_api" => new_api::default_action_config(action_type),
@@ -201,21 +205,45 @@ mod tests {
     #[test]
     fn list_architectures_hides_generic_api_by_default() {
         let visible = list_architectures(false);
-        assert_eq!(visible.len(), 6);
+        assert_eq!(visible.len(), 7);
         assert!(visible
             .iter()
             .all(|item| item.architecture_id != "generic_api"));
 
         let all = list_architectures(true);
-        assert_eq!(all.len(), 7);
+        assert_eq!(all.len(), 8);
         assert!(all.iter().any(|item| item.architecture_id == "generic_api"));
     }
 
     #[test]
     fn normalize_architecture_id_falls_back_to_generic_api() {
         assert_eq!(normalize_architecture_id(""), "generic_api");
+        assert_eq!(normalize_architecture_id("done_hub"), "done_hub");
         assert_eq!(normalize_architecture_id("new_api"), "new_api");
         assert_eq!(normalize_architecture_id("unknown"), "generic_api");
+    }
+
+    #[test]
+    fn done_hub_uses_profile_balance_without_checkin() {
+        let architecture = get_architecture("done_hub").expect("architecture should exist");
+        assert_eq!(architecture.architecture_id, "done_hub");
+        assert_eq!(architecture.verify_endpoint, "/api/user/profile");
+
+        let resolved = resolve_action_config(
+            "done_hub",
+            &json!({})
+                .as_object()
+                .cloned()
+                .expect("config should be object"),
+            "query_balance",
+            None,
+        )
+        .expect("action config should resolve");
+
+        assert_eq!(resolved.get("endpoint"), Some(&json!("/api/user/profile")));
+        assert_eq!(resolved.get("quota_divisor"), Some(&json!(500000)));
+        assert_eq!(resolved.get("method"), Some(&json!("GET")));
+        assert!(resolved.get("checkin_endpoint").is_none());
     }
 
     #[test]

@@ -29,6 +29,7 @@ pub fn parse_verify_payload(
     match normalize_architecture_id(architecture_id) {
         "anyrouter" => admin_provider_ops_anyrouter_verify_payload(status, response_json),
         "cubence" => admin_provider_ops_cubence_verify_payload(status, response_json),
+        "done_hub" => admin_provider_ops_anyrouter_verify_payload(status, response_json),
         "yescode" => admin_provider_ops_yescode_verify_payload(status, response_json),
         "nekocode" => admin_provider_ops_nekocode_verify_payload(status, response_json),
         "sub2api" => {
@@ -109,6 +110,12 @@ fn admin_provider_ops_cubence_cookie_header(cookie_input: &str) -> String {
     }
 
     cookies.join("; ")
+}
+
+fn admin_provider_ops_session_cookie_header(cookie_input: &str) -> String {
+    let trimmed = admin_provider_ops_strip_cookie_header_prefix(cookie_input);
+    let session = admin_provider_ops_extract_cookie_value(trimmed, "session");
+    format!("session={session}")
 }
 
 pub fn admin_provider_ops_yescode_cookie_header(cookie_input: &str) -> String {
@@ -433,14 +440,17 @@ pub fn admin_provider_ops_verify_headers(
                 )?;
             }
         }
-        "nekocode" => {
+        "nekocode" | "done_hub" => {
             if let Some(session_cookie) = credentials
                 .get("session_cookie")
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
             {
-                let session = admin_provider_ops_extract_cookie_value(session_cookie, "session");
-                insert_header(&mut headers, "Cookie", &format!("session={session}"))?;
+                insert_header(
+                    &mut headers,
+                    "Cookie",
+                    &admin_provider_ops_session_cookie_header(session_cookie),
+                )?;
             }
         }
         "anyrouter" => {
@@ -817,7 +827,7 @@ mod tests {
         admin_provider_ops_anyrouter_parse_session_user_id,
         admin_provider_ops_anyrouter_verify_payload, admin_provider_ops_cubence_verify_payload,
         admin_provider_ops_frontend_updated_credentials, admin_provider_ops_sub2api_verify_payload,
-        admin_provider_ops_verify_headers, ADMIN_PROVIDER_OPS_USER_AGENT,
+        admin_provider_ops_verify_headers, parse_verify_payload, ADMIN_PROVIDER_OPS_USER_AGENT,
     };
     use http::StatusCode;
     use reqwest::header::COOKIE;
@@ -927,6 +937,50 @@ mod tests {
             admin_provider_ops_anyrouter_verify_payload(StatusCode::UNAUTHORIZED, &json!({}));
         assert_eq!(auth_failed["success"], json!(false));
         assert_eq!(auth_failed["message"], json!("Cookie 已失效，请重新配置"));
+    }
+
+    #[test]
+    fn done_hub_verify_payload_reads_wrapped_profile() {
+        let payload = parse_verify_payload(
+            "done_hub",
+            StatusCode::OK,
+            &json!({
+                "success": true,
+                "data": {
+                    "username": "linuxdo_850",
+                    "display_name": "AAEE86",
+                    "quota": 2_276_139_911_u64,
+                    "used_quota": 13860089,
+                    "request_count": 55
+                }
+            }),
+            None,
+        );
+
+        assert_eq!(payload["success"], json!(true));
+        assert_eq!(payload["data"]["username"], json!("linuxdo_850"));
+        assert_eq!(payload["data"]["display_name"], json!("AAEE86"));
+        assert_eq!(payload["data"]["quota"], json!(2276139911.0));
+        assert_eq!(payload["data"]["used_quota"], json!(13860089.0));
+        assert_eq!(payload["data"]["request_count"], json!(55));
+    }
+
+    #[test]
+    fn done_hub_verify_headers_use_session_cookie_only() {
+        let headers = admin_provider_ops_verify_headers(
+            "done_hub",
+            &Map::new(),
+            &Map::from_iter([(
+                "session_cookie".to_string(),
+                json!("Cookie: session=abc; other=ignored"),
+            )]),
+        )
+        .expect("headers should build");
+
+        assert_eq!(
+            headers.get(COOKIE).and_then(|value| value.to_str().ok()),
+            Some("session=abc")
+        );
     }
 
     #[test]

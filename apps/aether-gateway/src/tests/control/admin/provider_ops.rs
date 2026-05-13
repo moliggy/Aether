@@ -60,6 +60,39 @@ async fn redis_runtime_state_for_test(
     )
 }
 
+fn assert_provider_ops_architectures_payload(payload: &serde_json::Value) {
+    let items = payload.as_array().expect("items should be array");
+    let architecture_ids = items
+        .iter()
+        .map(|item| {
+            item["architecture_id"]
+                .as_str()
+                .expect("architecture_id should be string")
+        })
+        .collect::<Vec<_>>();
+    let expected_ids = aether_admin::provider::ops::list_architectures(false)
+        .iter()
+        .map(|item| item.architecture_id)
+        .collect::<Vec<_>>();
+
+    assert_eq!(architecture_ids, expected_ids);
+    assert!(items
+        .iter()
+        .all(|item| item["architecture_id"] != "generic_api"));
+
+    let anyrouter = items
+        .iter()
+        .find(|item| item["architecture_id"] == "anyrouter")
+        .expect("anyrouter architecture should exist");
+    assert_eq!(anyrouter["default_connector"], "cookie");
+
+    let new_api = items
+        .iter()
+        .find(|item| item["architecture_id"] == "new_api")
+        .expect("new_api architecture should exist");
+    assert_eq!(new_api["supported_auth_types"][0]["type"], "api_key");
+}
+
 #[tokio::test]
 async fn gateway_handles_admin_provider_ops_architectures_locally_with_trusted_admin_principal() {
     let upstream_hits = Arc::new(Mutex::new(0usize));
@@ -93,15 +126,7 @@ async fn gateway_handles_admin_provider_ops_architectures_locally_with_trusted_a
 
     assert_eq!(response.status(), StatusCode::OK);
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
-    let items = payload.as_array().expect("items should be array");
-    assert_eq!(items.len(), 6);
-    assert!(items
-        .iter()
-        .all(|item| item["architecture_id"] != "generic_api"));
-    assert_eq!(items[0]["architecture_id"], "anyrouter");
-    assert_eq!(items[0]["default_connector"], "cookie");
-    assert_eq!(items[3]["architecture_id"], "new_api");
-    assert_eq!(items[3]["supported_auth_types"][0]["type"], "api_key");
+    assert_provider_ops_architectures_payload(&payload);
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();
@@ -141,15 +166,7 @@ async fn gateway_handles_admin_provider_ops_architectures_locally_with_bearer_ad
 
     assert_eq!(response.status(), StatusCode::OK);
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
-    let items = payload.as_array().expect("items should be array");
-    assert_eq!(items.len(), 6);
-    assert!(items
-        .iter()
-        .all(|item| item["architecture_id"] != "generic_api"));
-    assert_eq!(items[0]["architecture_id"], "anyrouter");
-    assert_eq!(items[0]["default_connector"], "cookie");
-    assert_eq!(items[3]["architecture_id"], "new_api");
-    assert_eq!(items[3]["supported_auth_types"][0]["type"], "api_key");
+    assert_provider_ops_architectures_payload(&payload);
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();

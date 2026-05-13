@@ -14,7 +14,7 @@ pub fn parse_query_balance_payload(
     response_json: &Value,
 ) -> Result<Value, String> {
     match architecture_id {
-        "generic_api" | "new_api" | "anyrouter" => {
+        "generic_api" | "new_api" | "anyrouter" | "done_hub" => {
             parse_new_api_balance_payload(action_config, response_json)
         }
         "cubence" => parse_cubence_balance_payload(action_config, response_json),
@@ -488,6 +488,28 @@ mod tests {
 
         assert_eq!(payload["total_available"], json!(5.0));
         assert_eq!(payload["total_used"], json!(1.0));
+    }
+
+    #[test]
+    fn done_hub_single_request_parser_reads_wrapped_quota() {
+        let payload = parse_query_balance_payload(
+            "done_hub",
+            &json!({ "quota_divisor": 500000 })
+                .as_object()
+                .cloned()
+                .expect("config"),
+            &json!({
+                "success": true,
+                "data": {
+                    "quota": 2_276_139_911_u64,
+                    "used_quota": 13860089
+                }
+            }),
+        )
+        .expect("payload should parse");
+
+        assert_eq!(payload["total_available"], json!(4552.279822));
+        assert_eq!(payload["total_used"], json!(27.720178));
     }
 
     #[test]

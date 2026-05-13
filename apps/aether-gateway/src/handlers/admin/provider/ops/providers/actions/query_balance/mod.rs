@@ -165,10 +165,10 @@ pub(super) async fn admin_provider_ops_run_query_balance_action(
         Ok(data) => data,
         Err(message) => {
             return admin_provider_ops_action_error(
-                if architecture.architecture_id == "generic_api"
-                    || architecture.architecture_id == "new_api"
-                    || architecture.architecture_id == "anyrouter"
-                {
+                if matches!(
+                    architecture.architecture_id,
+                    "generic_api" | "new_api" | "anyrouter" | "done_hub"
+                ) {
                     "unknown_error"
                 } else {
                     "parse_error"
