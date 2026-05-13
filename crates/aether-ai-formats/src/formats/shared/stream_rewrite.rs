@@ -58,6 +58,14 @@ pub fn resolve_finalize_stream_rewrite_mode(
     }
 
     if needs_conversion {
+        // CPA strategy: when provider and client share the same wire format
+        // (exact match or same family), pass through the stream verbatim.
+        // Parsing→rebuilding only adds overhead and may lose information
+        // (encrypted_content, original item IDs, etc.).
+        if is_same_format_family(provider_api_format.as_str(), client_api_format.as_str()) {
+            return model_directive_display_model_from_report_context(report_context)
+                .map(|_| FinalizeStreamRewriteMode::ModelDirectiveDisplay);
+        }
         return supports_standard_stream_rewrite(
             provider_api_format.as_str(),
             client_api_format.as_str(),
@@ -336,6 +344,31 @@ fn supports_standard_stream_rewrite(provider_api_format: &str, client_api_format
             || is_standard_cli_client_api_format(client_api_format))
 }
 
+/// Returns true for OpenAI Responses family formats that share the same SSE
+/// wire format and can be passed through without parsing→rebuilding.
+fn is_openai_responses_family(api_format: &str) -> bool {
+    matches!(
+        aether_ai_formats::normalize_api_format_alias(api_format).as_str(),
+        "openai:responses" | "openai:responses:compact"
+    )
+}
+
+/// Returns true when two API formats share the same SSE wire format and
+/// can be passed through without parsing→rebuilding.  This covers:
+///
+/// - Exact matches after normalisation (e.g. `claude:messages` ↔ `claude:messages`)
+/// - OpenAI Responses family (`openai:responses` ↔ `openai:responses:compact`)
+fn is_same_format_family(provider_format: &str, client_format: &str) -> bool {
+    let provider = aether_ai_formats::normalize_api_format_alias(provider_format);
+    let client = aether_ai_formats::normalize_api_format_alias(client_format);
+    if provider == client {
+        return true;
+    }
+    // OpenAI Responses family shares the same wire format despite having
+    // distinct format IDs.
+    is_openai_responses_family(provider_format) && is_openai_responses_family(client_format)
+}
+
 fn is_standard_provider_api_format(api_format: &str) -> bool {
     matches!(
         aether_ai_formats::normalize_api_format_alias(api_format).as_str(),
@@ -524,6 +557,121 @@ data: {\"type\":\"response.reasoning_summary_text.delta\",\"response_id\":\"resp
         assert!(output.contains("\"reasoning_content\":\"Need to inspect first.\""));
         assert!(!output.contains("\"content\""));
         assert!(!output.contains("data: [DONE]"));
+    }
+
+    #[test]
+    fn same_family_responses_passthrough_preserves_encrypted_content() {
+        // When provider and client are both OpenAI Responses family,
+        // the stream should pass through verbatim (only model name rewrite).
+        // This preserves encrypted_content, original item IDs, etc.
+        let report_context = json!({
+            "provider_api_format": "openai:responses",
+            "client_api_format": "openai:responses:compact",
+            "needs_conversion": true,
+            "model": "gpt-5.5-xhigh",
+            "mapped_model": "gpt-5.5",
+        });
+        let mut rewriter = maybe_build_ai_surface_stream_rewriter(Some(&report_context))
+            .expect("rewriter should exist");
+        let output = rewriter
+            .push_chunk(
+                b"event: response.output_item.added\n\
+data: {\"type\":\"response.output_item.added\",\"response_id\":\"resp_123\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_abc\",\"summary\":[],\"encrypted_content\":\"EWxvY2tlZENvbnRlbnQ=\"}}\n\n",
+            )
+            .expect("rewrite should succeed");
+        let output = String::from_utf8(output).expect("output should be utf8");
+
+        // Passthrough preserves the full payload structure
+        assert!(output.contains("event: response.output_item.added"));
+        assert!(output.contains("\"encrypted_content\":\"EWxvY2tlZENvbnRlbnQ=\""));
+        assert!(output.contains("\"id\":\"rs_abc\""));
+        assert!(output.contains("\"type\":\"reasoning\""));
+    }
+
+    #[test]
+    fn same_family_responses_without_display_model_passes_through_verbatim() {
+        // When provider and client are both OpenAI Responses family but
+        // there is no display model override, the rewriter returns None
+        // (complete passthrough, no interception at all).
+        let report_context = json!({
+            "provider_api_format": "openai:responses",
+            "client_api_format": "openai:responses:compact",
+            "needs_conversion": true,
+        });
+        assert!(maybe_build_ai_surface_stream_rewriter(Some(&report_context)).is_none());
+    }
+
+    #[test]
+    fn same_format_claude_passthrough_with_display_model() {
+        // Claude→Claude with needs_conversion=true should pass through
+        // (only model name rewrite), not parse→rebuild.
+        let report_context = json!({
+            "provider_api_format": "claude:messages",
+            "client_api_format": "claude:messages",
+            "needs_conversion": true,
+            "model": "claude-sonnet-4.5-high",
+            "mapped_model": "claude-sonnet-4.5",
+        });
+        let mut rewriter = maybe_build_ai_surface_stream_rewriter(Some(&report_context))
+            .expect("rewriter should exist");
+        let output = rewriter
+            .push_chunk(
+                b"event: content_block_delta\n\
+data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Let me reason...\"}}\n\n",
+            )
+            .expect("rewrite should succeed");
+        let output = String::from_utf8(output).expect("output should be utf8");
+
+        // Passthrough preserves the exact wire format
+        assert!(output.contains("event: content_block_delta"));
+        assert!(output.contains("\"thinking\":\"Let me reason...\""));
+        assert!(output.contains("\"type\":\"thinking_delta\""));
+    }
+
+    #[test]
+    fn same_format_claude_without_display_model_passes_through_verbatim() {
+        // Claude→Claude without display model: no rewriter needed at all.
+        let report_context = json!({
+            "provider_api_format": "claude:messages",
+            "client_api_format": "claude:messages",
+            "needs_conversion": true,
+        });
+        assert!(maybe_build_ai_surface_stream_rewriter(Some(&report_context)).is_none());
+    }
+
+    #[test]
+    fn same_format_gemini_passthrough_with_display_model() {
+        // Gemini→Gemini with needs_conversion=true should pass through.
+        let report_context = json!({
+            "provider_api_format": "gemini:generate_content",
+            "client_api_format": "gemini:generate_content",
+            "needs_conversion": true,
+            "model": "gemini-2.5-pro-high",
+            "mapped_model": "gemini-2.5-pro",
+        });
+        let mut rewriter = maybe_build_ai_surface_stream_rewriter(Some(&report_context))
+            .expect("rewriter should exist");
+        let output = rewriter
+            .push_chunk(
+                b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello\"}],\"role\":\"model\"}}],\"modelVersion\":\"gemini-2.5-pro\"}\n\n",
+            )
+            .expect("rewrite should succeed");
+        let output = String::from_utf8(output).expect("output should be utf8");
+
+        // Model version should be rewritten
+        assert!(output.contains("\"modelVersion\":\"gemini-2.5-pro-high\""));
+        assert!(!output.contains("\"modelVersion\":\"gemini-2.5-pro\""));
+    }
+
+    #[test]
+    fn same_format_gemini_without_display_model_passes_through_verbatim() {
+        // Gemini→Gemini without display model: no rewriter needed.
+        let report_context = json!({
+            "provider_api_format": "gemini:generate_content",
+            "client_api_format": "gemini:generate_content",
+            "needs_conversion": true,
+        });
+        assert!(maybe_build_ai_surface_stream_rewriter(Some(&report_context)).is_none());
     }
 
     #[test]
