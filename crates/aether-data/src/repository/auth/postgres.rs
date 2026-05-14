@@ -551,7 +551,7 @@ SET
   allowed_providers = CASE WHEN $7 THEN $8::json ELSE allowed_providers END,
   allowed_api_formats = CASE WHEN $9 THEN $10::json ELSE allowed_api_formats END,
   allowed_models = CASE WHEN $11 THEN $12::json ELSE allowed_models END,
-  expires_at = CASE WHEN $13 THEN $14 ELSE expires_at END,
+  expires_at = CASE WHEN $13 THEN $14::timestamptz ELSE expires_at END,
   auto_delete_on_expiry = CASE WHEN $15 THEN $16 ELSE auto_delete_on_expiry END,
   updated_at = NOW()
 WHERE id = $1
@@ -1552,7 +1552,7 @@ mod tests {
         assert!(UPDATE_STANDALONE_API_KEY_BASIC_SQL
             .contains("rate_limit = CASE WHEN $3 THEN $4 ELSE rate_limit END"));
         assert!(UPDATE_STANDALONE_API_KEY_BASIC_SQL
-            .contains("expires_at = CASE WHEN $13 THEN $14 ELSE expires_at END"));
+            .contains("expires_at = CASE WHEN $13 THEN $14::timestamptz ELSE expires_at END"));
         assert!(UPDATE_STANDALONE_API_KEY_BASIC_SQL.contains(
             "auto_delete_on_expiry = CASE WHEN $15 THEN $16 ELSE auto_delete_on_expiry END"
         ));
