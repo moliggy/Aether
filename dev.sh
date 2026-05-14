@@ -95,13 +95,13 @@ dev_uses_redis_runtime() {
 print_dev_infra_hint() {
     echo "=> 本地开发依赖未就绪。"
     echo "=> 请先启动 Postgres / Redis:"
-    echo "=>   docker compose -f docker-compose.build.yml up -d postgres redis"
+    echo "=>   docker compose up -d postgres redis"
 }
 
 print_postgres_hint() {
     echo "=> PostgreSQL 未就绪。"
     echo "=> 请先启动 Postgres:"
-    echo "=>   docker compose -f docker-compose.build.yml up -d postgres"
+    echo "=>   docker compose up -d postgres"
 }
 
 check_postgres_ready() {
