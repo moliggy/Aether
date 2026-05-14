@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO="${AETHER_REPO:-fawney19/Aether}"
-SOURCE_REF="${AETHER_SOURCE_REF:-aether-rust-pioneer}"
+SOURCE_REF="${AETHER_SOURCE_REF:-main}"
 VERSION="${AETHER_VERSION:-}"
 CHANNEL="${AETHER_CHANNEL:-stable}"
 CHANNEL_EXPLICIT="false"
@@ -60,7 +60,7 @@ Options:
                       beta resolves the latest tag like v0.7.0-beta.1
   --version VERSION    Exact release tag to install, for example v0.7.0-rc.1
   --repo OWNER/REPO    GitHub repository to download from (default: fawney19/Aether)
-  --source-ref REF     Source branch/tag used for compose templates (default: aether-rust-pioneer)
+  --source-ref REF     Source branch/tag used for compose templates (default: main)
   --archive PATH       Install from a local release tarball instead of downloading
   --download-url URL   Download the release archive from this URL instead of GitHub
   --env-file PATH      Use an existing aether-gateway.env file

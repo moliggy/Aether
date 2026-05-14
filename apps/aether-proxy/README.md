@@ -37,19 +37,19 @@ Tunnel 模式下代理节点**无需对外监听端口**，仅需出站连接到
 macOS / Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/aether-rust-pioneer/apps/aether-proxy/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/apps/aether-proxy/install.sh | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/fawney19/Aether/aether-rust-pioneer/apps/aether-proxy/install.ps1 | iex
+irm https://raw.githubusercontent.com/fawney19/Aether/main/apps/aether-proxy/install.ps1 | iex
 ```
 
 也可以用环境变量非交互式执行，适合在控制台“添加代理节点”时生成命令：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/aether-rust-pioneer/apps/aether-proxy/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/apps/aether-proxy/install.sh | \
   AETHER_PROXY_AETHER_URL="https://aether.example.com" \
   AETHER_PROXY_MANAGEMENT_TOKEN="ae_xxx" \
   AETHER_PROXY_NODE_NAME="jp-proxy-01" \
@@ -60,7 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/aether-rust-pioneer
 $env:AETHER_PROXY_AETHER_URL = "https://aether.example.com"
 $env:AETHER_PROXY_MANAGEMENT_TOKEN = "ae_xxx"
 $env:AETHER_PROXY_NODE_NAME = "jp-proxy-01"
-irm https://raw.githubusercontent.com/fawney19/Aether/aether-rust-pioneer/apps/aether-proxy/install.ps1 | iex
+irm https://raw.githubusercontent.com/fawney19/Aether/main/apps/aether-proxy/install.ps1 | iex
 ```
 
 可选变量：`AETHER_PROXY_RELEASE_TAG` 固定安装某个 `proxy-v*` tag，`AETHER_PROXY_CONFIG` 指定配置文件路径，`AETHER_PROXY_INSTALL_DIR` 指定二进制安装目录。
