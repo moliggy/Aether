@@ -558,7 +558,7 @@
         class="space-y-4"
       >
         <div class="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
-          输入节点名称后生成 15 分钟内有效的一次性安装命令。页面命令不会包含 Management Token；token 只会在目标机器兑换脚本时写入 `aether-proxy.toml` 的 `[[servers]]`。
+          输入节点名称后生成一次性安装命令，有效期 15 分钟。复制的命令不含敏感授权信息，只能在目标机器使用一次，避免 Token 暴露在页面或聊天记录中。
         </div>
 
         <div class="space-y-1.5">
@@ -1048,9 +1048,9 @@ const proxyInstallCommand = computed(() => {
 
 const proxyInstallHint = computed(() => {
   if (!proxyInstallSession.value) {
-    return '脚本会自动下载最新 proxy-v* release，并向已有配置追加 [[servers]]。'
+    return '脚本会自动安装或更新代理程序，并保留已有配置。'
   }
-  return `install code ${proxyInstallSession.value.install_code} 将在 ${Math.floor(proxyInstallSession.value.expires_in_seconds / 60)} 分钟内有效，使用后立即失效。`
+  return `这条命令将在 ${Math.floor(proxyInstallSession.value.expires_in_seconds / 60)} 分钟内有效，成功使用后立即失效。`
 })
 
 // 远程配置对话框 (aether-proxy 节点)
