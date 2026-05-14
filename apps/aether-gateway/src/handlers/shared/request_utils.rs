@@ -316,6 +316,11 @@ pub(crate) fn admin_proxy_local_requires_buffered_body(
                 | (Some("api_keys_manage"), http::Method::PATCH, Some("toggle_api_key"))
                 | (Some("adaptive_manage"), http::Method::PATCH, Some("toggle_mode"))
                 | (Some("proxy_nodes_manage"), http::Method::POST, Some("create_manual_node"))
+                | (
+                    Some("proxy_nodes_manage"),
+                    http::Method::POST,
+                    Some("create_proxy_node_install_session"),
+                )
                 | (Some("proxy_nodes_manage"), http::Method::POST, Some("register_node"))
                 | (Some("proxy_nodes_manage"), http::Method::POST, Some("heartbeat_node"))
                 | (Some("proxy_nodes_manage"), http::Method::POST, Some("unregister_node"))

@@ -291,6 +291,19 @@ pub(super) fn classify_admin_operations_family_route(
     } else if method == http::Method::POST
         && matches!(
             normalized_path,
+            "/api/admin/proxy-nodes/install-sessions" | "/api/admin/proxy-nodes/install-sessions/"
+        )
+    {
+        Some(classified(
+            "admin_proxy",
+            "proxy_nodes_manage",
+            "create_proxy_node_install_session",
+            "admin:proxy_nodes",
+            false,
+        ))
+    } else if method == http::Method::POST
+        && matches!(
+            normalized_path,
             "/api/admin/proxy-nodes/upgrade" | "/api/admin/proxy-nodes/upgrade/"
         )
     {
