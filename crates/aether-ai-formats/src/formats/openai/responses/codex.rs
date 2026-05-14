@@ -300,13 +300,27 @@ fn ensure_codex_responses_passthrough_fields(
         return;
     }
     if !body_rules_handle_path(body_rules, "parallel_tool_calls") {
-        body_object.insert("parallel_tool_calls".to_string(), json!(true));
+        body_object
+            .entry("parallel_tool_calls".to_string())
+            .or_insert_with(|| json!(true));
     }
     if !body_rules_handle_path(body_rules, "include") {
-        body_object.insert(
-            "include".to_string(),
-            json!([CODEX_REASONING_ENCRYPTED_CONTENT_INCLUDE]),
-        );
+        match body_object.get_mut("include") {
+            Some(Value::Array(include)) => {
+                let has_reasoning_encrypted_content = include
+                    .iter()
+                    .any(|value| value.as_str() == Some(CODEX_REASONING_ENCRYPTED_CONTENT_INCLUDE));
+                if !has_reasoning_encrypted_content {
+                    include.push(json!(CODEX_REASONING_ENCRYPTED_CONTENT_INCLUDE));
+                }
+            }
+            Some(_) | None => {
+                body_object.insert(
+                    "include".to_string(),
+                    json!([CODEX_REASONING_ENCRYPTED_CONTENT_INCLUDE]),
+                );
+            }
+        }
     }
 }
 
@@ -378,7 +392,7 @@ pub fn apply_codex_openai_responses_special_body_edits(
             json!(CODEX_DEFAULT_INSTRUCTIONS),
         );
     } else if body_object.contains_key("instructions")
-        && body_object.get("instructions").map_or(false, |v| v.is_null())
+        && body_object.get("instructions").is_some_and(|v| v.is_null())
     {
         body_object.insert("instructions".to_string(), json!(""));
     }
@@ -533,11 +547,19 @@ mod tests {
     }
 
     #[test]
-    fn codex_responses_body_edits_preserve_existing_reasoning_but_use_codex_include() {
+    fn codex_responses_body_edits_preserve_existing_include_and_parallel_tool_calls() {
         let mut provider_request_body = json!( {
             "input": [],
             "model": "gpt-5.4",
-            "include": ["file_search_call.results"],
+            "include": [
+                "file_search_call.results",
+                "web_search_call.results",
+                "web_search_call.action.sources",
+                "message.input_image.image_url",
+                "computer_call_output.output.image_url",
+                "code_interpreter_call.outputs",
+                "message.output_text.logprobs"
+            ],
             "reasoning": {"effort": "high", "summary": "detailed"},
             "parallel_tool_calls": false
         });
@@ -557,9 +579,18 @@ mod tests {
         );
         assert_eq!(
             provider_request_body["include"],
-            json!(["reasoning.encrypted_content"])
+            json!([
+                "file_search_call.results",
+                "web_search_call.results",
+                "web_search_call.action.sources",
+                "message.input_image.image_url",
+                "computer_call_output.output.image_url",
+                "code_interpreter_call.outputs",
+                "message.output_text.logprobs",
+                "reasoning.encrypted_content"
+            ])
         );
-        assert_eq!(provider_request_body["parallel_tool_calls"], json!(true));
+        assert_eq!(provider_request_body["parallel_tool_calls"], json!(false));
     }
 
     #[test]
@@ -577,7 +608,10 @@ mod tests {
             None,
         );
 
-        assert_eq!(provider_request_body["reasoning"]["effort"], json!("medium"));
+        assert_eq!(
+            provider_request_body["reasoning"]["effort"],
+            json!("medium")
+        );
         assert_eq!(provider_request_body["reasoning"]["summary"], json!("auto"));
         assert_eq!(
             provider_request_body["include"],

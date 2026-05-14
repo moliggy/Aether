@@ -1536,25 +1536,22 @@ fn map_auth_api_key_export_row(
 #[cfg(test)]
 mod tests {
     use super::{
-        CREATE_STANDALONE_API_KEY_SQL, CREATE_USER_API_KEY_SQL,
-        SqlxAuthApiKeySnapshotReadRepository, UPDATE_STANDALONE_API_KEY_BASIC_SQL,
+        SqlxAuthApiKeySnapshotReadRepository, CREATE_STANDALONE_API_KEY_SQL,
+        CREATE_USER_API_KEY_SQL, UPDATE_STANDALONE_API_KEY_BASIC_SQL,
     };
     use crate::driver::postgres::{PostgresPoolConfig, PostgresPoolFactory};
 
     #[test]
     fn create_api_key_sql_orders_expiry_before_standalone_flags() {
-        assert!(CREATE_USER_API_KEY_SQL.contains(
-            "expires_at,\n  auto_delete_on_expiry,\n  is_locked,\n  is_standalone,"
-        ));
-        assert!(CREATE_USER_API_KEY_SQL.contains(
-            "$12,\n  $13,\n  FALSE,\n  FALSE,\n  $14,"
-        ));
-        assert!(CREATE_STANDALONE_API_KEY_SQL.contains(
-            "expires_at,\n  auto_delete_on_expiry,\n  is_locked,\n  is_standalone,"
-        ));
-        assert!(CREATE_STANDALONE_API_KEY_SQL.contains(
-            "$12,\n  $13,\n  FALSE,\n  TRUE,\n  $14,"
-        ));
+        assert!(CREATE_USER_API_KEY_SQL
+            .contains("expires_at,\n  auto_delete_on_expiry,\n  is_locked,\n  is_standalone,"));
+        assert!(
+            CREATE_USER_API_KEY_SQL.contains("$12,\n  $13,\n  $14,\n  FALSE,\n  FALSE,\n  $15,")
+        );
+        assert!(CREATE_STANDALONE_API_KEY_SQL
+            .contains("expires_at,\n  auto_delete_on_expiry,\n  is_locked,\n  is_standalone,"));
+        assert!(CREATE_STANDALONE_API_KEY_SQL
+            .contains("$12,\n  $13,\n  $14,\n  FALSE,\n  TRUE,\n  $15,"));
     }
 
     #[test]
