@@ -20,28 +20,11 @@ docker compose pull && docker compose up -d
 docker compose exec postgres pg_dump -U postgres aether | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
 ```
 
-### 2. 本地代码构建镜像 (Docker Compose)
-```markdown
-# 1. 克隆代码
-git clone https://github.com/fawney19/Aether.git
-cd Aether
-
-# 2. 配置环境变量
-cp .env.example .env
-./generate_keys.sh  # 生成密钥, 并将生成的密钥填入 .env
-
-# 3. 构建（自动构建、启动、迁移）
-./deploy.sh
-
-# 4. 更新需要拉取最新代码
-git pull origin main
-```
-
-### 3. 本地开发
+### 2. 本地开发
 依赖 Docker、uv、nodejs
 ```markdown
 # 启动数据库
-docker compose -f docker-compose.build.yml up -d postgres redis
+docker compose up -d postgres redis
 
 # 后端
 uv sync

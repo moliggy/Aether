@@ -49,9 +49,9 @@ Usage: install.sh [options]
 Install Aether Gateway.
 
 Options:
-  --mode MODE          Deployment mode: compose, compose-solo, single, or cluster
+  --mode MODE          Deployment mode: compose, compose-sqlite, single, or cluster
                       compose: Docker Compose app + Postgres + Redis
-                      compose-solo: Docker Compose app + SQLite
+                      compose-sqlite: Docker Compose app + SQLite
                       single: system service with SQLite + in-process runtime
                       cluster: system service connected to shared database + Redis
                       Linux services use systemd; macOS services use launchd
@@ -436,8 +436,8 @@ select_mode() {
             MODE="compose"
             return
             ;;
-        compose-solo|solo|docker-solo|docker-solo-compose)
-            MODE="compose-solo"
+        compose-sqlite|sqlite-compose|compose-solo|solo|docker-solo|docker-solo-compose)
+            MODE="compose-sqlite"
             return
             ;;
         single|service|systemd|launchd|sqlite)
@@ -451,7 +451,7 @@ select_mode() {
         auto|"")
             ;;
         *)
-            die "unsupported install mode: ${MODE}; expected compose, compose-solo, single, or cluster"
+            die "unsupported install mode: ${MODE}; expected compose, compose-sqlite, single, or cluster"
             ;;
     esac
 
@@ -494,7 +494,7 @@ EOF
                 MODE="cluster"
                 ;;
             4)
-                MODE="compose-solo"
+                MODE="compose-sqlite"
                 ;;
             *)
                 if ui_is_zh; then
@@ -1054,7 +1054,7 @@ generate_compose_env() {
     replace_or_append_env "${output}" "AETHER_GATEWAY_AUTO_PREPARE_DATABASE" "true"
 }
 
-generate_compose_solo_env() {
+generate_compose_sqlite_env() {
     local output="$1"
     local jwt_key encryption_key
     prompt_admin_password
@@ -1488,11 +1488,11 @@ Generate a fresh key set any time:
 EOF
 }
 
-install_compose_solo_mode() {
-    info "preparing Docker Compose solo deployment in ${COMPOSE_DIR}"
+install_compose_sqlite_mode() {
+    info "preparing Docker Compose SQLite deployment in ${COMPOSE_DIR}"
     install -d -m 0755 "${COMPOSE_DIR}" "${COMPOSE_DIR}/logs" "${COMPOSE_DIR}/data"
 
-    install_project_file "docker-compose.solo.yml" "${COMPOSE_DIR}/docker-compose.yml" "0644"
+    install_project_file "docker-compose.sqlite.yml" "${COMPOSE_DIR}/docker-compose.yml" "0644"
     install_project_file ".env.example" "${COMPOSE_DIR}/.env.example" "0644"
     write_generate_keys_script "${COMPOSE_DIR}/generate_keys.sh"
 
@@ -1500,13 +1500,13 @@ install_compose_solo_mode() {
         warn "keeping existing ${COMPOSE_DIR}/.env"
     else
         info "generating ${COMPOSE_DIR}/.env"
-        generate_compose_solo_env "${COMPOSE_DIR}/.env"
+        generate_compose_sqlite_env "${COMPOSE_DIR}/.env"
         chmod 0600 "${COMPOSE_DIR}/.env"
     fi
 
     cat <<EOF
 
-Docker Compose solo files are ready:
+Docker Compose SQLite files are ready:
   ${COMPOSE_DIR}/docker-compose.yml
   ${COMPOSE_DIR}/.env
   ${COMPOSE_DIR}/.env.example
@@ -1516,6 +1516,7 @@ Docker Compose solo files are ready:
 
 Next steps:
   cd ${COMPOSE_DIR}
+  docker compose pull
   docker compose up -d
   docker compose logs -f app
 
@@ -1941,8 +1942,8 @@ main() {
 
     if [[ "${MODE}" == "compose" ]]; then
         install_compose_mode
-    elif [[ "${MODE}" == "compose-solo" ]]; then
-        install_compose_solo_mode
+    elif [[ "${MODE}" == "compose-sqlite" ]]; then
+        install_compose_sqlite_mode
     else
         require_root
         require_service_manager
