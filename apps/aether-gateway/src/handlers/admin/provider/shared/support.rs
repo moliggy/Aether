@@ -52,8 +52,6 @@ pub(crate) struct AdminProviderPoolConfig {
     pub(crate) account_self_check_enabled: bool,
     pub(crate) account_self_check_interval_minutes: u64,
     pub(crate) account_self_check_concurrency: u64,
-    pub(crate) account_self_check_method: String,
-    pub(crate) account_self_check_request: Option<serde_json::Value>,
     pub(crate) score_top_n: u64,
     pub(crate) score_fallback_scan_limit: u64,
     pub(crate) score_rules: PoolMemberScoreRules,

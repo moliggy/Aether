@@ -57,18 +57,6 @@ fn parse_pool_probe_target_count(pool_advanced: &Map<String, Value>) -> Option<u
         .map(|value| value.min(100_000))
 }
 
-fn parse_pool_account_self_check_method(pool_advanced: &Map<String, Value>) -> String {
-    pool_advanced
-        .get("account_self_check_method")
-        .or_else(|| pool_advanced.get("self_check_method"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_ascii_lowercase)
-        .filter(|value| matches!(value.as_str(), "quota_refresh" | "custom_request"))
-        .unwrap_or_else(|| "quota_refresh".to_string())
-}
-
 fn pool_score_weight(object: &Map<String, Value>, names: &[&str], current: f64) -> f64 {
     names
         .iter()
@@ -426,8 +414,6 @@ pub(crate) fn admin_provider_pool_config_from_config_value(
             account_self_check_enabled: false,
             account_self_check_interval_minutes: 60,
             account_self_check_concurrency: 4,
-            account_self_check_method: "quota_refresh".to_string(),
-            account_self_check_request: None,
             score_top_n: 128,
             score_fallback_scan_limit: 1024,
             score_rules: PoolMemberScoreRules::default(),
@@ -522,12 +508,6 @@ pub(crate) fn admin_provider_pool_config_from_config_value(
             .filter(|value| *value > 0)
             .map(|value| value.min(64))
             .unwrap_or(4),
-        account_self_check_method: parse_pool_account_self_check_method(pool_advanced),
-        account_self_check_request: pool_advanced
-            .get("account_self_check_request")
-            .or_else(|| pool_advanced.get("self_check_request"))
-            .filter(|value| value.is_object())
-            .cloned(),
         score_top_n: pool_advanced
             .get("score_top_n")
             .and_then(json_u64)
@@ -619,12 +599,6 @@ mod tests {
                 "account_self_check_enabled": true,
                 "account_self_check_interval_minutes": 90,
                 "account_self_check_concurrency": 5,
-                "account_self_check_method": "custom_request",
-                "account_self_check_request": {
-                    "method": "GET",
-                    "path": "/v1/me",
-                    "success_status_codes": [200]
-                },
                 "score_top_n": 256,
                 "score_fallback_scan_limit": 2048,
                 "score_rules": {
@@ -667,15 +641,6 @@ mod tests {
         assert!(config.account_self_check_enabled);
         assert_eq!(config.account_self_check_interval_minutes, 90);
         assert_eq!(config.account_self_check_concurrency, 5);
-        assert_eq!(config.account_self_check_method, "custom_request");
-        assert_eq!(
-            config
-                .account_self_check_request
-                .as_ref()
-                .and_then(|value| value.get("path"))
-                .and_then(serde_json::Value::as_str),
-            Some("/v1/me")
-        );
         assert_eq!(config.score_top_n, 256);
         assert_eq!(config.score_fallback_scan_limit, 2048);
         assert_eq!(config.score_rules.weights.manual_priority, 0.4);

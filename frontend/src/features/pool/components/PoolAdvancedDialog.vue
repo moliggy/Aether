@@ -93,7 +93,7 @@
           v-if="form.account_self_check_enabled"
           class="space-y-3 rounded-xl border border-dashed border-primary/25 bg-primary/5 p-4"
         >
-          <div class="grid gap-3 sm:grid-cols-3">
+          <div class="grid gap-3 sm:grid-cols-2">
             <div class="space-y-1.5">
               <Label>
                 自检间隔
@@ -121,40 +121,6 @@
                 @update:model-value="(v) => form.account_self_check_concurrency = parseNum(v)"
               />
             </div>
-            <div class="space-y-1.5">
-              <Label>
-                自检方式
-              </Label>
-              <div class="flex w-fit gap-0.5 rounded-md bg-muted/40 p-0.5">
-                <button
-                  v-for="opt in accountSelfCheckMethodOptions"
-                  :key="opt.value"
-                  type="button"
-                  class="rounded px-2.5 py-1 text-xs font-medium transition-all"
-                  :class="[
-                    form.account_self_check_method === opt.value
-                      ? 'bg-primary text-primary-foreground shadow-sm'
-                      : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'
-                  ]"
-                  @click="form.account_self_check_method = opt.value"
-                >
-                  {{ opt.label }}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div
-            v-if="form.account_self_check_method === 'custom_request'"
-            class="space-y-1.5"
-          >
-            <Label>请求配置</Label>
-            <Textarea
-              v-model="form.account_self_check_request_text"
-              class="min-h-[160px] font-mono text-xs leading-5"
-              spellcheck="false"
-              placeholder='{"path":"/v1/models","success_status_codes":[200],"blocked_status_codes":[401,403]}'
-            />
           </div>
         </div>
 
@@ -675,7 +641,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { CircleHelp } from 'lucide-vue-next'
-import { Dialog, Button, Input, Label, Switch, Textarea, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui'
+import { Dialog, Button, Input, Label, Switch, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui'
 import { useToast } from '@/composables/useToast'
 import { parseApiError } from '@/utils/errorParser'
 import { updateProvider } from '@/api/endpoints'
@@ -716,12 +682,6 @@ const healthToggleCards = buildPoolHealthToggleCards()
 const cooldownFieldLayout = buildPoolCooldownFieldLayout()
 const costFieldLayout = buildPoolCostFieldLayout()
 const secondarySectionLayout = buildPoolSecondarySectionLayout()
-const accountSelfCheckMethodOptions = [
-  { value: 'quota_refresh', label: '刷新额度' },
-  { value: 'custom_request', label: '自定义请求' },
-] as const
-
-type AccountSelfCheckMethod = typeof accountSelfCheckMethodOptions[number]['value']
 
 const form = ref({
   global_priority: null as number | null | undefined,
@@ -752,8 +712,6 @@ const form = ref({
   account_self_check_enabled: false,
   account_self_check_interval_minutes: null as number | null | undefined,
   account_self_check_concurrency: null as number | null | undefined,
-  account_self_check_method: 'quota_refresh' as AccountSelfCheckMethod,
-  account_self_check_request_text: '',
   auto_remove_banned_keys: false,
   skip_exhausted_accounts: false,
 })
@@ -782,37 +740,6 @@ function parseNum(v: string | number): number | undefined {
   if (v === '' || v === null || v === undefined) return undefined
   const n = Number(v)
   return Number.isNaN(n) ? undefined : n
-}
-
-function normalizeAccountSelfCheckMethod(value: unknown): AccountSelfCheckMethod {
-  return value === 'custom_request' ? 'custom_request' : 'quota_refresh'
-}
-
-function formatJsonForTextarea(value: unknown): string {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return ''
-  }
-  return JSON.stringify(value, null, 2)
-}
-
-function parseJsonObjectText(text: string): Record<string, unknown> | undefined | null {
-  const trimmed = text.trim()
-  if (!trimmed) return undefined
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(trimmed)
-  } catch {
-    showError('账号自检请求 JSON 格式不正确')
-    return null
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    showError('账号自检请求必须是 JSON 对象')
-    return null
-  }
-
-  return parsed as Record<string, unknown>
 }
 
 function getHealthToggleValue(key: PoolHealthToggleKey): boolean {
@@ -884,8 +811,6 @@ watch(() => props.modelValue, (open) => {
     account_self_check_enabled: cfg?.account_self_check_enabled ?? false,
     account_self_check_interval_minutes: cfg?.account_self_check_interval_minutes ?? null,
     account_self_check_concurrency: cfg?.account_self_check_concurrency ?? null,
-    account_self_check_method: normalizeAccountSelfCheckMethod(cfg?.account_self_check_method),
-    account_self_check_request_text: formatJsonForTextarea(cfg?.account_self_check_request),
     auto_remove_banned_keys: cfg?.auto_remove_banned_keys ?? false,
     skip_exhausted_accounts: cfg?.skip_exhausted_accounts ?? false,
   }
@@ -905,12 +830,6 @@ watch(() => props.modelValue, (open) => {
 async function handleSave() {
   loading.value = true
   try {
-    const accountSelfCheckRequest = form.value.account_self_check_enabled
-      && form.value.account_self_check_method === 'custom_request'
-      ? parseJsonObjectText(form.value.account_self_check_request_text)
-      : undefined
-    if (accountSelfCheckRequest === null) return
-
     const scoreRules = {
       ...(props.currentConfig?.score_rules ?? {}),
       weights: {
@@ -936,6 +855,10 @@ async function handleSave() {
       'probing_active_target_count',
       'active_probe_target_percent',
       'active_probe_target_count',
+      'account_self_check_method',
+      'self_check_method',
+      'account_self_check_request',
+      'self_check_request',
     ]) {
       delete existingPoolAdvanced[key]
     }
@@ -965,13 +888,6 @@ async function handleSave() {
         : undefined,
       account_self_check_concurrency: form.value.account_self_check_enabled
         ? (form.value.account_self_check_concurrency ?? undefined)
-        : undefined,
-      account_self_check_method: form.value.account_self_check_enabled
-        ? form.value.account_self_check_method
-        : undefined,
-      account_self_check_request: form.value.account_self_check_enabled
-        && form.value.account_self_check_method === 'custom_request'
-        ? accountSelfCheckRequest
         : undefined,
       auto_remove_banned_keys: form.value.auto_remove_banned_keys,
       skip_exhausted_accounts: form.value.skip_exhausted_accounts,

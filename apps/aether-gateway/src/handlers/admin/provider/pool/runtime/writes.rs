@@ -621,8 +621,6 @@ mod tests {
             account_self_check_enabled: false,
             account_self_check_interval_minutes: 60,
             account_self_check_concurrency: 4,
-            account_self_check_method: "quota_refresh".to_string(),
-            account_self_check_request: None,
             score_top_n: 128,
             score_fallback_scan_limit: 1024,
             score_rules: aether_pool_core::PoolMemberScoreRules::default(),

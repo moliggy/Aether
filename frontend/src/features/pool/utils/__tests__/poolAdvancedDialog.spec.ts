@@ -33,7 +33,7 @@ describe('poolAdvancedDialog', () => {
       {
         key: 'account_self_check_enabled',
         label: '账号自检',
-        description: '定时确认封号状态，默认刷新额度，也可使用自定义请求。',
+        description: '定时确认账号状态，策略由提供商适配器内置。',
       },
       {
         key: 'auto_remove_banned_keys',

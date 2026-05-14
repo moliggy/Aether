@@ -591,8 +591,6 @@ export interface PoolAdvancedConfig {
   account_self_check_enabled?: boolean
   account_self_check_interval_minutes?: number | null
   account_self_check_concurrency?: number | null
-  account_self_check_method?: 'quota_refresh' | 'custom_request' | string
-  account_self_check_request?: Record<string, unknown> | null
   auto_remove_banned_keys?: boolean
 }
 

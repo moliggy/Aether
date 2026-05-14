@@ -27,7 +27,8 @@ pub(crate) use self::provider::oauth::provisioning::{
 };
 pub(crate) use self::provider::oauth::quota::dispatch::refresh_provider_pool_quota_locally;
 pub(crate) use self::provider::oauth::quota::shared::{
-    persist_provider_quota_refresh_state, provider_quota_refresh_endpoint_for_provider,
+    persist_provider_quota_refresh_state, provider_account_self_check_endpoint_for_provider,
+    provider_quota_refresh_endpoint_for_provider, provider_type_supports_account_self_check,
     provider_type_supports_quota_refresh,
 };
 pub(crate) use self::provider::oauth::runtime::{
