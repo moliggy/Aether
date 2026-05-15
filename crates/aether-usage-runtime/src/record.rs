@@ -136,7 +136,7 @@ fn lifecycle_status_and_billing(event_type: UsageEventType) -> (&'static str, &'
         UsageEventType::Streaming => ("streaming", "pending"),
         UsageEventType::Completed => ("completed", "pending"),
         UsageEventType::Failed => ("failed", "void"),
-        UsageEventType::Cancelled => ("cancelled", "void"),
+        UsageEventType::Cancelled => ("cancelled", "pending"),
     }
 }
 
@@ -179,6 +179,30 @@ mod tests {
         assert_eq!(record.billing_status, "pending");
         assert_eq!(record.total_tokens, Some(30));
         assert_eq!(record.finalized_at_unix_secs, Some(1_700_000_000));
+    }
+
+    #[test]
+    fn cancelled_terminal_event_remains_billable() {
+        let record = build_upsert_usage_record_from_event(&UsageEvent {
+            event_type: UsageEventType::Cancelled,
+            request_id: "req-cancelled-1".to_string(),
+            timestamp_ms: 1_700_000_000_000,
+            data: UsageEventData {
+                user_id: Some("user-cancelled-1".to_string()),
+                provider_name: "OpenAI".to_string(),
+                model: "gpt-5".to_string(),
+                input_tokens: Some(10),
+                output_tokens: Some(4),
+                total_tokens: Some(14),
+                status_code: Some(499),
+                ..UsageEventData::default()
+            },
+        })
+        .expect("record should build");
+
+        assert_eq!(record.status, "cancelled");
+        assert_eq!(record.billing_status, "pending");
+        assert_eq!(record.total_tokens, Some(14));
     }
 
     #[test]
