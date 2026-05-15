@@ -336,7 +336,7 @@ dependencies = [
 
 [[package]]
 name = "aether-proxy"
-version = "0.3.10"
+version = "0.3.11"
 dependencies = [
  "aether-contracts",
  "aether-gateway",
