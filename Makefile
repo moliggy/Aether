@@ -6,7 +6,7 @@ DEV_RUST_LOG := $(RUST_LOG)
 endif
 export DEV_RUST_LOG
 
-.PHONY: dev dev-backend dev-frontend
+.PHONY: dev dev-backend dev-frontend migration backfill
 
 define DEV_BACKEND_SCRIPT
 set -euo pipefail
@@ -201,12 +201,12 @@ print_startup_failure_hint() {
 
 	if [ -n "$${log_file}" ] && [ -f "$${log_file}" ]; then
 		if grep -Eq "database schema is behind" "$${log_file}"; then
-			echo "=> 检测到数据库 schema 落后，请按上方日志处理数据库版本。"
+			echo "=> 检测到数据库 schema 落后，请执行: make migration"
 			return
 		fi
 
 		if grep -Eq "database backfills are behind" "$${log_file}"; then
-			echo "=> 检测到待执行 backfills，请按上方日志处理数据库版本。"
+			echo "=> 检测到待执行 backfills，请执行: make backfill"
 			return
 		fi
 	fi
@@ -486,6 +486,66 @@ done
 endef
 export DEV_SCRIPT
 
+define DB_TASK_SCRIPT
+set -euo pipefail
+
+if [ -z "$${DB_TASK_FLAG:-}" ] || [ -z "$${DB_TASK_LABEL:-}" ]; then
+	echo "=> 内部错误: DB_TASK_FLAG / DB_TASK_LABEL 未设置"
+	exit 1
+fi
+
+if [ ! -f .env ]; then
+	echo "=> 未找到 .env，请先执行: cp .env.example .env"
+	exit 1
+fi
+
+set -a
+source .env
+set +a
+
+dotenv_has_key() {
+	local key="$$1"
+	grep -Eq "^[[:space:]]*$${key}=" .env
+}
+
+lowercase() {
+	printf '%s' "$$1" | tr '[:upper:]' '[:lower:]'
+}
+
+uses_postgres_database() {
+	local driver
+	local url
+	driver="$$(lowercase "$${AETHER_DATABASE_DRIVER:-}")"
+	url="$${AETHER_DATABASE_URL:-$${DATABASE_URL:-}}"
+
+	if [[ -z "$${driver}" && -z "$${url}" ]]; then
+		return 0
+	fi
+
+	[[ "$${driver}" == "postgres" || "$${driver}" == "postgresql" || "$${url}" == postgres:* || "$${url}" == postgresql:* ]]
+}
+
+if uses_postgres_database; then
+	export DATABASE_URL="postgresql://$${DB_USER:-postgres}:$${DB_PASSWORD:-}@$${DB_HOST:-localhost}:$${DB_PORT:-5432}/$${DB_NAME:-aether}"
+	if ! dotenv_has_key "AETHER_GATEWAY_DATA_POSTGRES_URL"; then
+		export AETHER_GATEWAY_DATA_POSTGRES_URL="$${DATABASE_URL}"
+	fi
+fi
+
+if ! dotenv_has_key "AETHER_GATEWAY_DATA_ENCRYPTION_KEY"; then
+	export AETHER_GATEWAY_DATA_ENCRYPTION_KEY="$${ENCRYPTION_KEY:-}"
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+	echo "=> 未找到 cargo，无法执行 $${DB_TASK_LABEL}。请先安装 Rust toolchain。"
+	exit 1
+fi
+
+echo "=> 执行 $${DB_TASK_LABEL}: cargo run -p aether-gateway -- $${DB_TASK_FLAG}"
+exec cargo run -p aether-gateway -- "$${DB_TASK_FLAG}"
+endef
+export DB_TASK_SCRIPT
+
 dev:
 	@$(SHELL) -euo pipefail -c "$$DEV_SCRIPT"
 
@@ -494,3 +554,9 @@ dev-backend:
 
 dev-frontend:
 	@cd frontend && npm run dev
+
+migration:
+	@DB_TASK_FLAG=--migrate DB_TASK_LABEL="数据库迁移" $(SHELL) -euo pipefail -c "$$DB_TASK_SCRIPT"
+
+backfill:
+	@DB_TASK_FLAG=--apply-backfills DB_TASK_LABEL="数据库 backfill" $(SHELL) -euo pipefail -c "$$DB_TASK_SCRIPT"
