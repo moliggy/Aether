@@ -1178,6 +1178,10 @@ async fn gateway_handles_admin_system_configs_locally_with_trusted_admin_princip
     let data_state = GatewayDataState::disabled().with_system_config_values_for_tests(vec![
         ("request_log_level".to_string(), json!("headers")),
         ("smtp_password".to_string(), json!("encrypted-secret")),
+        (
+            "turnstile_secret_key".to_string(),
+            json!("encrypted-turnstile-secret"),
+        ),
         ("site_name".to_string(), json!("Aether Test")),
     ]);
     let (upstream_url, upstream_handle) = start_server(upstream).await;
@@ -1211,6 +1215,12 @@ async fn gateway_handles_admin_system_configs_locally_with_trusted_admin_princip
         .expect("smtp_password should exist");
     assert_eq!(smtp_password["value"], serde_json::Value::Null);
     assert_eq!(smtp_password["is_set"], json!(true));
+    let turnstile_secret_key = items
+        .iter()
+        .find(|item| item["key"] == "turnstile_secret_key")
+        .expect("turnstile_secret_key should exist");
+    assert_eq!(turnstile_secret_key["value"], serde_json::Value::Null);
+    assert_eq!(turnstile_secret_key["is_set"], json!(true));
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();

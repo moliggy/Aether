@@ -259,6 +259,10 @@ impl AppState {
             admin_monitoring_error_stats_reset_at: Arc::new(StdMutex::new(None)),
             provider_delete_tasks: Arc::new(StdMutex::new(HashMap::new())),
             #[cfg(test)]
+            turnstile_siteverify_url_override: None,
+            #[cfg(test)]
+            turnstile_siteverify_timeout_override: None,
+            #[cfg(test)]
             provider_oauth_state_store: None,
             #[cfg(test)]
             provider_oauth_device_session_store: Some(Arc::new(StdMutex::new(HashMap::new()))),

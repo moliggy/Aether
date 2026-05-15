@@ -61,6 +61,11 @@
             :rate-limit-per-minute="systemConfig.rate_limit_per_minute"
             :enable-registration="systemConfig.enable_registration"
             :password-policy-level="systemConfig.password_policy_level"
+            :turnstile-enabled="systemConfig.turnstile_enabled"
+            :turnstile-site-key="systemConfig.turnstile_site_key"
+            :turnstile-secret-key="systemConfig.turnstile_secret_key"
+            :turnstile-secret-configured="systemConfig.turnstile_secret_key_is_set"
+            :turnstile-allowed-hostnames-str="turnstileAllowedHostnamesStr"
             :auto-delete-expired-keys="systemConfig.auto_delete_expired_keys"
             :enable-format-conversion="systemConfig.enable_format_conversion"
             :enable-openai-image-sync-heartbeat="systemConfig.enable_openai_image_sync_heartbeat"
@@ -71,6 +76,11 @@
             @update:rate-limit-per-minute="systemConfig.rate_limit_per_minute = $event"
             @update:enable-registration="systemConfig.enable_registration = $event"
             @update:password-policy-level="systemConfig.password_policy_level = $event"
+            @update:turnstile-enabled="systemConfig.turnstile_enabled = $event"
+            @update:turnstile-site-key="systemConfig.turnstile_site_key = $event"
+            @update:turnstile-secret-key="systemConfig.turnstile_secret_key = $event"
+            @update:turnstile-allowed-hostnames-str="turnstileAllowedHostnamesStr = $event"
+            @clear-turnstile-secret="clearTurnstileSecret"
             @update:auto-delete-expired-keys="systemConfig.auto_delete_expired_keys = $event"
             @update:enable-format-conversion="systemConfig.enable_format_conversion = $event"
             @update:enable-openai-image-sync-heartbeat="systemConfig.enable_openai_image_sync_heartbeat = $event"
@@ -309,11 +319,13 @@ const {
   maxRequestBodySizeKB,
   maxResponseBodySizeKB,
   sensitiveHeadersStr,
+  turnstileAllowedHostnamesStr,
   loadSystemConfig,
   loadSystemVersion,
   saveSiteInfo,
   saveProxyConfig,
   saveBasicConfig,
+  clearTurnstileSecret,
   saveLogConfig,
   saveCleanupConfig,
   handleAutoCleanupToggle,

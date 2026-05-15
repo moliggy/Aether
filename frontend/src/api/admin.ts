@@ -755,13 +755,13 @@ export const adminApi = {
   async getSystemConfig(
     key: string,
     options: { cacheTtlMs?: number } = {},
-  ): Promise<{ key: string; value: unknown }> {
+  ): Promise<{ key: string; value: unknown; is_set?: boolean }> {
     const cacheTtlMs = options.cacheTtlMs ?? 0
     const cacheKey = buildCacheKey('admin:system:config', { key })
     return cachedRequest(
       cacheKey,
       async () => {
-        const response = await apiClient.get<{ key: string; value: unknown }>(
+        const response = await apiClient.get<{ key: string; value: unknown; is_set?: boolean }>(
           `/api/admin/system/configs/${key}`
         )
         return response.data
