@@ -207,7 +207,10 @@ fn local_openai_responses_compact_wrapper_strips_include_for_codex_requests() {
     assert!(provider_request_body.get("store").is_none());
     assert!(provider_request_body.get("stream").is_none());
     assert_eq!(provider_request_body["instructions"], "");
-    assert_eq!(provider_request_body["prompt_cache_key"], "172c39e6-c0a0-5a70-8b63-e0f8e0d185a3");
+    assert_eq!(
+        provider_request_body["prompt_cache_key"],
+        "172c39e6-c0a0-5a70-8b63-e0f8e0d185a3"
+    );
 }
 
 #[test]

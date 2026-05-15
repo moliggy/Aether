@@ -514,9 +514,9 @@ pub fn apply_codex_openai_responses_special_headers(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_openai_responses_compact_special_body_edits,
         apply_codex_openai_responses_chat_body_edits,
-        apply_codex_openai_responses_special_body_edits, CODEX_OPENAI_IMAGE_INTERNAL_MODEL,
+        apply_codex_openai_responses_special_body_edits,
+        apply_openai_responses_compact_special_body_edits, CODEX_OPENAI_IMAGE_INTERNAL_MODEL,
     };
     use serde_json::json;
 
