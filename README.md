@@ -58,6 +58,7 @@ docker compose -f docker-compose.sqlite.yml pull && docker compose -f docker-com
 ### 一键安装（可选部署方式 Linux: systemd; Mac: launchd）
 
 ```bash
+cd Aether && cd Aether
 curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/install.sh | sudo bash
 ```
 
